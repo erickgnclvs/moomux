@@ -31,12 +31,10 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("load config %s: %w", cfgPath, err)
 	}
-	if len(cfg.Projects) == 0 {
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
 		if err := seedExampleConfig(cfgPath); err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "wrote example config to %s — edit it and re-run curral.\n", cfgPath)
-		return nil
 	}
 
 	store := &session.Store{Path: session.DefaultPath()}
@@ -46,6 +44,7 @@ func run() error {
 
 	a := &app.App{
 		Cfg:          cfg,
+		CfgPath:      cfgPath,
 		Store:        store,
 		Tmux:         tmux.New(),
 		ITerm:        iterm.New(),

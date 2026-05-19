@@ -34,7 +34,7 @@ func TestAddWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"@/repo", "worktree", "add", "/wt/foo", "-b", "user/foo", "origin/main"}
-	if !reflect.DeepEqual(fr.calls[0], want) {
+	if !reflect.DeepEqual(fr.calls[len(fr.calls)-1], want) {
 		t.Fatalf("calls = %v", fr.calls)
 	}
 }

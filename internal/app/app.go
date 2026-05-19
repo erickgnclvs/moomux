@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/erickgnclvs/curral/internal/config"
@@ -17,6 +18,7 @@ import (
 
 type App struct {
 	Cfg          *config.Config
+	CfgPath      string
 	Store        *session.Store
 	Tmux         *tmux.Client
 	ITerm        *iterm.Client
@@ -45,18 +47,25 @@ func (a *App) CreateSession(project, name string) (session.Session, error) {
 	if !ok {
 		return session.Session{}, fmt.Errorf("unknown project %q", project)
 	}
-	branch := name
-	if proj.BranchPrefix != "" {
-		branch = proj.BranchPrefix + "/" + name
-	}
 	wt := filepath.Join(a.WorktreeRoot, project, name)
 	tmuxName := "curral-" + name
+	branch := ""
 
-	if err := a.Git.Fetch(proj.Repo, proj.BaseBranch); err != nil {
-		return session.Session{}, fmt.Errorf("git fetch: %w", err)
-	}
-	if err := a.Git.AddWorktree(proj.Repo, wt, branch, proj.BaseBranch); err != nil {
-		return session.Session{}, fmt.Errorf("git worktree add: %w", err)
+	if proj.IsPlain() {
+		if err := os.MkdirAll(wt, 0o755); err != nil {
+			return session.Session{}, fmt.Errorf("mkdir session dir: %w", err)
+		}
+	} else {
+		branch = name
+		if proj.BranchPrefix != "" {
+			branch = proj.BranchPrefix + "/" + name
+		}
+		if a.Git.HasRemote(proj.Repo, "origin") {
+			_ = a.Git.Fetch(proj.Repo, proj.BaseBranch) // best-effort
+		}
+		if err := a.Git.AddWorktree(proj.Repo, wt, branch, proj.BaseBranch); err != nil {
+			return session.Session{}, fmt.Errorf("git worktree add: %w", err)
+		}
 	}
 	if err := a.Tmux.NewSession(tmuxName, wt, "claude"); err != nil {
 		return session.Session{}, fmt.Errorf("tmux new-session: %w", err)
@@ -129,6 +138,106 @@ func (a *App) KillTmux(id string) error {
 	return a.Tmux.KillSession(s.TmuxSession)
 }
 
+func (a *App) validateProject(name string, p *config.Project) error {
+	if name == "" {
+		return fmt.Errorf("project name required")
+	}
+	if strings.ContainsAny(name, " \t/\\") {
+		return fmt.Errorf("project name cannot contain spaces or slashes")
+	}
+	if _, exists := a.Cfg.Projects[name]; exists {
+		return fmt.Errorf("project %q already exists", name)
+	}
+	if p.Repo == "" {
+		return fmt.Errorf("repo path required")
+	}
+	if p.BaseBranch == "" {
+		p.BaseBranch = "main"
+	}
+	p.Repo = expandHome(p.Repo)
+	return nil
+}
+
+func (a *App) saveProject(name string, p config.Project) error {
+	if a.Cfg.Projects == nil {
+		a.Cfg.Projects = map[string]config.Project{}
+	}
+	a.Cfg.Projects[name] = p
+	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
+		delete(a.Cfg.Projects, name)
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
+}
+
+func (a *App) AddProject(name string, p config.Project) error {
+	if err := a.validateProject(name, &p); err != nil {
+		return err
+	}
+	if err := gitwt.IsRepo(p.Repo); err != nil {
+		return err
+	}
+	p.Kind = "git"
+	return a.saveProject(name, p)
+}
+
+// InitProjectAndAdd creates the directory (if missing), runs `git init` with the
+// given base branch + an empty initial commit, then saves the project.
+func (a *App) InitProjectAndAdd(name string, p config.Project) error {
+	if err := a.validateProject(name, &p); err != nil {
+		return err
+	}
+	if err := gitwt.Init(p.Repo, p.BaseBranch); err != nil {
+		return err
+	}
+	p.Kind = "git"
+	return a.saveProject(name, p)
+}
+
+// AddPlainProject saves a non-git project. Each session is just a subdirectory
+// under WorktreeRoot; no branches, no worktrees.
+func (a *App) AddPlainProject(name string, p config.Project) error {
+	if err := a.validateProject(name, &p); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(p.Repo, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", p.Repo, err)
+	}
+	p.Kind = "plain"
+	p.BaseBranch = ""
+	p.BranchPrefix = ""
+	return a.saveProject(name, p)
+}
+
+func (a *App) RemoveProject(name string) error {
+	if _, ok := a.Cfg.Projects[name]; !ok {
+		return fmt.Errorf("unknown project %q", name)
+	}
+	for _, s := range a.Store.All() {
+		if s.Project == name {
+			return fmt.Errorf("project %q has active sessions — delete them first", name)
+		}
+	}
+	saved := a.Cfg.Projects[name]
+	delete(a.Cfg.Projects, name)
+	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
+		a.Cfg.Projects[name] = saved
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
+}
+
+func expandHome(p string) string {
+	if !strings.HasPrefix(p, "~") {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p
+	}
+	return filepath.Join(home, strings.TrimPrefix(p, "~"))
+}
+
 func (a *App) DeleteSession(id string) error {
 	s, ok := a.Store.Get(id)
 	if !ok {
@@ -137,9 +246,14 @@ func (a *App) DeleteSession(id string) error {
 	if has, _ := a.Tmux.HasSession(s.TmuxSession); has {
 		_ = a.Tmux.KillSession(s.TmuxSession)
 	}
-	proj, ok := a.Cfg.Projects[s.Project]
-	if ok {
-		_ = a.Git.RemoveWorktree(proj.Repo, s.WorktreePath)
+	if proj, ok := a.Cfg.Projects[s.Project]; ok {
+		if proj.IsPlain() {
+			_ = os.RemoveAll(s.WorktreePath)
+		} else {
+			_ = a.Git.RemoveWorktree(proj.Repo, s.WorktreePath)
+		}
+	} else {
+		_ = os.RemoveAll(s.WorktreePath)
 	}
 	return a.Store.Delete(id)
 }
