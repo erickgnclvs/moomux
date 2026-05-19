@@ -30,7 +30,7 @@ var (
 
 	dotWorking = lipgloss.NewStyle().Foreground(colWorking).Render("⬤")
 	dotWaiting = lipgloss.NewStyle().Foreground(colWaiting).Render("⬤")
-	dotParked  = lipgloss.NewStyle().Foreground(colParked).Render("○")
+	dotParked  = lipgloss.NewStyle().Foreground(colParked).Render("⬤")
 
 	overlayBox = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
