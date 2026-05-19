@@ -19,7 +19,7 @@ func (m *Model) renderDetail(width, height int) string {
 		return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
 	}
 	s := m.sessions[m.cursor]
-	st := m.states[s.WorktreePath]
+	st := m.effectiveState(s)
 	dot := dotParked
 	label := "parked"
 	switch st {

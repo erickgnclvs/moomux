@@ -19,7 +19,7 @@ func (m *Model) renderList(width, height int) string {
 		return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
 	}
 	for i, s := range m.sessions {
-		row := renderRow(s, m.states[s.WorktreePath], width-4)
+		row := renderRow(s, m.effectiveState(s), width-4)
 		if i == m.cursor {
 			row = listRowSelected.Render(row)
 		} else {

@@ -18,7 +18,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for path, st := range msg.Snap.States {
 			m.states[path] = st
 		}
+		m.refreshTmuxAlive()
 		return m, listenStatus(m.statusCh)
+
+	case TmuxKilledMsg:
+		m.flash = "killed tmux"
+		m.flashTime = time.Now()
+		m.refreshTmuxAlive()
+		return m, nil
 
 	case InfoMsg:
 		if !m.flashTime.IsZero() && time.Since(m.flashTime) > 3*time.Second {
@@ -35,12 +42,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.flash = "created " + msg.Session.Name
 		m.flashTime = time.Now()
 		m.refreshSessions()
+		m.refreshTmuxAlive()
 		return m, nil
 
 	case SessionDeletedMsg:
 		m.flash = "deleted"
 		m.flashTime = time.Now()
 		m.refreshSessions()
+		m.refreshTmuxAlive()
 		return m, nil
 
 	case SessionOpenedMsg:
@@ -82,6 +91,17 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case key.Matches(msg, m.keys.Refresh):
 		m.refreshSessions()
+		m.refreshTmuxAlive()
+	case key.Matches(msg, m.keys.Kill):
+		if len(m.sessions) > 0 {
+			id := m.sessions[m.cursor].ID
+			return m, func() tea.Msg {
+				if err := m.backend.KillTmux(id); err != nil {
+					return ErrorMsg{Err: err}
+				}
+				return TmuxKilledMsg{ID: id}
+			}
+		}
 	case key.Matches(msg, m.keys.New):
 		if len(m.projects) == 0 {
 			return m.flashError(fmt.Errorf("no projects configured — edit ~/.config/curral/config.toml"))

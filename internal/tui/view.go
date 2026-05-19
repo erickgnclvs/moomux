@@ -71,7 +71,7 @@ func (m *Model) renderHeader() string {
 }
 
 func (m *Model) renderFooter() string {
-	help := "n:new  enter:open  d:delete  r:refresh  tab:project  q:quit"
+	help := "n:new  enter:open  x:kill  d:delete  r:refresh  tab:project  q:quit"
 	if m.flash != "" {
 		help = m.flash + "  •  " + help
 	}

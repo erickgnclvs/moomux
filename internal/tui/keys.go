@@ -8,6 +8,7 @@ type KeyMap struct {
 	Open    key.Binding
 	New     key.Binding
 	Delete  key.Binding
+	Kill    key.Binding
 	Refresh key.Binding
 	Tab     key.Binding
 	Quit    key.Binding
@@ -22,6 +23,7 @@ func DefaultKeyMap() KeyMap {
 		Open:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 		New:     key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new")),
 		Delete:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
+		Kill:    key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "kill tmux")),
 		Refresh: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 		Tab:     key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "project")),
 		Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),

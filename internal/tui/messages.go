@@ -21,3 +21,4 @@ type InfoMsg struct {
 type SessionOpenedMsg struct{ ID string }
 type SessionCreatedMsg struct{ Session session.Session }
 type SessionDeletedMsg struct{ ID string }
+type TmuxKilledMsg struct{ ID string }

@@ -19,6 +19,8 @@ type Backend interface {
 	CreateSession(project, name string) (session.Session, error)
 	OpenSession(id string) error
 	DeleteSession(id string) error
+	KillTmux(id string) error
+	TmuxAlive(id string) bool
 	Sessions() []session.Session
 	Projects() []string
 }
@@ -41,6 +43,7 @@ type Model struct {
 	sessions   []session.Session
 	cursor     int
 	states     map[string]watcher.State
+	tmuxAlive  map[string]bool
 	statusCh   <-chan watcher.Snapshot
 	cancelPoll context.CancelFunc
 
@@ -63,6 +66,7 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 		backend:    backend,
 		keys:       DefaultKeyMap(),
 		states:     map[string]watcher.State{},
+		tmuxAlive:  map[string]bool{},
 		statusCh:   statusCh,
 		cancelPoll: cancel,
 		nameInput:  ti,
@@ -72,7 +76,26 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 	}
 	sort.Strings(m.projects)
 	m.refreshSessions()
+	m.refreshTmuxAlive()
 	return m
+}
+
+func (m *Model) refreshTmuxAlive() {
+	all := m.backend.Sessions()
+	next := make(map[string]bool, len(all))
+	for _, s := range all {
+		next[s.ID] = m.backend.TmuxAlive(s.ID)
+	}
+	m.tmuxAlive = next
+}
+
+// effectiveState returns the state to display: if tmux is dead the
+// Claude-session JSON is stale and the session is effectively parked.
+func (m *Model) effectiveState(s session.Session) watcher.State {
+	if !m.tmuxAlive[s.ID] {
+		return watcher.Parked
+	}
+	return m.states[s.WorktreePath]
 }
 
 func (m *Model) refreshSessions() {

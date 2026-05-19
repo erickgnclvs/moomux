@@ -97,6 +97,38 @@ func (a *App) OpenSession(id string) error {
 	return a.ITerm.OpenTab(s.TmuxSession)
 }
 
+// TmuxAlive reports whether the tmux session backing this curral session
+// is currently running. Errors are treated as "not alive" so a flaky tmux
+// CLI never paints a stale Working/Waiting dot.
+func (a *App) TmuxAlive(id string) bool {
+	s, ok := a.Store.Get(id)
+	if !ok {
+		return false
+	}
+	has, err := a.Tmux.HasSession(s.TmuxSession)
+	if err != nil {
+		return false
+	}
+	return has
+}
+
+// KillTmux kills the tmux session but keeps the curral session entry
+// (and its worktree) intact, so it can be re-opened later.
+func (a *App) KillTmux(id string) error {
+	s, ok := a.Store.Get(id)
+	if !ok {
+		return fmt.Errorf("unknown session %q", id)
+	}
+	has, err := a.Tmux.HasSession(s.TmuxSession)
+	if err != nil {
+		return err
+	}
+	if !has {
+		return nil
+	}
+	return a.Tmux.KillSession(s.TmuxSession)
+}
+
 func (a *App) DeleteSession(id string) error {
 	s, ok := a.Store.Get(id)
 	if !ok {
