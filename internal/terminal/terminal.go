@@ -18,6 +18,8 @@ func Detect() TerminalOpener {
 		return &windowOpener{binary: "kitty", args: kittyArgs}
 	case os.Getenv("WEZTERM_PANE") != "":
 		return &windowOpener{binary: "wezterm", args: weztermArgs}
+	case os.Getenv("TERM") == "alacritty":
+		return &windowOpener{binary: "alacritty", args: alacrittyArgs}
 	case os.Getenv("TERM_PROGRAM") == "Apple_Terminal":
 		return &windowOpener{binary: "open", args: terminalAppArgs}
 	default:

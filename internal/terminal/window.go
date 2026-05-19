@@ -46,6 +46,9 @@ func alacrittyArgs(title, tmuxSession string) []string {
 	return args
 }
 
+// terminalAppArgs opens Terminal.app via `open`. It cannot pass a startup
+// command through this mechanism, so the new window will not auto-attach to
+// the tmux session. Users will need to run the attach command manually.
 func terminalAppArgs(title, tmuxSession string) []string {
 	return []string{"-a", "Terminal"}
 }
