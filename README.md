@@ -1,26 +1,51 @@
 # curral
 
-A general-purpose TUI for managing [Claude Code](https://claude.com/claude-code) agent sessions across git worktrees. Replaces the create / resume / delete workflow of tools like claude-squad, using tmux as the session backend and iTerm2 for tab management.
+```
+ ^__^
+ (oo)\________
+ (__)\        )\/\
+     ||----w |
+     ||      ||
+```
+
+A TUI for managing [Claude Code](https://claude.com/claude-code) agent sessions across git worktrees. Replaces the create / resume / delete workflow of tools like claude-squad, using tmux as the session backend and iTerm2 for tab management.
 
 Single Go binary. No daemon, no network, no background process.
 
-## What it does
+## What it looks like
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│ curral                                    eg_system  other_repo  │
-├──────────────────────────┬──────────────────────────────────────┤
-│ SESSIONS                 │ DETAIL                               │
-│                          │                                      │
-│ ▶ hash-password  ⬤ work │  status:   ⬤ working               │
-│   helping-tati   ⬤ wait │  branch:   erickgoncalves/hash-…    │
-│   json-password  ○ park  │  worktree: ~/.local/share/curral/…  │
-│   mfa-password   ○ park  │  created:  2 days ago               │
-│                          │                                      │
-├──────────────────────────┴──────────────────────────────────────┤
-│ n:new  enter:open  d:delete  r:refresh  tab:project  q:quit     │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ^__^                                                                        │
+│ (oo)\   curral                                       project1  project2     │
+│ (__)\                                                                       │
+├─────────────────────────┬───────────────────────────────────────────────────┤
+│ SESSIONS                │ DETAIL                                            │
+│                         │                                                   │
+│ test-session   ⬤ park  │ status:    ⬤ parked                              │
+│ curral-work-4  ⬤ work  │ name:      test-session                           │
+│ curral-work-3  ⬤ wait  │ branch:    test-session                           │
+│ curral-work-2  ⬤ wait  │ worktree:  ~/.local/share/curral/worktrees/…      │
+│ curral-work    ⬤ park  │ tmux:      curral-test-session                    │
+│                         │ created:   6 min ago                              │
+│                         │                                                   │
+│                         │  _____________________________________            │
+│                         │ / this is my very first prompt of the \           │
+│                         │ \ session. just say hello world pls   /           │
+│                         │  -------------------------------------            │
+│                         │         \   ^__^                                  │
+│                         │          \  (oo)\________                         │
+│                         │             (__)\        )\/\                     │
+│                         │                 ||----w |                         │
+│                         │                 ||      ||                        │
+│                         │                                                   │
+├─────────────────────────┴───────────────────────────────────────────────────┤
+│ n:new  enter:open  x:kill  d:delete  tab:switch  r:refresh  q:quit          │
+│                                                     P:+project  D:-project  │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+## What it does
 
 For each session, curral:
 
@@ -52,12 +77,12 @@ Make sure `~/.local/bin` is on your `$PATH`.
 
 ## Configure
 
-First run creates `~/.config/curral/config.toml` with a commented example. Edit it:
+First run creates `~/.config/curral/config.toml` with a commented example. Edit it directly, or press `P` inside the TUI to add a project and `D` to remove one.
 
 ```toml
 [projects.eg_system]
-repo          = "~/Development/eg_system"
-branch_prefix = "erickgoncalves"   # optional — prepended to the branch name
+repo          = "~/Development/project1"
+branch_prefix = "erick"   # optional — prepended to the branch name
 base_branch   = "main"
 
 [projects.other_repo]
@@ -65,7 +90,7 @@ repo        = "~/Development/other_repo"
 base_branch = "main"
 ```
 
-Each project key (`eg_system`, `other_repo`) becomes a tab in the TUI.
+Each project key (`project1`, `other_repo`) becomes a tab in the TUI.
 
 State lives in two places:
 
@@ -89,16 +114,19 @@ curral
 | `↓` / `j`       | Move selection down                     |
 | `enter`         | Open session in a new iTerm2 tab        |
 | `n`             | New session (inline form)               |
+| `x`             | Kill session (tmux only, keep worktree) |
 | `d`             | Delete session (confirmation)           |
 | `r`             | Force refresh                           |
 | `tab`           | Cycle through projects                  |
+| `P`             | Add a new project                       |
+| `D`             | Remove current project                  |
 | `q` / `ctrl+c`  | Quit                                    |
 | `esc`           | Cancel current overlay                  |
 
 ## Status states
 
-| Indicator   | Label    | Meaning                                                 |
-|-------------|----------|---------------------------------------------------------|
+| Indicator    | Label    | Meaning                                                 |
+|--------------|----------|---------------------------------------------------------|
 | `⬤` green   | working  | Claude is actively running in the worktree              |
 | `⬤` amber   | waiting  | Claude is attached but idle, waiting on you             |
 | `⬤` dim     | parked   | Worktree exists, no tmux session — resume via `enter`   |
@@ -153,11 +181,12 @@ make run                   # build + run
 
 ## Out of scope (v1)
 
-- Linux / Windows terminal openers — iTerm2/macOS only
+- Linux / Windows terminal openers — iTerm2/macOS only for now
 - PR/issue integration
 - Session search / filter
 - Branch ahead/behind status
 - Multiple Claude instances per session
+- Other agents different than Claude
 
 ## License
 
