@@ -108,7 +108,7 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 func (m *Model) refreshPrompts() {
 	home, _ := os.UserHomeDir()
 	for _, s := range m.backend.Sessions() {
-		if _, ok := m.prompts[s.ID]; ok {
+		if p, ok := m.prompts[s.ID]; ok && p != "" {
 			continue
 		}
 		m.prompts[s.ID] = prompt.First(home, s.WorktreePath)

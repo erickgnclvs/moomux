@@ -41,58 +41,80 @@ func (m *Model) renderDetail(width, height int) string {
 	b.WriteString(row("worktree", truncate(s.WorktreePath, valueWidth)))
 	b.WriteString(row("tmux", s.TmuxSession))
 	b.WriteString(row("created", humanizeAge(time.Since(s.CreatedAt))))
-	if p := m.prompts[s.ID]; p != "" {
-		b.WriteString("\n")
-		b.WriteString(muteStyle.Render("task:"))
-		b.WriteString("\n")
-		b.WriteString(wrap(p, valueWidth+10))
-	}
 	b.WriteString("\n")
-	b.WriteString(cowStyle.Render(cowsay(label)))
+	cowMsg := m.prompts[s.ID]
+	if cowMsg == "" {
+		cowMsg = label
+	}
+	b.WriteString(cowStyle.Render(cowsay(cowMsg, valueWidth+10)))
 	return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
 }
 
-func cowsay(msg string) string {
-	top := " " + strings.Repeat("_", len(msg)+2)
-	mid := "< " + msg + " >"
-	bot := " " + strings.Repeat("-", len(msg)+2)
-	cow := `        \   ^__^
-         \  (oo)\_______
-            (__)\       )\/\
-                ||----w |
-                ||     ||`
-	return top + "\n" + mid + "\n" + bot + "\n" + cow
+func cowsay(msg string, maxWidth int) string {
+	const lineMax = 38
+	if maxWidth > 0 && maxWidth < lineMax {
+		maxWidth = lineMax
+	}
+	w := lineMax
+	lines := wrapLines(msg, w)
+	// cap at 4 lines, truncate last with ellipsis
+	if len(lines) > 4 {
+		lines = lines[:4]
+		r := []rune(lines[3])
+		if len(r) > w-1 {
+			r = r[:w-1]
+		}
+		lines[3] = string(r) + "…"
+	}
+	border := strings.Repeat("_", w+2)
+	var b strings.Builder
+	b.WriteString(" " + border + "\n")
+	for i, l := range lines {
+		pad := w - len([]rune(l))
+		padded := l + strings.Repeat(" ", pad)
+		switch {
+		case len(lines) == 1:
+			b.WriteString("< " + padded + " >\n")
+		case i == 0:
+			b.WriteString("/ " + padded + " \\\n")
+		case i == len(lines)-1:
+			b.WriteString("\\ " + padded + " /\n")
+		default:
+			b.WriteString("| " + padded + " |\n")
+		}
+	}
+	b.WriteString(" " + strings.Repeat("-", w+2) + "\n")
+	b.WriteString(`        \   ^__^` + "\n")
+	b.WriteString(`         \  (oo)\_______` + "\n")
+	b.WriteString(`            (__)\       )\/\` + "\n")
+	b.WriteString(`                ||----w |` + "\n")
+	b.WriteString(`                ||     ||`)
+	return b.String()
 }
 
-// wrap soft-wraps s at width on rune boundaries, preferring spaces.
-func wrap(s string, width int) string {
-	if width < 8 {
-		width = 8
-	}
+func wrapLines(s string, width int) []string {
 	s = strings.ReplaceAll(s, "\r", "")
-	var out strings.Builder
+	var out []string
 	for _, line := range strings.Split(s, "\n") {
-		runes := []rune(line)
+		runes := []rune(strings.TrimSpace(line))
 		for len(runes) > width {
 			cut := width
-			for i := width - 1; i > width-20 && i > 0; i-- {
+			for i := width - 1; i > width-15 && i > 0; i-- {
 				if runes[i] == ' ' {
 					cut = i
 					break
 				}
 			}
-			out.WriteString(string(runes[:cut]))
-			out.WriteString("\n")
-			runes = runes[cut:]
-			for len(runes) > 0 && runes[0] == ' ' {
-				runes = runes[1:]
-			}
+			out = append(out, string(runes[:cut]))
+			runes = []rune(strings.TrimLeft(string(runes[cut:]), " "))
 		}
-		out.WriteString(string(runes))
-		out.WriteString("\n")
+		if len(runes) > 0 {
+			out = append(out, string(runes))
+		}
 	}
-	return strings.TrimRight(out.String(), "\n")
+	return out
 }
+
 
 func humanizeAge(d time.Duration) string {
 	switch {
