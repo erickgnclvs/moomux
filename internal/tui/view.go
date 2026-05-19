@@ -42,6 +42,12 @@ func (m *Model) View() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, overlayBox.Render(m.renderNewForm()))
 	case ModeConfirmDelete:
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, overlayBox.Render(m.renderConfirm()))
+	case ModeNewProject:
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, overlayBox.Render(m.renderNewProject()))
+	case ModeConfirmDeleteProject:
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, overlayBox.Render(m.renderConfirmDeleteProject()))
+	case ModeProjectInitChoice:
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, overlayBox.Render(m.renderProjectInitChoice()))
 	}
 	return base
 }
@@ -61,19 +67,30 @@ func (m *Model) renderHeader() string {
 	}
 	right := strings.Join(tabs, " ")
 
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
-	if gap < 1 {
-		gap = 1
+	remaining := m.width - 2 - lipgloss.Width(left)
+	if remaining < lipgloss.Width(right) {
+		remaining = lipgloss.Width(right)
 	}
-	rightCol := lipgloss.NewStyle().Render(strings.Repeat(" ", gap) + right)
+	rightCol := lipgloss.NewStyle().Width(remaining).Align(lipgloss.Right).Render(right)
 	row := lipgloss.JoinHorizontal(lipgloss.Center, left, rightCol)
 	return lipgloss.NewStyle().Padding(0, 1).Render(row)
 }
 
 func (m *Model) renderFooter() string {
-	help := "n:new  enter:open  x:kill  d:delete  r:refresh  tab:project  q:quit"
+	left := "n:new  enter:open  x:kill  d:delete  tab:switch  r:refresh  q:quit"
 	if m.flash != "" {
-		help = m.flash + "  •  " + help
+		left = m.flash + "  •  " + left
 	}
-	return footerStyle.Width(m.width).Render(help)
+	right := "P:+project  D:-project"
+	// subtract 2 for the footer's horizontal padding (Padding(0,1) = 1 each side)
+	inner := m.width - 2
+	leftW := inner - lipgloss.Width(right)
+	if leftW < 0 {
+		leftW = 0
+	}
+	row := lipgloss.JoinHorizontal(lipgloss.Bottom,
+		lipgloss.NewStyle().Width(leftW).Render(left),
+		lipgloss.NewStyle().Width(lipgloss.Width(right)).Align(lipgloss.Right).Render(right),
+	)
+	return footerStyle.Width(m.width).Render(row)
 }

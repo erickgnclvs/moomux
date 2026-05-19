@@ -12,10 +12,13 @@ import (
 )
 
 type Project struct {
+	Kind         string `toml:"kind,omitempty"` // "git" (default) or "plain"
 	Repo         string `toml:"repo"`
 	BranchPrefix string `toml:"branch_prefix,omitempty"`
-	BaseBranch   string `toml:"base_branch"`
+	BaseBranch   string `toml:"base_branch,omitempty"`
 }
+
+func (p Project) IsPlain() bool { return p.Kind == "plain" }
 
 type Config struct {
 	Projects map[string]Project `toml:"projects"`

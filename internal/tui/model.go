@@ -23,6 +23,10 @@ type Backend interface {
 	TmuxAlive(id string) bool
 	Sessions() []session.Session
 	Projects() []string
+	AddProject(name string, p config.Project) error
+	InitProjectAndAdd(name string, p config.Project) error
+	AddPlainProject(name string, p config.Project) error
+	RemoveProject(name string) error
 }
 
 type Mode int
@@ -31,7 +35,21 @@ const (
 	ModeList Mode = iota
 	ModeNewForm
 	ModeConfirmDelete
+	ModeNewProject
+	ModeConfirmDeleteProject
+	ModeProjectInitChoice
 )
+
+type projectForm struct {
+	inputs []textinput.Model
+	focus  int
+	err    string
+}
+
+type pendingProject struct {
+	name string
+	p    config.Project
+}
 
 type Model struct {
 	cfg     *config.Config
@@ -49,6 +67,8 @@ type Model struct {
 
 	mode      Mode
 	nameInput textinput.Model
+	projForm  projectForm
+	pending   pendingProject
 	flash     string
 	flashTime time.Time
 
@@ -96,6 +116,37 @@ func (m *Model) effectiveState(s session.Session) watcher.State {
 		return watcher.Parked
 	}
 	return m.states[s.WorktreePath]
+}
+
+func (m *Model) refreshProjects() {
+	m.projects = m.projects[:0]
+	for name := range m.cfg.Projects {
+		m.projects = append(m.projects, name)
+	}
+	sort.Strings(m.projects)
+	if m.activeProj >= len(m.projects) {
+		m.activeProj = 0
+	}
+}
+
+func newProjectForm() projectForm {
+	mk := func(placeholder string, width int) textinput.Model {
+		ti := textinput.New()
+		ti.Placeholder = placeholder
+		ti.Width = width
+		ti.CharLimit = 256
+		return ti
+	}
+	pf := projectForm{
+		inputs: []textinput.Model{
+			mk("name (e.g. eg_system)", 32),
+			mk("repo path (e.g. ~/Development/eg_system)", 48),
+			mk("base branch (default: main)", 24),
+			mk("branch prefix (optional)", 24),
+		},
+	}
+	pf.inputs[0].Focus()
+	return pf
 }
 
 func (m *Model) refreshSessions() {
