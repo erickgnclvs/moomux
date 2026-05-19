@@ -101,7 +101,7 @@ curral
 |-------------|----------|---------------------------------------------------------|
 | `⬤` green   | working  | Claude is actively running in the worktree              |
 | `⬤` amber   | waiting  | Claude is attached but idle, waiting on you             |
-| `○` dim     | parked   | Worktree exists, no tmux session — resume via `enter`   |
+| `⬤` dim     | parked   | Worktree exists, no tmux session — resume via `enter`   |
 
 ## New session flow
 
