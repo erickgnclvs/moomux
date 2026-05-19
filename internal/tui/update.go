@@ -23,12 +23,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.states[path] = st
 		}
 		m.refreshTmuxAlive()
+		m.refreshPrompts()
 		return m, listenStatus(m.statusCh)
 
 	case TmuxKilledMsg:
 		m.flash = "killed tmux"
 		m.flashTime = time.Now()
 		m.refreshTmuxAlive()
+		m.refreshPrompts()
 		return m, nil
 
 	case InfoMsg:
@@ -47,6 +49,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.flashTime = time.Now()
 		m.refreshSessions()
 		m.refreshTmuxAlive()
+		m.refreshPrompts()
 		return m, nil
 
 	case SessionDeletedMsg:
@@ -54,6 +57,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.flashTime = time.Now()
 		m.refreshSessions()
 		m.refreshTmuxAlive()
+		m.refreshPrompts()
 		return m, nil
 
 	case SessionOpenedMsg:
@@ -102,6 +106,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Refresh):
 		m.refreshSessions()
 		m.refreshTmuxAlive()
+		m.refreshPrompts()
 	case key.Matches(msg, m.keys.Kill):
 		if len(m.sessions) > 0 {
 			id := m.sessions[m.cursor].ID

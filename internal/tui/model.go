@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"os"
 	"sort"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/erickgnclvs/curral/internal/config"
+	"github.com/erickgnclvs/curral/internal/prompt"
 	"github.com/erickgnclvs/curral/internal/session"
 	"github.com/erickgnclvs/curral/internal/watcher"
 )
@@ -62,6 +64,7 @@ type Model struct {
 	cursor     int
 	states     map[string]watcher.State
 	tmuxAlive  map[string]bool
+	prompts    map[string]string
 	statusCh   <-chan watcher.Snapshot
 	cancelPoll context.CancelFunc
 
@@ -87,6 +90,7 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 		keys:       DefaultKeyMap(),
 		states:     map[string]watcher.State{},
 		tmuxAlive:  map[string]bool{},
+		prompts:    map[string]string{},
 		statusCh:   statusCh,
 		cancelPoll: cancel,
 		nameInput:  ti,
@@ -97,7 +101,18 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 	sort.Strings(m.projects)
 	m.refreshSessions()
 	m.refreshTmuxAlive()
+	m.refreshPrompts()
 	return m
+}
+
+func (m *Model) refreshPrompts() {
+	home, _ := os.UserHomeDir()
+	for _, s := range m.backend.Sessions() {
+		if _, ok := m.prompts[s.ID]; ok {
+			continue
+		}
+		m.prompts[s.ID] = prompt.First(home, s.WorktreePath)
+	}
 }
 
 func (m *Model) refreshTmuxAlive() {

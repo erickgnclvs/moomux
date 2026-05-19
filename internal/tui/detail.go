@@ -41,6 +41,12 @@ func (m *Model) renderDetail(width, height int) string {
 	b.WriteString(row("worktree", truncate(s.WorktreePath, valueWidth)))
 	b.WriteString(row("tmux", s.TmuxSession))
 	b.WriteString(row("created", humanizeAge(time.Since(s.CreatedAt))))
+	if p := m.prompts[s.ID]; p != "" {
+		b.WriteString("\n")
+		b.WriteString(muteStyle.Render("task:"))
+		b.WriteString("\n")
+		b.WriteString(wrap(p, valueWidth+10))
+	}
 	b.WriteString("\n")
 	b.WriteString(cowStyle.Render(cowsay(label)))
 	return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
@@ -56,6 +62,36 @@ func cowsay(msg string) string {
                 ||----w |
                 ||     ||`
 	return top + "\n" + mid + "\n" + bot + "\n" + cow
+}
+
+// wrap soft-wraps s at width on rune boundaries, preferring spaces.
+func wrap(s string, width int) string {
+	if width < 8 {
+		width = 8
+	}
+	s = strings.ReplaceAll(s, "\r", "")
+	var out strings.Builder
+	for _, line := range strings.Split(s, "\n") {
+		runes := []rune(line)
+		for len(runes) > width {
+			cut := width
+			for i := width - 1; i > width-20 && i > 0; i-- {
+				if runes[i] == ' ' {
+					cut = i
+					break
+				}
+			}
+			out.WriteString(string(runes[:cut]))
+			out.WriteString("\n")
+			runes = runes[cut:]
+			for len(runes) > 0 && runes[0] == ' ' {
+				runes = runes[1:]
+			}
+		}
+		out.WriteString(string(runes))
+		out.WriteString("\n")
+	}
+	return strings.TrimRight(out.String(), "\n")
 }
 
 func humanizeAge(d time.Duration) string {
