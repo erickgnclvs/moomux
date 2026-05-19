@@ -41,7 +41,21 @@ func (m *Model) renderDetail(width, height int) string {
 	b.WriteString(row("worktree", truncate(s.WorktreePath, valueWidth)))
 	b.WriteString(row("tmux", s.TmuxSession))
 	b.WriteString(row("created", humanizeAge(time.Since(s.CreatedAt))))
+	b.WriteString("\n")
+	b.WriteString(cowStyle.Render(cowsay(label)))
 	return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
+}
+
+func cowsay(msg string) string {
+	top := " " + strings.Repeat("_", len(msg)+2)
+	mid := "< " + msg + " >"
+	bot := " " + strings.Repeat("-", len(msg)+2)
+	cow := `        \   ^__^
+         \  (oo)\_______
+            (__)\       )\/\
+                ||----w |
+                ||     ||`
+	return top + "\n" + mid + "\n" + bot + "\n" + cow
 }
 
 func humanizeAge(d time.Duration) string {
