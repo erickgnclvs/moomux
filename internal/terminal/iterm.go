@@ -57,30 +57,25 @@ func escapeAppleScript(s string) string {
 	return string(out)
 }
 
-// Stub implementations for other terminal types (to be implemented in later tasks)
+// argBuilder builds the full argument list given a title and tmux session name.
+// Defined here so the package compiles while window.go is pending (Task 3).
+type argBuilder func(title, tmuxSession string) []string
+
+// windowOpener and fallbackOpener are stubbed here so the package compiles.
+// Task 3 replaces windowOpener with the real implementation.
+// Task 4 replaces fallbackOpener with the real implementation.
 type windowOpener struct {
 	binary string
-	args   func(string) []string
+	args   argBuilder
+	exec   func(binary string, args ...string) error
 }
 
-func (w *windowOpener) OpenSession(tmuxSession, title string) error {
-	return nil
-}
+func (w *windowOpener) OpenSession(tmuxSession, title string) error { return nil }
 
 type fallbackOpener struct{}
 
-func (f *fallbackOpener) OpenSession(tmuxSession, title string) error {
-	return nil
-}
+func (f *fallbackOpener) OpenSession(tmuxSession, title string) error { return nil }
 
-func kittyArgs(session string) []string {
-	return nil
-}
-
-func weztermArgs(session string) []string {
-	return nil
-}
-
-func terminalAppArgs(session string) []string {
-	return nil
-}
+func kittyArgs(title, tmuxSession string) []string       { return nil }
+func weztermArgs(title, tmuxSession string) []string     { return nil }
+func terminalAppArgs(title, tmuxSession string) []string { return nil }
