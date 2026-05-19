@@ -1,0 +1,82 @@
+package tmux
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
+
+type fakeRunner struct {
+	calls  [][]string
+	out    map[string]string
+	failOn map[string]bool
+}
+
+func (f *fakeRunner) Run(args ...string) (string, error) {
+	key := strings.Join(args, " ")
+	f.calls = append(f.calls, append([]string(nil), args...))
+	if f.failOn[key] {
+		return "", exitErr{code: 1}
+	}
+	return f.out[key], nil
+}
+
+type exitErr struct{ code int }
+
+func (e exitErr) Error() string { return "exit" }
+func (e exitErr) ExitCode() int { return e.code }
+
+func TestNewSession(t *testing.T) {
+	fr := &fakeRunner{}
+	c := &Client{Runner: fr}
+	if err := c.NewSession("curral-foo", "/tmp/wt", "claude"); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"new-session", "-d", "-s", "curral-foo", "-c", "/tmp/wt"},
+		{"send-keys", "-t", "curral-foo", "claude", "Enter"},
+	}
+	if !reflect.DeepEqual(fr.calls, want) {
+		t.Fatalf("calls = %v", fr.calls)
+	}
+}
+
+func TestNewSessionNoCmd(t *testing.T) {
+	fr := &fakeRunner{}
+	c := &Client{Runner: fr}
+	if err := c.NewSession("curral-foo", "/tmp/wt", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(fr.calls) != 1 {
+		t.Fatalf("expected one call, got %v", fr.calls)
+	}
+}
+
+func TestHasSessionPresent(t *testing.T) {
+	fr := &fakeRunner{}
+	c := &Client{Runner: fr}
+	ok, err := c.HasSession("curral-foo")
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+}
+
+func TestHasSessionAbsent(t *testing.T) {
+	fr := &fakeRunner{failOn: map[string]bool{"has-session -t curral-foo": true}}
+	c := &Client{Runner: fr}
+	ok, err := c.HasSession("curral-foo")
+	if err != nil || ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+}
+
+func TestKillSession(t *testing.T) {
+	fr := &fakeRunner{}
+	c := &Client{Runner: fr}
+	if err := c.KillSession("curral-foo"); err != nil {
+		t.Fatal(err)
+	}
+	if got := fr.calls[0]; !reflect.DeepEqual(got, []string{"kill-session", "-t", "curral-foo"}) {
+		t.Fatalf("got %v", got)
+	}
+}
