@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"fmt"
+	"log/slog"
 	"os/exec"
 )
 
@@ -43,7 +44,9 @@ tell application "iTerm2"
 		end tell
 	end tell
 end tell`, setName, tmuxSession)
-	_, err := c.runner.Run(script)
+	slog.Debug("iterm: running applescript", "tmux_session", tmuxSession, "title", title, "set_name", setName != "", "script", script)
+	out, err := c.runner.Run(script)
+	slog.Debug("iterm: applescript result", "out", out, "err", err)
 	return err
 }
 
