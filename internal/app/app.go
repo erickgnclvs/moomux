@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/erickgnclvs/curral/internal/config"
-	"github.com/erickgnclvs/curral/internal/gitwt"
-	"github.com/erickgnclvs/curral/internal/session"
-	"github.com/erickgnclvs/curral/internal/terminal"
-	"github.com/erickgnclvs/curral/internal/tmux"
+	"github.com/erickgnclvs/moomux/internal/config"
+	"github.com/erickgnclvs/moomux/internal/gitwt"
+	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/terminal"
+	"github.com/erickgnclvs/moomux/internal/tmux"
 )
 
 type App struct {
@@ -28,7 +28,7 @@ type App struct {
 
 func WorktreeRootDefault() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "share", "curral", "worktrees")
+	return filepath.Join(home, ".local", "share", "moomux", "worktrees")
 }
 
 func (a *App) Projects() []string {
@@ -48,7 +48,7 @@ func (a *App) CreateSession(project, name string) (session.Session, error) {
 		return session.Session{}, fmt.Errorf("unknown project %q", project)
 	}
 	wt := filepath.Join(a.WorktreeRoot, project, name)
-	tmuxName := "curral-" + name
+	tmuxName := "moomux-" + name
 	branch := ""
 
 	if proj.IsPlain() {
@@ -106,7 +106,7 @@ func (a *App) OpenSession(id string) error {
 	return a.Terminal.OpenSession(s.TmuxSession, s.Branch)
 }
 
-// TmuxAlive reports whether the tmux session backing this curral session
+// TmuxAlive reports whether the tmux session backing this moomux session
 // is currently running. Errors are treated as "not alive" so a flaky tmux
 // CLI never paints a stale Working/Waiting dot.
 func (a *App) TmuxAlive(id string) bool {
@@ -121,7 +121,7 @@ func (a *App) TmuxAlive(id string) bool {
 	return has
 }
 
-// KillTmux kills the tmux session but keeps the curral session entry
+// KillTmux kills the tmux session but keeps the moomux session entry
 // (and its worktree) intact, so it can be re-opened later.
 func (a *App) KillTmux(id string) error {
 	s, ok := a.Store.Get(id)

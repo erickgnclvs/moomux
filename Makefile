@@ -1,6 +1,6 @@
 .PHONY: build test install run clean
 
-BIN := curral
+BIN := moomux
 PREFIX ?= $(HOME)/.local
 
 build:

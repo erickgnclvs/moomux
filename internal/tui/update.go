@@ -8,8 +8,8 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/erickgnclvs/curral/internal/config"
-	"github.com/erickgnclvs/curral/internal/gitwt"
+	"github.com/erickgnclvs/moomux/internal/config"
+	"github.com/erickgnclvs/moomux/internal/gitwt"
 )
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -119,7 +119,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case key.Matches(msg, m.keys.New):
 		if len(m.projects) == 0 {
-			return m.flashError(fmt.Errorf("no projects configured — edit ~/.config/curral/config.toml"))
+			return m.flashError(fmt.Errorf("no projects configured — edit ~/.config/moomux/config.toml"))
 		}
 		m.mode = ModeNewForm
 		m.nameInput.SetValue("")

@@ -24,7 +24,7 @@ func TestStoreRoundtrip(t *testing.T) {
 		Name:         "hash",
 		Branch:       "erickgoncalves/hash",
 		WorktreePath: "/tmp/wt",
-		TmuxSession:  "curral-hash",
+		TmuxSession:  "moomux-hash",
 		CreatedAt:    time.Date(2026, 5, 17, 10, 0, 0, 0, time.UTC),
 	}
 	if err := s.Put(sess); err != nil {

@@ -9,11 +9,11 @@ import (
 func TestFallbackPrintsAttachCommand(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fallbackOpener{out: &buf}
-	if err := f.OpenSession("curral-foo", "feat/bar"); err != nil {
+	if err := f.OpenSession("moomux-foo", "feat/bar"); err != nil {
 		t.Fatal(err)
 	}
 	got := buf.String()
-	if !strings.Contains(got, "tmux attach -t curral-foo") {
+	if !strings.Contains(got, "tmux attach -t moomux-foo") {
 		t.Fatalf("expected attach command in output, got: %s", got)
 	}
 }

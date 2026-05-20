@@ -54,7 +54,7 @@ func (m *Model) View() string {
 
 func (m *Model) renderHeader() string {
 	cow := cowStyle.Render("  ^__^\n  (oo)\\_\n  (__)\\ )")
-	wordmark := titleStyle.Render("curral")
+	wordmark := titleStyle.Render("moomux")
 	left := lipgloss.JoinHorizontal(lipgloss.Center, cow, "  ", wordmark)
 
 	tabs := []string{}

@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/erickgnclvs/curral/internal/watcher"
+	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
 func (m *Model) renderDetail(width, height int) string {

@@ -18,7 +18,7 @@ func (f *fakeExec) Command(binary string, args ...string) error {
 func TestWindowOpenerKittyArgs(t *testing.T) {
 	fe := &fakeExec{}
 	w := &windowOpener{binary: "kitty", args: kittyArgs, exec: fe.Command}
-	if err := w.OpenSession("curral-foo", "feat/bar"); err != nil {
+	if err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
 		t.Fatal(err)
 	}
 	if fe.binary != "kitty" {
@@ -29,13 +29,13 @@ func TestWindowOpenerKittyArgs(t *testing.T) {
 	assertContains(t, fe.args, "tmux")
 	assertContains(t, fe.args, "attach")
 	assertContains(t, fe.args, "-t")
-	assertContains(t, fe.args, "curral-foo")
+	assertContains(t, fe.args, "moomux-foo")
 }
 
 func TestWindowOpenerWezTermArgs(t *testing.T) {
 	fe := &fakeExec{}
 	w := &windowOpener{binary: "wezterm", args: weztermArgs, exec: fe.Command}
-	if err := w.OpenSession("curral-foo", "feat/bar"); err != nil {
+	if err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
 		t.Fatal(err)
 	}
 	if fe.binary != "wezterm" {
@@ -49,7 +49,7 @@ func TestWindowOpenerWezTermArgs(t *testing.T) {
 func TestWindowOpenerAlacrittyArgs(t *testing.T) {
 	fe := &fakeExec{}
 	w := &windowOpener{binary: "alacritty", args: alacrittyArgs, exec: fe.Command}
-	if err := w.OpenSession("curral-foo", "feat/bar"); err != nil {
+	if err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
 		t.Fatal(err)
 	}
 	assertContains(t, fe.args, "--title")

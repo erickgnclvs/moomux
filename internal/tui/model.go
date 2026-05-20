@@ -9,10 +9,10 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/erickgnclvs/curral/internal/config"
-	"github.com/erickgnclvs/curral/internal/prompt"
-	"github.com/erickgnclvs/curral/internal/session"
-	"github.com/erickgnclvs/curral/internal/watcher"
+	"github.com/erickgnclvs/moomux/internal/config"
+	"github.com/erickgnclvs/moomux/internal/prompt"
+	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
 // Backend is everything the TUI calls into. main wires the real impl;

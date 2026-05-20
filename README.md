@@ -1,4 +1,4 @@
-# curral
+# moomux
 
 ```
  ^__^
@@ -17,16 +17,16 @@ Single Go binary. No daemon, no network, no background process.
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ ^__^                                                                        │
-│ (oo)\   curral                                       project1  project2     │
+│ (oo)\   moomux                                       project1  project2     │
 │ (__)\                                                                       │
 ├─────────────────────────┬───────────────────────────────────────────────────┤
 │ SESSIONS                │ DETAIL                                            │
 │                         │                                                   │
 │ test-session   ⬤ park  │ status:    ⬤ parked                              │
-│ curral-work-4  ⬤ work  │ name:      test-session                           │
-│ curral-work-3  ⬤ wait  │ branch:    test-session                           │
-│ curral-work-2  ⬤ wait  │ worktree:  ~/.local/share/curral/worktrees/…      │
-│ curral-work    ⬤ park  │ tmux:      curral-test-session                    │
+│ moomux-work-4  ⬤ work  │ name:      test-session                           │
+│ moomux-work-3  ⬤ wait  │ branch:    test-session                           │
+│ moomux-work-2  ⬤ wait  │ worktree:  ~/.local/share/moomux/worktrees/…      │
+│ moomux-work    ⬤ park  │ tmux:      moomux-test-session                    │
 │                         │ created:   6 min ago                              │
 │                         │                                                   │
 │                         │  _____________________________________            │
@@ -47,7 +47,7 @@ Single Go binary. No daemon, no network, no background process.
 
 ## What it does
 
-For each session, curral:
+For each session, moomux:
 
 1. Creates a git worktree on a new branch off your base branch
 2. Starts a detached tmux session in that worktree
@@ -68,16 +68,16 @@ Status is detected by polling `~/.claude/sessions/*.json` every 2 seconds and ma
 ## Install
 
 ```bash
-git clone https://github.com/erickgnclvs/curral
-cd curral
-make install              # builds and installs to ~/.local/bin/curral
+git clone https://github.com/erickgnclvs/moomux
+cd moomux
+make install              # builds and installs to ~/.local/bin/moomux
 ```
 
 Make sure `~/.local/bin` is on your `$PATH`.
 
 ## Configure
 
-First run creates `~/.config/curral/config.toml` with a commented example. Edit it directly, or press `P` inside the TUI to add a project and `D` to remove one.
+First run creates `~/.config/moomux/config.toml` with a commented example. Edit it directly, or press `P` inside the TUI to add a project and `D` to remove one.
 
 ```toml
 [projects.eg_system]
@@ -96,14 +96,14 @@ State lives in two places:
 
 | Path                                      | What it holds                          |
 |-------------------------------------------|----------------------------------------|
-| `~/.config/curral/config.toml`            | Project registry (you edit this)       |
-| `~/.config/curral/sessions.json`          | Active session metadata (curral edits) |
-| `~/.local/share/curral/worktrees/<proj>/` | Worktree checkouts (one per session)   |
+| `~/.config/moomux/config.toml`            | Project registry (you edit this)       |
+| `~/.config/moomux/sessions.json`          | Active session metadata (moomux edits) |
+| `~/.local/share/moomux/worktrees/<proj>/` | Worktree checkouts (one per session)   |
 
 ## Run
 
 ```bash
-curral
+moomux
 ```
 
 ## Keybindings
@@ -135,10 +135,10 @@ curral
 
 1. Press `n` → inline form appears
 2. Type a session name → press enter
-3. curral:
+3. moomux:
    - `git fetch origin <base_branch>`
    - `git worktree add <path> -b <branch_prefix>/<name> origin/<base_branch>`
-   - `tmux new-session -d -s curral-<name> -c <worktree>`
+   - `tmux new-session -d -s moomux-<name> -c <worktree>`
    - `tmux send-keys claude Enter`
    - opens an iTerm2 tab attached to the new tmux session
 
@@ -147,7 +147,7 @@ If `branch_prefix` is unset the branch is named `<name>` directly.
 ## Delete flow
 
 1. Press `d` → confirmation overlay
-2. Press `y` → curral:
+2. Press `y` → moomux:
    - kills the tmux session (if running)
    - removes the worktree (`git worktree remove --force`)
    - drops the entry from `sessions.json`
@@ -156,7 +156,7 @@ If `branch_prefix` is unset the branch is named `<name>` directly.
 ## Architecture
 
 ```
-curral/
+moomux/
 ├── main.go                 # entrypoint
 └── internal/
     ├── config/             # TOML config loader
@@ -175,7 +175,7 @@ Every shell-calling package (`tmux`, `iterm`, `gitwt`) has an injectable `Runner
 
 ```bash
 make test                  # go test ./... -race
-make build                 # produces ./curral
+make build                 # produces ./moomux
 make run                   # build + run
 ```
 

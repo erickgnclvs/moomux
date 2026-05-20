@@ -3,8 +3,8 @@ package tui
 import (
 	"time"
 
-	"github.com/erickgnclvs/curral/internal/session"
-	"github.com/erickgnclvs/curral/internal/watcher"
+	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
 type StatusTickMsg struct{ Snap watcher.Snapshot }
