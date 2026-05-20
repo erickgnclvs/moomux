@@ -34,6 +34,7 @@ func TestNewSession(t *testing.T) {
 	}
 	want := [][]string{
 		{"new-session", "-d", "-s", "moomux-foo", "-c", "/tmp/wt", "-n", "foo"},
+		{"set-window-option", "-t", "moomux-foo", "automatic-rename", "off"},
 		{"send-keys", "-t", "moomux-foo", "claude", "Enter"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
@@ -62,8 +63,12 @@ func TestNewSessionNoCmd(t *testing.T) {
 	if err := c.NewSession("moomux-foo", "/tmp/wt", "", "foo"); err != nil {
 		t.Fatal(err)
 	}
-	if len(fr.calls) != 1 {
-		t.Fatalf("expected one call, got %v", fr.calls)
+	want := [][]string{
+		{"new-session", "-d", "-s", "moomux-foo", "-c", "/tmp/wt", "-n", "foo"},
+		{"set-window-option", "-t", "moomux-foo", "automatic-rename", "off"},
+	}
+	if !reflect.DeepEqual(fr.calls, want) {
+		t.Fatalf("calls = %v", fr.calls)
 	}
 }
 

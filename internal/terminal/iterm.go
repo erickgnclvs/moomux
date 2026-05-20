@@ -25,6 +25,11 @@ func newITermClient() *itermClient {
 }
 
 func (c *itermClient) OpenSession(tmuxSession, title string) error {
+	setName := ""
+	if title != "" {
+		escaped := escapeAppleScript(title)
+		setName = fmt.Sprintf("\n\t\t\tset name to \"%s\"", escaped)
+	}
 	script := fmt.Sprintf(`
 tell application "iTerm2"
 	activate
@@ -33,11 +38,11 @@ tell application "iTerm2"
 	end if
 	tell current window
 		create tab with default profile
-		tell current session of current tab
+		tell current session of current tab%s
 			write text "tmux attach -t %s"
 		end tell
 	end tell
-end tell`, tmuxSession)
+end tell`, setName, tmuxSession)
 	_, err := c.runner.Run(script)
 	return err
 }

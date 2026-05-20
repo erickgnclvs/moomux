@@ -78,8 +78,8 @@ func (a *App) CreateSession(project, name string) (session.Session, error) {
 		return session.Session{}, fmt.Errorf("tmux new-session: %w", err)
 	}
 	slog.Info("tmux session created", "name", tmuxName)
-	if err := a.Terminal.OpenSession(tmuxName, branch); err != nil {
-		slog.Error("terminal open failed", "tmux_session", tmuxName, "branch", branch, "err", err)
+	if err := a.Terminal.OpenSession(tmuxName, name); err != nil {
+		slog.Error("terminal open failed", "tmux_session", tmuxName, "name", name, "err", err)
 		return session.Session{}, fmt.Errorf("terminal open: %w", err)
 	}
 	slog.Info("terminal opened", "tmux_session", tmuxName)
@@ -118,8 +118,8 @@ func (a *App) OpenSession(id string) error {
 			return err
 		}
 	}
-	if err := a.Terminal.OpenSession(s.TmuxSession, s.Branch); err != nil {
-		slog.Error("Terminal.OpenSession failed", "id", id, "tmux_session", s.TmuxSession, "branch", s.Branch, "err", err)
+	if err := a.Terminal.OpenSession(s.TmuxSession, s.Name); err != nil {
+		slog.Error("Terminal.OpenSession failed", "id", id, "tmux_session", s.TmuxSession, "name", s.Name, "err", err)
 		return err
 	}
 	slog.Info("session opened", "id", id)

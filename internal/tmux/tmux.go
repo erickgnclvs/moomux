@@ -41,6 +41,7 @@ func (c *Client) HasSession(name string) (bool, error) {
 // NewSession creates a detached tmux session at cwd and sends `cmd` + Enter.
 // If windowName is non-empty it is set as the initial window name via -n so
 // terminals that read the tmux title (iTerm2, kitty, etc.) display it immediately.
+// automatic-rename is disabled so the name is not overwritten by the shell.
 // If cmd is empty, no command is sent.
 func (c *Client) NewSession(name, cwd, cmd, windowName string) error {
 	args := []string{"new-session", "-d", "-s", name, "-c", cwd}
@@ -49,6 +50,11 @@ func (c *Client) NewSession(name, cwd, cmd, windowName string) error {
 	}
 	if _, err := c.Runner.Run(args...); err != nil {
 		return err
+	}
+	if windowName != "" {
+		// Keep the window name stable; without this tmux replaces it with the
+		// running process name (e.g. "bash") as soon as the shell starts.
+		_, _ = c.Runner.Run("set-window-option", "-t", name, "automatic-rename", "off")
 	}
 	if cmd != "" {
 		if _, err := c.Runner.Run("send-keys", "-t", name, cmd, "Enter"); err != nil {
