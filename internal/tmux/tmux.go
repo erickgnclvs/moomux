@@ -55,6 +55,10 @@ func (c *Client) NewSession(name, cwd, cmd, windowName string) error {
 		// Keep the window name stable; without this tmux replaces it with the
 		// running process name (e.g. "bash") as soon as the shell starts.
 		_, _ = c.Runner.Run("set-window-option", "-t", name, "automatic-rename", "off")
+		// Make tmux continuously push the window name as the terminal title so
+		// the shell's own PROMPT_COMMAND/precmd title updates don't win the race.
+		_, _ = c.Runner.Run("set-option", "-t", name, "set-titles", "on")
+		_, _ = c.Runner.Run("set-option", "-t", name, "set-titles-string", "#{window_name}")
 	}
 	if cmd != "" {
 		if _, err := c.Runner.Run("send-keys", "-t", name, cmd, "Enter"); err != nil {

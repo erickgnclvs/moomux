@@ -35,6 +35,8 @@ func TestNewSession(t *testing.T) {
 	want := [][]string{
 		{"new-session", "-d", "-s", "moomux-foo", "-c", "/tmp/wt", "-n", "foo"},
 		{"set-window-option", "-t", "moomux-foo", "automatic-rename", "off"},
+		{"set-option", "-t", "moomux-foo", "set-titles", "on"},
+		{"set-option", "-t", "moomux-foo", "set-titles-string", "#{window_name}"},
 		{"send-keys", "-t", "moomux-foo", "claude", "Enter"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
@@ -66,6 +68,8 @@ func TestNewSessionNoCmd(t *testing.T) {
 	want := [][]string{
 		{"new-session", "-d", "-s", "moomux-foo", "-c", "/tmp/wt", "-n", "foo"},
 		{"set-window-option", "-t", "moomux-foo", "automatic-rename", "off"},
+		{"set-option", "-t", "moomux-foo", "set-titles", "on"},
+		{"set-option", "-t", "moomux-foo", "set-titles-string", "#{window_name}"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
 		t.Fatalf("calls = %v", fr.calls)
