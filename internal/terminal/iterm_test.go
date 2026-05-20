@@ -27,6 +27,10 @@ func TestITermOpenSessionAttachesAndSetsTitle(t *testing.T) {
 	if !strings.Contains(fr.script, `set name to "feat/bar"`) {
 		t.Fatalf("missing tab title: %s", fr.script)
 	}
+	// OSC 0 sequence must precede the attach command so the tab re-renders immediately.
+	if !strings.Contains(fr.script, `printf '\033]0;feat/bar\007'`) {
+		t.Fatalf("missing OSC title sequence: %s", fr.script)
+	}
 }
 
 func TestITermOpenSessionOmitsTitleWhenEmpty(t *testing.T) {

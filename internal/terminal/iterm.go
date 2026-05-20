@@ -26,8 +26,14 @@ func newITermClient() *itermClient {
 
 func (c *itermClient) OpenSession(tmuxSession, title string) error {
 	setName := ""
+	// Emit an OSC 0 escape sequence before attaching so iTerm2 re-renders the
+	// tab title immediately when the command runs, not just when the profile
+	// title setting is next toggled.
+	attachCmd := "tmux attach -t " + tmuxSession
 	if title != "" {
-		setName = fmt.Sprintf("\n\t\t\tset name to \"%s\"", escapeAppleScript(title))
+		escaped := escapeAppleScript(title)
+		setName = fmt.Sprintf("\n\t\t\tset name to \"%s\"", escaped)
+		attachCmd = fmt.Sprintf("printf '\\033]0;%s\\007' && tmux attach -t %s", escaped, tmuxSession)
 	}
 	script := fmt.Sprintf(`
 tell application "iTerm2"
@@ -38,10 +44,10 @@ tell application "iTerm2"
 	tell current window
 		create tab with default profile
 		tell current session of current tab%s
-			write text "tmux attach -t %s"
+			write text "%s"
 		end tell
 	end tell
-end tell`, setName, tmuxSession)
+end tell`, setName, attachCmd)
 	_, err := c.runner.Run(script)
 	return err
 }
