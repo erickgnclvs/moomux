@@ -29,7 +29,22 @@ func (e exitErr) ExitCode() int { return e.code }
 func TestNewSession(t *testing.T) {
 	fr := &fakeRunner{}
 	c := &Client{Runner: fr}
-	if err := c.NewSession("curral-foo", "/tmp/wt", "claude"); err != nil {
+	if err := c.NewSession("curral-foo", "/tmp/wt", "claude", "foo"); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"new-session", "-d", "-s", "curral-foo", "-c", "/tmp/wt", "-n", "foo"},
+		{"send-keys", "-t", "curral-foo", "claude", "Enter"},
+	}
+	if !reflect.DeepEqual(fr.calls, want) {
+		t.Fatalf("calls = %v", fr.calls)
+	}
+}
+
+func TestNewSessionNoWindowName(t *testing.T) {
+	fr := &fakeRunner{}
+	c := &Client{Runner: fr}
+	if err := c.NewSession("curral-foo", "/tmp/wt", "claude", ""); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{
@@ -44,7 +59,7 @@ func TestNewSession(t *testing.T) {
 func TestNewSessionNoCmd(t *testing.T) {
 	fr := &fakeRunner{}
 	c := &Client{Runner: fr}
-	if err := c.NewSession("curral-foo", "/tmp/wt", ""); err != nil {
+	if err := c.NewSession("curral-foo", "/tmp/wt", "", "foo"); err != nil {
 		t.Fatal(err)
 	}
 	if len(fr.calls) != 1 {

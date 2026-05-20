@@ -67,7 +67,7 @@ func (a *App) CreateSession(project, name string) (session.Session, error) {
 			return session.Session{}, fmt.Errorf("git worktree add: %w", err)
 		}
 	}
-	if err := a.Tmux.NewSession(tmuxName, wt, "claude"); err != nil {
+	if err := a.Tmux.NewSession(tmuxName, wt, "claude", name); err != nil {
 		return session.Session{}, fmt.Errorf("tmux new-session: %w", err)
 	}
 	if err := a.Terminal.OpenSession(tmuxName, branch); err != nil {
@@ -99,7 +99,7 @@ func (a *App) OpenSession(id string) error {
 		return err
 	}
 	if !has {
-		if err := a.Tmux.NewSession(s.TmuxSession, s.WorktreePath, "claude"); err != nil {
+		if err := a.Tmux.NewSession(s.TmuxSession, s.WorktreePath, "claude", s.Name); err != nil {
 			return err
 		}
 	}
