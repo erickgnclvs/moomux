@@ -83,7 +83,7 @@ Make sure `~/.local/bin` is on your `$PATH`.
 First run creates `~/.config/moomux/config.toml` with a commented example. Edit it directly, or press `P` inside the TUI to add a project and `D` to remove one.
 
 ```toml
-[projects.eg_system]
+[projects.project1]
 repo          = "~/Development/project1"
 branch_prefix = "erick"   # optional — prepended to the branch name
 base_branch   = "main"
