@@ -14,7 +14,7 @@ import (
 // EncodeCwd mirrors Claude Code's project-dir encoding: both '/' and '.'
 // become '-'. Existing hyphens are preserved.
 func EncodeCwd(p string) string {
-	r := strings.NewReplacer("/", "-", ".", "-")
+	r := strings.NewReplacer("/", "-", ".", "-", "_", "-")
 	return r.Replace(p)
 }
 
