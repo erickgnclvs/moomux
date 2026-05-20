@@ -6,8 +6,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/erickgnclvs/curral/internal/session"
-	"github.com/erickgnclvs/curral/internal/watcher"
+	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
 func (m *Model) renderList(width, height int) string {

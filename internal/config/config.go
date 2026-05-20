@@ -1,4 +1,4 @@
-// Package config loads and writes curral's TOML configuration.
+// Package config loads and writes moomux's TOML configuration.
 package config
 
 import (
@@ -60,10 +60,10 @@ func Save(path string, cfg *Config) error {
 
 func DefaultPath() string {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "curral", "config.toml")
+		return filepath.Join(xdg, "moomux", "config.toml")
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "curral", "config.toml")
+	return filepath.Join(home, ".config", "moomux", "config.toml")
 }
 
 func expandHome(p string) string {

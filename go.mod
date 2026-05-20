@@ -1,4 +1,4 @@
-module github.com/erickgnclvs/curral
+module github.com/erickgnclvs/moomux
 
 go 1.24.4
 

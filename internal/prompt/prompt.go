@@ -1,5 +1,5 @@
 // Package prompt extracts the first user prompt from a Claude Code
-// session log so curral can show "what is this session doing?".
+// session log so moomux can show "what is this session doing?".
 package prompt
 
 import (

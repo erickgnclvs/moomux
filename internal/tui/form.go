@@ -45,7 +45,7 @@ func (m *Model) renderProjectInitChoice() string {
 	b.WriteString(titleStyle.Render("Path is not a git repository"))
 	b.WriteString("\n\n")
 	b.WriteString(fmt.Sprintf("path: %s\n\n", m.pending.p.Repo))
-	b.WriteString("How should curral set this up?\n\n")
+	b.WriteString("How should moomux set this up?\n\n")
 	b.WriteString("  i  ")
 	b.WriteString(muteStyle.Render("init a new git repo here (mkdir + git init + empty commit)"))
 	b.WriteString("\n")

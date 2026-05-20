@@ -8,19 +8,19 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/erickgnclvs/curral/internal/app"
-	"github.com/erickgnclvs/curral/internal/config"
-	"github.com/erickgnclvs/curral/internal/gitwt"
-	"github.com/erickgnclvs/curral/internal/session"
-	"github.com/erickgnclvs/curral/internal/terminal"
-	"github.com/erickgnclvs/curral/internal/tmux"
-	"github.com/erickgnclvs/curral/internal/tui"
-	"github.com/erickgnclvs/curral/internal/watcher"
+	"github.com/erickgnclvs/moomux/internal/app"
+	"github.com/erickgnclvs/moomux/internal/config"
+	"github.com/erickgnclvs/moomux/internal/gitwt"
+	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/terminal"
+	"github.com/erickgnclvs/moomux/internal/tmux"
+	"github.com/erickgnclvs/moomux/internal/tui"
+	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "curral:", err)
+		fmt.Fprintln(os.Stderr, "moomux:", err)
 		os.Exit(1)
 	}
 }
@@ -74,7 +74,7 @@ func seedExampleConfig(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	example := `# curral configuration
+	example := `# moomux configuration
 # Add one [projects.<name>] section per repo you want to manage.
 
 # [projects.eg_system]

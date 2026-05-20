@@ -15,6 +15,6 @@ func (f *fallbackOpener) OpenSession(tmuxSession, title string) error {
 	if w == nil {
 		w = os.Stdout
 	}
-	fmt.Fprintf(w, "curral: run the following to attach to your session:\n  tmux attach -t %s\n", tmuxSession)
+	fmt.Fprintf(w, "moomux: run the following to attach to your session:\n  tmux attach -t %s\n", tmuxSession)
 	return nil
 }

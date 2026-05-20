@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// rawSession captures the subset of fields curral cares about from a
+// rawSession captures the subset of fields moomux cares about from a
 // ~/.claude/sessions/*.json file. Schema is best-effort: missing fields are tolerated.
 type rawSession struct {
 	CWD    string `json:"cwd"`

@@ -1,4 +1,4 @@
-// Package session persists curral session metadata to JSON.
+// Package session persists moomux session metadata to JSON.
 package session
 
 import (
@@ -121,8 +121,8 @@ func MakeID(project, name string) string { return project + ":" + name }
 
 func DefaultPath() string {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "curral", "sessions.json")
+		return filepath.Join(xdg, "moomux", "sessions.json")
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "curral", "sessions.json")
+	return filepath.Join(home, ".config", "moomux", "sessions.json")
 }
