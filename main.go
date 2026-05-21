@@ -61,7 +61,7 @@ func run() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	statusCh := make(chan watcher.Snapshot, 4)
-	multi := buildWatcher(home, store.All())
+	multi := buildWatcher(home, store)
 	go multi.Run(ctx, statusCh)
 
 	m := tui.New(cfg, a, statusCh, cancel)
@@ -74,24 +74,24 @@ func run() error {
 	return nil
 }
 
-func buildWatcher(home string, sessions []session.Session) watcher.Watcher {
+func buildWatcher(home string, store *session.Store) watcher.Watcher {
 	watchers := []watcher.Watcher{
 		&watcher.DirWatcher{Dir: filepath.Join(home, ".claude", "sessions")},
 		&watcher.DirWatcher{Dir: filepath.Join(home, ".codex", "sessions")},
+		&watcher.OpenCodeWatcher{
+			GetEntries: func() []watcher.OpenCodeEntry {
+				var out []watcher.OpenCodeEntry
+				for _, s := range store.All() {
+					if s.AgentName() == "opencode" && s.AgentPort > 0 {
+						out = append(out, watcher.OpenCodeEntry{
+							WorktreePath: s.WorktreePath,
+							URL:          fmt.Sprintf("http://127.0.0.1:%d", s.AgentPort),
+						})
+					}
+				}
+				return out
+			},
+		},
 	}
-
-	var ocEntries []watcher.OpenCodeEntry
-	for _, s := range sessions {
-		if s.AgentName() == "opencode" && s.AgentPort > 0 {
-			ocEntries = append(ocEntries, watcher.OpenCodeEntry{
-				WorktreePath: s.WorktreePath,
-				URL:          fmt.Sprintf("http://127.0.0.1:%d", s.AgentPort),
-			})
-		}
-	}
-	if len(ocEntries) > 0 {
-		watchers = append(watchers, &watcher.OpenCodeWatcher{Entries: ocEntries})
-	}
-
 	return &watcher.MultiWatcher{Watchers: watchers}
 }

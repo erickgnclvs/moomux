@@ -17,9 +17,9 @@ type OpenCodeEntry struct {
 // OpenCodeWatcher polls each OpenCode session's HTTP API for status.
 // Unreachable servers are treated as Waiting (OpenCode may still be starting up).
 type OpenCodeWatcher struct {
-	Entries  []OpenCodeEntry
-	Interval time.Duration
-	Client   *http.Client // nil = default client with short timeout
+	GetEntries func() []OpenCodeEntry // called on each tick — allows dynamic session list
+	Interval   time.Duration
+	Client     *http.Client // nil = default client with short timeout
 }
 
 func (w *OpenCodeWatcher) Run(ctx context.Context, out chan<- Snapshot) {
@@ -45,7 +45,7 @@ func (w *OpenCodeWatcher) Run(ctx context.Context, out chan<- Snapshot) {
 
 func (w *OpenCodeWatcher) tick(ctx context.Context, out chan<- Snapshot, client *http.Client) {
 	snap := Snapshot{States: map[string]State{}, PollTime: time.Now()}
-	for _, e := range w.Entries {
+	for _, e := range w.GetEntries() {
 		snap.States[e.WorktreePath] = pollOpenCode(client, e.URL)
 	}
 	send(ctx, out, snap)

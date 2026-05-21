@@ -23,7 +23,7 @@ func TestOpenCodeWatcherBusy(t *testing.T) {
 	defer srv.Close()
 
 	entries := []OpenCodeEntry{{WorktreePath: "/tmp/wt-oc", URL: srv.URL}}
-	w := &OpenCodeWatcher{Entries: entries, Interval: 10 * time.Millisecond, Client: srv.Client()}
+	w := &OpenCodeWatcher{GetEntries: func() []OpenCodeEntry { return entries }, Interval: 10 * time.Millisecond, Client: srv.Client()}
 	ch := make(chan Snapshot, 2)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
@@ -52,7 +52,7 @@ func TestOpenCodeWatcherIdle(t *testing.T) {
 	defer srv.Close()
 
 	entries := []OpenCodeEntry{{WorktreePath: "/tmp/wt-oc", URL: srv.URL}}
-	w := &OpenCodeWatcher{Entries: entries, Interval: 10 * time.Millisecond, Client: srv.Client()}
+	w := &OpenCodeWatcher{GetEntries: func() []OpenCodeEntry { return entries }, Interval: 10 * time.Millisecond, Client: srv.Client()}
 	ch := make(chan Snapshot, 2)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
@@ -70,7 +70,7 @@ func TestOpenCodeWatcherIdle(t *testing.T) {
 
 func TestOpenCodeWatcherUnreachable(t *testing.T) {
 	entries := []OpenCodeEntry{{WorktreePath: "/tmp/wt-oc", URL: "http://127.0.0.1:1"}}
-	w := &OpenCodeWatcher{Entries: entries, Interval: 10 * time.Millisecond}
+	w := &OpenCodeWatcher{GetEntries: func() []OpenCodeEntry { return entries }, Interval: 10 * time.Millisecond}
 	ch := make(chan Snapshot, 2)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
