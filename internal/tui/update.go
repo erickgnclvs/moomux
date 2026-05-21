@@ -65,6 +65,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.flashTime = time.Now()
 		return m, nil
 
+	case MosaicOpenedMsg:
+		m.flash = "mosaic open — Ctrl+b p to return"
+		m.flashTime = time.Now()
+		return m, nil
+
 	case tea.KeyMsg:
 		switch m.mode {
 		case ModeNewForm:
@@ -147,6 +152,13 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				return SessionOpenedMsg{ID: id}
 			}
+		}
+	case key.Matches(msg, m.keys.Mosaic):
+		return m, func() tea.Msg {
+			if err := m.backend.OpenMosaic(); err != nil {
+				return ErrorMsg{Err: err}
+			}
+			return MosaicOpenedMsg{}
 		}
 	}
 	return m, nil

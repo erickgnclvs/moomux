@@ -29,6 +29,7 @@ type Backend interface {
 	InitProjectAndAdd(name string, p config.Project) error
 	AddPlainProject(name string, p config.Project) error
 	RemoveProject(name string) error
+	OpenMosaic() error
 }
 
 type Mode int
