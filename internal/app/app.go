@@ -12,6 +12,7 @@ import (
 
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/gitwt"
+	"github.com/erickgnclvs/moomux/internal/mosaic"
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/terminal"
 	"github.com/erickgnclvs/moomux/internal/tmux"
@@ -277,4 +278,21 @@ func (a *App) DeleteSession(id string) error {
 		_ = os.RemoveAll(s.WorktreePath)
 	}
 	return a.Store.Delete(id)
+}
+
+func (a *App) OpenMosaic() error {
+	if os.Getenv("TMUX") == "" {
+		return fmt.Errorf("mosaic requires running inside a tmux session")
+	}
+	var live []session.Session
+	for _, s := range a.Store.All() {
+		if ok, _ := a.Tmux.HasSession(s.TmuxSession); ok {
+			live = append(live, s)
+		}
+	}
+	if len(live) == 0 {
+		return fmt.Errorf("no live sessions to tile")
+	}
+	mc := mosaic.Client{Tmux: a.Tmux}
+	return mc.Open(live)
 }
