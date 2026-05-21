@@ -286,7 +286,12 @@ func (a *App) OpenMosaic() error {
 	}
 	var live []session.Session
 	for _, s := range a.Store.All() {
-		if ok, _ := a.Tmux.HasSession(s.TmuxSession); ok {
+		has, err := a.Tmux.HasSession(s.TmuxSession)
+		if err != nil {
+			slog.Warn("HasSession check failed, skipping", "id", s.ID, "tmux_session", s.TmuxSession, "err", err)
+			continue
+		}
+		if has {
 			live = append(live, s)
 		}
 	}
