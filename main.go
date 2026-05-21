@@ -61,10 +61,8 @@ func run() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	statusCh := make(chan watcher.Snapshot, 4)
-	w := &watcher.DirWatcher{
-		Dir: filepath.Join(home, ".claude", "sessions"),
-	}
-	go w.Run(ctx, statusCh)
+	multi := buildWatcher(home, store.All())
+	go multi.Run(ctx, statusCh)
 
 	m := tui.New(cfg, a, statusCh, cancel)
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -74,4 +72,26 @@ func run() error {
 	}
 	cancel()
 	return nil
+}
+
+func buildWatcher(home string, sessions []session.Session) watcher.Watcher {
+	watchers := []watcher.Watcher{
+		&watcher.DirWatcher{Dir: filepath.Join(home, ".claude", "sessions")},
+		&watcher.DirWatcher{Dir: filepath.Join(home, ".codex", "sessions")},
+	}
+
+	var ocEntries []watcher.OpenCodeEntry
+	for _, s := range sessions {
+		if s.AgentName() == "opencode" && s.AgentPort > 0 {
+			ocEntries = append(ocEntries, watcher.OpenCodeEntry{
+				WorktreePath: s.WorktreePath,
+				URL:          fmt.Sprintf("http://127.0.0.1:%d", s.AgentPort),
+			})
+		}
+	}
+	if len(ocEntries) > 0 {
+		watchers = append(watchers, &watcher.OpenCodeWatcher{Entries: ocEntries})
+	}
+
+	return &watcher.MultiWatcher{Watchers: watchers}
 }
