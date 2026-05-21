@@ -36,6 +36,7 @@ func (m *Model) renderDetail(width, height int) string {
 		valueWidth = 8
 	}
 	b.WriteString(row("status", dot+"  "+label))
+	b.WriteString(row("agent", s.AgentName()))
 	b.WriteString(row("name", truncate(s.Name, valueWidth)))
 	b.WriteString(row("branch", truncate(s.Branch, valueWidth)))
 	b.WriteString(row("worktree", truncate(s.WorktreePath, valueWidth)))
