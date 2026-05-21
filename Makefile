@@ -1,7 +1,26 @@
-.PHONY: build test install run clean
+.PHONY: build test install run clean check-deps
 
 BIN := moomux
 PREFIX ?= $(HOME)/.local
+
+REQUIRED_BINS := tmux git
+
+check-deps:
+	@missing=""; \
+	for bin in $(REQUIRED_BINS); do \
+		if ! command -v $$bin >/dev/null 2>&1; then \
+			missing="$$missing $$bin"; \
+		fi; \
+	done; \
+	if [ -n "$$missing" ]; then \
+		echo "Error: missing required dependencies:$$missing"; \
+		echo ""; \
+		echo "Install with:"; \
+		echo "  macOS:  brew install$$missing"; \
+		echo "  Ubuntu: sudo apt install$$missing"; \
+		echo "  Fedora: sudo dnf install$$missing"; \
+		exit 1; \
+	fi
 
 build:
 	go build -o $(BIN) .
@@ -9,11 +28,11 @@ build:
 test:
 	go test ./... -race -count=1
 
-install: build
+install: check-deps build
 	mkdir -p $(PREFIX)/bin
 	cp $(BIN) $(PREFIX)/bin/$(BIN)
 
-run: build
+run: check-deps build
 	./$(BIN)
 
 clean:
