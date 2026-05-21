@@ -61,7 +61,7 @@ func run() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	statusCh := make(chan watcher.Snapshot, 4)
-	w := &watcher.Watcher{
+	w := &watcher.DirWatcher{
 		Dir: filepath.Join(home, ".claude", "sessions"),
 	}
 	go w.Run(ctx, statusCh)

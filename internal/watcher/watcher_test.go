@@ -51,7 +51,7 @@ func TestWatcherTickEmitsSnapshot(t *testing.T) {
 		"status": "idle",
 	})
 
-	w := &Watcher{Dir: dir, Interval: 10 * time.Millisecond}
+	w := &DirWatcher{Dir: dir, Interval: 10 * time.Millisecond}
 	ch := make(chan Snapshot, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -71,7 +71,7 @@ func TestWatcherTickEmitsSnapshot(t *testing.T) {
 }
 
 func TestWatcherMissingDir(t *testing.T) {
-	w := &Watcher{Dir: "/nonexistent/moomux/test", Interval: 10 * time.Millisecond}
+	w := &DirWatcher{Dir: "/nonexistent/moomux/test", Interval: 10 * time.Millisecond}
 	ch := make(chan Snapshot, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()

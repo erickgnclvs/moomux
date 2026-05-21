@@ -1,4 +1,4 @@
-// Package watcher polls ~/.claude/sessions/*.json and emits state snapshots.
+// Package watcher polls agent session state and emits Snapshots.
 package watcher
 
 import (
@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+// State describes what a session is doing.
 type State int
 
 const (
@@ -35,13 +36,19 @@ type Snapshot struct {
 	PollTime time.Time
 }
 
-type Watcher struct {
+// Watcher is implemented by every agent-specific watcher.
+type Watcher interface {
+	Run(ctx context.Context, out chan<- Snapshot)
+}
+
+// DirWatcher polls a directory of JSON session files (used by Claude and Codex).
+type DirWatcher struct {
 	Dir      string
 	Interval time.Duration
 }
 
 // Run polls until ctx is canceled. Each tick produces one Snapshot on out.
-func (w *Watcher) Run(ctx context.Context, out chan<- Snapshot) {
+func (w *DirWatcher) Run(ctx context.Context, out chan<- Snapshot) {
 	if w.Interval == 0 {
 		w.Interval = 2 * time.Second
 	}
@@ -58,7 +65,7 @@ func (w *Watcher) Run(ctx context.Context, out chan<- Snapshot) {
 	}
 }
 
-func (w *Watcher) tick(ctx context.Context, out chan<- Snapshot) {
+func (w *DirWatcher) tick(ctx context.Context, out chan<- Snapshot) {
 	snap := Snapshot{States: map[string]State{}, PollTime: time.Now()}
 	entries, err := os.ReadDir(w.Dir)
 	if err != nil {
