@@ -4,6 +4,7 @@ package tmux
 import (
 	"errors"
 	"os/exec"
+	"strings"
 )
 
 type Runner interface {
@@ -36,6 +37,23 @@ func (c *Client) HasSession(name string) (bool, error) {
 		return false, nil
 	}
 	return false, err
+}
+
+// LiveSessions returns the set of currently running tmux session names via a
+// single list-sessions call — much cheaper than N HasSession calls.
+func (c *Client) LiveSessions() map[string]bool {
+	out, err := c.Runner.Run("list-sessions", "-F", "#{session_name}")
+	result := map[string]bool{}
+	if err != nil {
+		// tmux exits non-zero when no sessions exist; that's fine
+		return result
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line != "" {
+			result[line] = true
+		}
+	}
+	return result
 }
 
 // NewSession creates a detached tmux session at cwd and sends `cmd` + Enter.

@@ -127,19 +127,16 @@ func (a *App) OpenSession(id string) error {
 	return nil
 }
 
-// TmuxAlive reports whether the tmux session backing this moomux session
-// is currently running. Errors are treated as "not alive" so a flaky tmux
-// CLI never paints a stale Working/Waiting dot.
-func (a *App) TmuxAlive(id string) bool {
-	s, ok := a.Store.Get(id)
-	if !ok {
-		return false
+// TmuxAliveAll returns id→alive for every stored session using a single
+// tmux list-sessions call instead of one has-session subprocess per session.
+func (a *App) TmuxAliveAll() map[string]bool {
+	live := a.Tmux.LiveSessions()
+	all := a.Store.All()
+	result := make(map[string]bool, len(all))
+	for _, s := range all {
+		result[s.ID] = live[s.TmuxSession]
 	}
-	has, err := a.Tmux.HasSession(s.TmuxSession)
-	if err != nil {
-		return false
-	}
-	return has
+	return result
 }
 
 // KillTmux kills the tmux session but keeps the moomux session entry

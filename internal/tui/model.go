@@ -22,7 +22,9 @@ type Backend interface {
 	OpenSession(id string) error
 	DeleteSession(id string) error
 	KillTmux(id string) error
-	TmuxAlive(id string) bool
+	// TmuxAliveAll returns id→alive for every stored session using a single
+	// tmux list-sessions call instead of N has-session calls.
+	TmuxAliveAll() map[string]bool
 	Sessions() []session.Session
 	Projects() []string
 	AddProject(name string, p config.Project) error
@@ -112,7 +114,10 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 func (m *Model) refreshPrompts() {
 	home, _ := os.UserHomeDir()
 	for _, s := range m.backend.Sessions() {
-		if p, ok := m.prompts[s.ID]; ok && p != "" {
+		// Skip once checked — presence in the map (even "") means we've scanned
+		// already. New sessions are cleared from the map on SessionCreatedMsg so
+		// they get picked up on the next tick.
+		if _, ok := m.prompts[s.ID]; ok {
 			continue
 		}
 		m.prompts[s.ID] = prompt.First(home, s.WorktreePath)
@@ -120,12 +125,7 @@ func (m *Model) refreshPrompts() {
 }
 
 func (m *Model) refreshTmuxAlive() {
-	all := m.backend.Sessions()
-	next := make(map[string]bool, len(all))
-	for _, s := range all {
-		next[s.ID] = m.backend.TmuxAlive(s.ID)
-	}
-	m.tmuxAlive = next
+	m.tmuxAlive = m.backend.TmuxAliveAll()
 }
 
 // effectiveState returns the state to display: if tmux is dead the

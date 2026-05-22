@@ -47,6 +47,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SessionCreatedMsg:
 		m.flash = "created " + msg.Session.Name
 		m.flashTime = time.Now()
+		// Remove from prompt cache so the next tick scans the new session.
+		delete(m.prompts, msg.Session.ID)
 		m.refreshSessions()
 		m.refreshTmuxAlive()
 		m.refreshPrompts()
