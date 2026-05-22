@@ -12,20 +12,10 @@ import (
 
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/gitwt"
-	"github.com/erickgnclvs/moomux/internal/mosaic"
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/terminal"
 	"github.com/erickgnclvs/moomux/internal/tmux"
 )
-
-var validSessionName = func(name string) bool {
-	for _, r := range name {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_') {
-			return false
-		}
-	}
-	return len(name) > 0
-}
 
 type App struct {
 	Cfg          *config.Config
@@ -81,10 +71,6 @@ func (a *App) CreateSession(project, name string) (session.Session, error) {
 	proj, ok := a.Cfg.Projects[project]
 	if !ok {
 		return session.Session{}, fmt.Errorf("unknown project %q", project)
-	}
-	// only allow safe characters in session names since the name ends up in tmux send-keys
-	if !validSessionName(name) {
-		return session.Session{}, fmt.Errorf("session name must contain only letters, digits, hyphens, and underscores")
 	}
 	wt := filepath.Join(a.WorktreeRoot, project, name)
 	tmuxName := "moomux-" + name
@@ -326,26 +312,4 @@ func (a *App) DeleteSession(id string) error {
 		_ = os.RemoveAll(s.WorktreePath)
 	}
 	return a.Store.Delete(id)
-}
-
-func (a *App) OpenMosaic() error {
-	if os.Getenv("TMUX") == "" {
-		return fmt.Errorf("mosaic requires running inside a tmux session")
-	}
-	var live []session.Session
-	for _, s := range a.Store.All() {
-		has, err := a.Tmux.HasSession(s.TmuxSession)
-		if err != nil {
-			slog.Warn("HasSession check failed, skipping", "id", s.ID, "tmux_session", s.TmuxSession, "err", err)
-			continue
-		}
-		if has {
-			live = append(live, s)
-		}
-	}
-	if len(live) == 0 {
-		return fmt.Errorf("no live sessions to tile")
-	}
-	mc := mosaic.Client{Tmux: a.Tmux}
-	return mc.Open(live)
 }
