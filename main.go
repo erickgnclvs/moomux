@@ -61,7 +61,7 @@ func run() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	statusCh := make(chan watcher.Snapshot, 4)
-	multi := buildWatcher(home, store)
+	multi := buildWatcher(home)
 	go multi.Run(ctx, statusCh)
 
 	m := tui.New(cfg, a, statusCh, cancel)
@@ -74,24 +74,19 @@ func run() error {
 	return nil
 }
 
-func buildWatcher(home string, store *session.Store) watcher.Watcher {
-	watchers := []watcher.Watcher{
+func buildWatcher(home string) watcher.Watcher {
+	return &watcher.MultiWatcher{Watchers: []watcher.Watcher{
+		// Claude Code: JSON session files in ~/.claude/sessions/
 		&watcher.DirWatcher{Dir: filepath.Join(home, ".claude", "sessions")},
-		&watcher.DirWatcher{Dir: filepath.Join(home, ".codex", "sessions")},
-		&watcher.OpenCodeWatcher{
-			GetEntries: func() []watcher.OpenCodeEntry {
-				var out []watcher.OpenCodeEntry
-				for _, s := range store.All() {
-					if s.AgentName() == "opencode" && s.AgentPort > 0 {
-						out = append(out, watcher.OpenCodeEntry{
-							WorktreePath: s.WorktreePath,
-							URL:          fmt.Sprintf("http://127.0.0.1:%d", s.AgentPort),
-						})
-					}
-				}
-				return out
-			},
+		// Codex: activity tracked in SQLite DB (~/.codex/state_N.sqlite)
+		&watcher.SQLiteWatcher{
+			DB:    filepath.Join(home, ".codex", "state_*.sqlite"),
+			Query: "SELECT cwd, MAX(updated_at_ms) FROM threads GROUP BY cwd",
 		},
-	}
-	return &watcher.MultiWatcher{Watchers: watchers}
+		// OpenCode: activity tracked in SQLite DB (~/.local/share/opencode/opencode.db)
+		&watcher.SQLiteWatcher{
+			DB:    filepath.Join(home, ".local", "share", "opencode", "opencode.db"),
+			Query: "SELECT directory, MAX(time_updated) FROM session GROUP BY directory",
+		},
+	}}
 }
