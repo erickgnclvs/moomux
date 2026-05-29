@@ -120,13 +120,10 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 func (m *Model) refreshPrompts() {
 	home, _ := os.UserHomeDir()
 	for _, s := range m.backend.Sessions() {
-		// Skip once checked — presence in the map (even "") means we've scanned
-		// already. New sessions are cleared from the map on SessionCreatedMsg so
-		// they get picked up on the next tick.
-		if _, ok := m.prompts[s.ID]; ok {
+		if p := m.prompts[s.ID]; p != "" {
 			continue
 		}
-		m.prompts[s.ID] = prompt.First(home, s.WorktreePath)
+		m.prompts[s.ID] = prompt.ForAgent(home, s.AgentName(), s.WorktreePath)
 	}
 }
 

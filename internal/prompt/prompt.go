@@ -1,12 +1,14 @@
-// Package prompt extracts the first user prompt from a Claude Code
-// session log so moomux can show "what is this session doing?".
+// Package prompt extracts the first user prompt from an agent session
+// so moomux can show "what is this session doing?".
 package prompt
 
 import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -27,6 +29,78 @@ type entry struct {
 type msg struct {
 	Role    string          `json:"role"`
 	Content json.RawMessage `json:"content"`
+}
+
+// ForAgent returns the first user prompt for a session, dispatching to the
+// right data source based on agent type.
+func ForAgent(home, agent, worktreePath string) string {
+	switch agent {
+	case "opencode":
+		return FirstOpenCode(home, worktreePath)
+	case "codex":
+		return FirstCodex(home, worktreePath)
+	default:
+		return First(home, worktreePath)
+	}
+}
+
+// FirstOpenCode returns the first user text prompt for an OpenCode session
+// by querying ~/.local/share/opencode/opencode.db.
+func FirstOpenCode(home, worktreePath string) string {
+	dbPath := filepath.Join(home, ".local", "share", "opencode", "opencode.db")
+	query := `SELECT json_extract(p.data, '$.text')
+FROM part p
+JOIN message m ON p.message_id = m.id
+JOIN session s ON s.id = m.session_id
+WHERE s.directory = '` + strings.ReplaceAll(worktreePath, "'", "''") + `'
+  AND json_extract(m.data, '$.role') = 'user'
+  AND json_extract(p.data, '$.type') = 'text'
+ORDER BY m.time_created ASC, p.time_created ASC
+LIMIT 1`
+	out, err := exec.Command("sqlite3", dbPath, query).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// FirstCodex returns the first user prompt from a Codex CLI session by
+// querying the threads table in the state SQLite files.
+func FirstCodex(home, worktreePath string) string {
+	globs := codexDBGlobs(home)
+	query := "SELECT first_user_message FROM threads WHERE cwd = '" +
+		strings.ReplaceAll(worktreePath, "'", "''") +
+		"' AND first_user_message != '' ORDER BY created_at ASC LIMIT 1"
+	for _, pattern := range globs {
+		paths, err := filepath.Glob(pattern)
+		if err != nil || len(paths) == 0 {
+			continue
+		}
+		for _, p := range paths {
+			out, err := exec.Command("sqlite3", p, query).Output()
+			if err != nil {
+				continue
+			}
+			if s := strings.TrimSpace(string(out)); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// codexDBGlobs returns glob patterns for Codex state SQLite files across
+// known installation layouts (OpenAI CLI and JetBrains plugin).
+func codexDBGlobs(home string) []string {
+	globs := []string{
+		filepath.Join(home, ".codex", "state_*.sqlite"),
+	}
+	if runtime.GOOS == "darwin" {
+		globs = append(globs,
+			filepath.Join(home, "Library", "Caches", "JetBrains", "*", "aia", "codex", "state_*.sqlite"),
+		)
+	}
+	return globs
 }
 
 // First returns the earliest non-banner user prompt across all jsonl
