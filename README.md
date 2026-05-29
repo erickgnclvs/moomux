@@ -1,3 +1,5 @@
+
+
 # moomux
 
 ```
@@ -47,6 +49,11 @@ Single Go binary. No daemon, no network, no background process.
 │                                                     P:+project  D:-project  │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+## Demo
+
+https://github.com/user-attachments/assets/6a3aec4e-6c30-4cdf-89fa-fdadf02c6f3a
+
 
 ## What it does
 
