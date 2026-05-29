@@ -211,6 +211,21 @@ make run                   # build + run
 - Gemini CLI agent support (planned)
 - Per-session agent override (agent is set per-project)
 
+## Contributing
+
+Contributions are welcome and encouraged.
+
+I built moomux around my own workflow — iTerm2 on macOS, opening each agent in a new tab. That's the path I know best and the one that gets the most polish. If you use a different terminal or OS and want to improve the experience there, please go for it. The terminal-opener logic lives in `internal/iterm/` and the detection logic in `internal/app/`, so that's a good place to start.
+
+Some areas that could use help:
+
+- Better tab/window management for terminals beyond iTerm2
+- Linux-native workflows (GNOME Terminal, Kitty, WezTerm, etc.)
+- Windows support
+- Anything in the [Out of scope](#out-of-scope-v1) list you feel strongly about
+
+Open an issue or a PR — both are appreciated.
+
 ## License
 
 MIT
