@@ -42,7 +42,8 @@ func (m *Model) renderDetail(width, height int) string {
 	b.WriteString(row("tmux", s.TmuxSession))
 	b.WriteString(row("created", humanizeAge(time.Since(s.CreatedAt))))
 	if prompt := m.prompts[s.ID]; prompt != "" {
-		b.WriteString(row("prompt", truncate(prompt, valueWidth)))
+		oneline := strings.ReplaceAll(strings.ReplaceAll(prompt, "\r\n", " "), "\n", " ")
+		b.WriteString(row("prompt", truncate(oneline, valueWidth)))
 	}
 	b.WriteString("\n")
 	var cowMsg string
