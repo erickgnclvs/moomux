@@ -42,16 +42,25 @@ func (m *Model) renderDetail(width, height int) string {
 	b.WriteString(row("worktree", truncate(s.WorktreePath, valueWidth)))
 	b.WriteString(row("tmux", s.TmuxSession))
 	b.WriteString(row("created", humanizeAge(time.Since(s.CreatedAt))))
-	b.WriteString("\n")
-	cowMsg := m.prompts[s.ID]
-	if cowMsg == "" {
-		cowMsg = label
+	if prompt := m.prompts[s.ID]; prompt != "" {
+		oneline := strings.ReplaceAll(strings.ReplaceAll(prompt, "\r\n", " "), "\n", " ")
+		b.WriteString(row("prompt", truncate(oneline, valueWidth)))
 	}
-	b.WriteString(cowStyle.Render(cowsay(cowMsg, valueWidth+10)))
+	b.WriteString("\n")
+	var cowMsg string
+	switch st {
+	case watcher.Working:
+		cowMsg = pickQuip(s.ID, quipsWorking)
+	case watcher.Waiting:
+		cowMsg = pickQuip(s.ID, quipsWaiting)
+	default:
+		cowMsg = pickQuip(s.ID, quipsParked)
+	}
+	b.WriteString(cowStyle.Render(cowsay(cowMsg, valueWidth+10, st)))
 	return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
 }
 
-func cowsay(msg string, maxWidth int) string {
+func cowsay(msg string, maxWidth int, st watcher.State) string {
 	const lineMax = 38
 	if maxWidth > 0 && maxWidth < lineMax {
 		maxWidth = lineMax
@@ -85,8 +94,17 @@ func cowsay(msg string, maxWidth int) string {
 		}
 	}
 	b.WriteString(" " + strings.Repeat("-", w+2) + "\n")
+	var eyes string
+	switch st {
+	case watcher.Working:
+		eyes = "**"
+	case watcher.Waiting:
+		eyes = "oo"
+	default:
+		eyes = "--"
+	}
 	b.WriteString(`        \   ^__^` + "\n")
-	b.WriteString(`         \  (oo)\_______` + "\n")
+	b.WriteString("         \\  (" + eyes + `)\_______` + "\n")
 	b.WriteString(`            (__)\       )\/\` + "\n")
 	b.WriteString(`                ||----w |` + "\n")
 	b.WriteString(`                ||     ||`)
