@@ -41,7 +41,3 @@ moomux
 ```
 
 Keys: `n` new · `enter` open · `x` kill · `d` delete · `tab` switch project · `q` quit
-
-## License
-
-MIT
