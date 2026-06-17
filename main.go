@@ -19,7 +19,18 @@ import (
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
+// set by goreleaser via ldflags
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Printf("moomux %s (%s) built %s\n", version, commit, date)
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "moomux:", err)
 		os.Exit(1)
