@@ -76,6 +76,15 @@ Status is detected by polling `~/.claude/sessions/*.json` every 2 seconds and ma
 
 ## Install
 
+**Homebrew (recommended — auto-updates with `brew upgrade moomux`):**
+
+```bash
+brew tap erickgnclvs/moomux
+brew install moomux
+```
+
+**From source:**
+
 ```bash
 git clone https://github.com/erickgnclvs/moomux
 cd moomux
@@ -83,6 +92,12 @@ make install              # builds and installs to ~/.local/bin/moomux
 ```
 
 Make sure `~/.local/bin` is on your `$PATH`.
+
+**Go install:**
+
+```bash
+go install github.com/erickgnclvs/moomux@latest
+```
 
 ## Configure
 
