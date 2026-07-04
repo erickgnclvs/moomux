@@ -82,6 +82,21 @@ func (m *Model) renderAgentSelector() string {
 	return b.String()
 }
 
+func (m *Model) renderTagForm() string {
+	labels := []string{"ticket url", "pr url"}
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("Tag session"))
+	b.WriteString("\n\n")
+	for i, ti := range m.tagForm.inputs {
+		b.WriteString(muteStyle.Render(fmt.Sprintf("%-12s", labels[i]+":")))
+		b.WriteString(ti.View())
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(muteStyle.Render("tab to move   enter to save   esc to cancel"))
+	return b.String()
+}
+
 func (m *Model) renderProjectInitChoice() string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("Path is not a git repository"))

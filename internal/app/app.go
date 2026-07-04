@@ -136,6 +136,19 @@ func (a *App) CreateSession(project, name, agent string) (session.Session, error
 	return s, nil
 }
 
+func (a *App) SetSessionTags(id, ticket, pr string) (session.Session, error) {
+	s, ok := a.Store.Get(id)
+	if !ok {
+		return session.Session{}, fmt.Errorf("unknown session %q", id)
+	}
+	s.Ticket = ticket
+	s.PR = pr
+	if err := a.Store.Put(s); err != nil {
+		return s, fmt.Errorf("store: %w", err)
+	}
+	return s, nil
+}
+
 func (a *App) OpenSession(id string) error {
 	s, ok := a.Store.Get(id)
 	if !ok {
