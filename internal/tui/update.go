@@ -27,7 +27,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, listenStatus(m.statusCh)
 
 	case TmuxKilledMsg:
-		m.flash = "killed tmux"
+		m.flash = "parked"
 		m.flashTime = time.Now()
 		m.refreshTmuxAlive()
 		m.refreshPrompts()
@@ -110,6 +110,12 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Tab):
 		if len(m.projects) > 0 {
 			m.activeProj = (m.activeProj + 1) % len(m.projects)
+			m.cursor = 0
+			m.refreshSessions()
+		}
+	case key.Matches(msg, m.keys.ShiftTab):
+		if len(m.projects) > 0 {
+			m.activeProj = (m.activeProj - 1 + len(m.projects)) % len(m.projects)
 			m.cursor = 0
 			m.refreshSessions()
 		}

@@ -79,7 +79,7 @@ func (m *Model) renderHeader() string {
 }
 
 func (m *Model) renderFooter() string {
-	left := "n:new  enter:open  x:kill  d:delete  t:tag  tab:switch  r:refresh  q:quit"
+	left := "n:new  enter:open  x:park  d:delete  t:tag  tab:project  r:refresh  q:quit"
 	if m.flash != "" {
 		left = m.flash + "  •  " + left
 	}
