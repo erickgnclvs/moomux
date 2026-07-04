@@ -62,6 +62,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshPrompts()
 		return m, nil
 
+	case SessionTaggedMsg:
+		m.flash = "tagged " + msg.Session.Name
+		m.flashTime = time.Now()
+		m.refreshSessions()
+		return m, nil
+
 	case SessionOpenedMsg:
 		m.flash = "opened " + msg.ID
 		m.flashTime = time.Now()
@@ -79,6 +85,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateConfirmDeleteProject(msg)
 		case ModeProjectInitChoice:
 			return m.updateProjectInitChoice(msg)
+		case ModeTagForm:
+			return m.updateTagForm(msg)
 		default:
 			return m.updateList(msg)
 		}
@@ -148,6 +156,12 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Delete):
 		if len(m.sessions) > 0 {
 			m.mode = ModeConfirmDelete
+		}
+	case key.Matches(msg, m.keys.Tag):
+		if len(m.sessions) > 0 {
+			s := m.sessions[m.cursor]
+			m.mode = ModeTagForm
+			m.tagForm = newTagForm(s.Ticket, s.PR)
 		}
 	case key.Matches(msg, m.keys.NewProject):
 		m.mode = ModeNewProject
@@ -294,6 +308,42 @@ func (m *Model) updateNewProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	return m, nil
+}
+
+func (m *Model) updateTagForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.mode = ModeList
+		return m, nil
+	case "tab", "down", "shift+tab", "up":
+		m.tagForm.inputs[m.tagForm.focus].Blur()
+		if msg.String() == "shift+tab" || msg.String() == "up" {
+			m.tagForm.focus = (m.tagForm.focus - 1 + len(m.tagForm.inputs)) % len(m.tagForm.inputs)
+		} else {
+			m.tagForm.focus = (m.tagForm.focus + 1) % len(m.tagForm.inputs)
+		}
+		m.tagForm.inputs[m.tagForm.focus].Focus()
+		return m, nil
+	case "enter":
+		if len(m.sessions) == 0 {
+			m.mode = ModeList
+			return m, nil
+		}
+		id := m.sessions[m.cursor].ID
+		ticket := m.tagForm.inputs[0].Value()
+		pr := m.tagForm.inputs[1].Value()
+		m.mode = ModeList
+		return m, func() tea.Msg {
+			s, err := m.backend.SetSessionTags(id, ticket, pr)
+			if err != nil {
+				return ErrorMsg{Err: err}
+			}
+			return SessionTaggedMsg{Session: s}
+		}
+	}
+	var cmd tea.Cmd
+	m.tagForm.inputs[m.tagForm.focus], cmd = m.tagForm.inputs[m.tagForm.focus].Update(msg)
+	return m, cmd
 }
 
 func (m *Model) activateProject(name string) {

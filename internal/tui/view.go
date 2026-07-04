@@ -48,6 +48,8 @@ func (m *Model) View() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, overlayBox.Render(m.renderConfirmDeleteProject()))
 	case ModeProjectInitChoice:
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, overlayBox.Render(m.renderProjectInitChoice()))
+	case ModeTagForm:
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, overlayBox.Render(m.renderTagForm()))
 	}
 	return base
 }
@@ -77,7 +79,7 @@ func (m *Model) renderHeader() string {
 }
 
 func (m *Model) renderFooter() string {
-	left := "n:new  enter:open  x:park  d:delete  tab:project  r:refresh  q:quit"
+	left := "n:new  enter:open  x:park  d:delete  t:tag  tab:project  r:refresh  q:quit"
 	if m.flash != "" {
 		left = m.flash + "  •  " + left
 	}

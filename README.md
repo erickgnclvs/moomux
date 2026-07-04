@@ -34,6 +34,26 @@ git clone https://github.com/erickgnclvs/moomux && cd moomux && make install
 
 Requires `tmux`, `git`, and `claude` on `$PATH`.
 
+## Build
+
+```bash
+git clone https://github.com/erickgnclvs/moomux && cd moomux
+
+make build    # compile ./moomux
+make test     # go test ./... -race -count=1
+make install  # build + copy to $PREFIX/bin (default ~/.local/bin)
+make run      # build + run
+make clean    # remove the built binary
+```
+
+Requires Go, plus `tmux` and `git` (checked by `make install`/`make run` via `check-deps`).
+
+Or build and run directly with `go` instead of `make`:
+
+```bash
+go build -o moomux . && ./moomux
+```
+
 ## Run
 
 ```bash

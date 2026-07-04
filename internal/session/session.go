@@ -22,6 +22,8 @@ type Session struct {
 	CreatedAt    time.Time `json:"created_at"`
 	Agent        string    `json:"agent,omitempty"`      // "claude", "codex", "opencode"; empty = "claude"
 	AgentPort    int       `json:"agent_port,omitempty"` // HTTP port for OpenCode API; 0 = not applicable
+	Ticket       string    `json:"ticket,omitempty"`     // ticket URL (e.g. Asana, Jira, Linear)
+	PR           string    `json:"pr,omitempty"`         // pull request URL (e.g. GitHub, GitLab)
 }
 
 // AgentName returns the effective agent name, defaulting to "claude" for legacy sessions.

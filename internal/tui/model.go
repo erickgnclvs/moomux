@@ -22,6 +22,7 @@ type Backend interface {
 	OpenSession(id string) error
 	DeleteSession(id string) error
 	KillTmux(id string) error
+	SetSessionTags(id, ticket, pr string) (session.Session, error)
 	// TmuxAliveAll returns id→alive for every stored session using a single
 	// tmux list-sessions call instead of N has-session calls.
 	TmuxAliveAll() map[string]bool
@@ -42,6 +43,7 @@ const (
 	ModeNewProject
 	ModeConfirmDeleteProject
 	ModeProjectInitChoice
+	ModeTagForm
 )
 
 var agentChoices = []string{"claude", "codex", "opencode"}
@@ -60,6 +62,30 @@ type pendingProject struct {
 	p    config.Project
 }
 
+type tagForm struct {
+	inputs []textinput.Model // [0]=ticket, [1]=PR
+	focus  int
+}
+
+func newTagForm(ticket, pr string) tagForm {
+	mk := func(placeholder, value string) textinput.Model {
+		ti := textinput.New()
+		ti.Placeholder = placeholder
+		ti.Width = 48
+		ti.CharLimit = 256
+		ti.SetValue(value)
+		return ti
+	}
+	tf := tagForm{
+		inputs: []textinput.Model{
+			mk("ticket url", ticket),
+			mk("pr url", pr),
+		},
+	}
+	tf.inputs[0].Focus()
+	return tf
+}
+
 type Model struct {
 	cfg     *config.Config
 	backend Backend
@@ -75,13 +101,14 @@ type Model struct {
 	statusCh   <-chan watcher.Snapshot
 	cancelPoll context.CancelFunc
 
-	mode             Mode
-	nameInput        textinput.Model
-	newFormAgentIdx  int // agent selector in the new-session form
-	projForm         projectForm
-	pending   pendingProject
-	flash     string
-	flashTime time.Time
+	mode            Mode
+	nameInput       textinput.Model
+	newFormAgentIdx int // agent selector in the new-session form
+	projForm        projectForm
+	tagForm         tagForm
+	pending         pendingProject
+	flash           string
+	flashTime       time.Time
 
 	width, height int
 }
