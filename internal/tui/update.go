@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/erickgnclvs/moomux/internal/config"
@@ -22,16 +23,35 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for path, st := range msg.Snap.States {
 			m.states[path] = st
 		}
-		m.refreshTmuxAlive()
-		m.refreshPrompts()
-		return m, listenStatus(m.statusCh)
+		if msg.Snap.Err != nil {
+			// Surface once rather than re-flashing on every subsequent tick
+			// while the same failure persists.
+			warning := "status scan warning: " + msg.Snap.Err.Error()
+			if m.flash != warning {
+				m.flash = warning
+				m.flashTime = time.Now()
+			}
+		}
+		return m, tea.Batch(listenStatus(m.statusCh), refreshStatusCmd(m))
+
+	case StatusRefreshedMsg:
+		m.tmuxAlive = msg.TmuxAlive
+		for id, p := range msg.Prompts {
+			if m.prompts[id] == "" {
+				m.prompts[id] = p
+			}
+		}
+		return m, nil
+
+	case StatusChannelClosedMsg:
+		m.flash = "status watcher stopped"
+		m.flashTime = time.Now()
+		return m, nil
 
 	case TmuxKilledMsg:
 		m.flash = "parked"
 		m.flashTime = time.Now()
-		m.refreshTmuxAlive()
-		m.refreshPrompts()
-		return m, nil
+		return m, refreshStatusCmd(m)
 
 	case InfoMsg:
 		if !m.flashTime.IsZero() && time.Since(m.flashTime) > 3*time.Second {
@@ -50,17 +70,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Remove from prompt cache so the next tick scans the new session.
 		delete(m.prompts, msg.Session.ID)
 		m.refreshSessions()
-		m.refreshTmuxAlive()
-		m.refreshPrompts()
-		return m, nil
+		return m, refreshStatusCmd(m)
 
 	case SessionDeletedMsg:
 		m.flash = "deleted"
 		m.flashTime = time.Now()
 		m.refreshSessions()
-		m.refreshTmuxAlive()
-		m.refreshPrompts()
-		return m, nil
+		return m, refreshStatusCmd(m)
 
 	case SessionTaggedMsg:
 		m.flash = "tagged " + msg.Session.Name
@@ -70,6 +86,63 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SessionOpenedMsg:
 		m.flash = "opened " + msg.ID
+		m.flashTime = time.Now()
+		return m, nil
+
+	case ProjectAddedMsg:
+		switch msg.Kind {
+		case "add":
+			if msg.Err == nil {
+				m.activateProject(msg.Name)
+				m.mode = ModeList
+				m.flash = "added project " + msg.Name
+				m.flashTime = time.Now()
+				return m, nil
+			}
+			if errors.Is(msg.Err, gitwt.ErrNotGitRepo) {
+				m.pending = pendingProject{name: msg.Name, p: msg.Project}
+				m.mode = ModeProjectInitChoice
+				return m, nil
+			}
+			m.projForm.err = msg.Err.Error()
+			return m, nil
+		case "init":
+			if msg.Err != nil {
+				m.mode = ModeNewProject
+				m.projForm.err = msg.Err.Error()
+				return m, nil
+			}
+			m.activateProject(msg.Name)
+			m.mode = ModeList
+			m.flash = "initialized git repo + added " + msg.Name
+			m.flashTime = time.Now()
+			return m, nil
+		case "plain":
+			if msg.Err != nil {
+				m.mode = ModeNewProject
+				m.projForm.err = msg.Err.Error()
+				return m, nil
+			}
+			m.activateProject(msg.Name)
+			m.mode = ModeList
+			m.flash = "added plain (non-git) project " + msg.Name
+			m.flashTime = time.Now()
+			return m, nil
+		}
+		return m, nil
+
+	case ProjectRemovedMsg:
+		if msg.Err != nil {
+			m.mode = ModeList
+			m.flash = "error: " + msg.Err.Error()
+			m.flashTime = time.Now()
+			return m, nil
+		}
+		m.refreshProjects()
+		m.cursor = 0
+		m.refreshSessions()
+		m.mode = ModeList
+		m.flash = "removed project " + msg.Name
 		m.flashTime = time.Now()
 		return m, nil
 
@@ -121,8 +194,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case key.Matches(msg, m.keys.Refresh):
 		m.refreshSessions()
-		m.refreshTmuxAlive()
-		m.refreshPrompts()
+		return m, refreshStatusCmd(m)
 	case key.Matches(msg, m.keys.Kill):
 		if len(m.sessions) > 0 {
 			id := m.sessions[m.cursor].ID
@@ -188,17 +260,17 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
+	switch {
+	case key.Matches(msg, m.keys.Cancel):
 		m.mode = ModeList
 		return m, nil
-	case "left":
+	case key.Matches(msg, m.keys.Left):
 		m.newFormAgentIdx = (m.newFormAgentIdx - 1 + len(agentChoices)) % len(agentChoices)
 		return m, nil
-	case "right":
+	case key.Matches(msg, m.keys.Right):
 		m.newFormAgentIdx = (m.newFormAgentIdx + 1) % len(agentChoices)
 		return m, nil
-	case "enter":
+	case key.Matches(msg, m.keys.Enter):
 		name := m.nameInput.Value()
 		if name == "" {
 			return m, nil
@@ -222,8 +294,8 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "y":
+	switch {
+	case key.Matches(msg, m.keys.Confirm):
 		if len(m.sessions) == 0 {
 			m.mode = ModeList
 			return m, nil
@@ -236,47 +308,54 @@ func (m *Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return SessionDeletedMsg{ID: id}
 		}
-	case "n", "esc":
+	case key.Matches(msg, m.keys.No), key.Matches(msg, m.keys.Cancel):
 		m.mode = ModeList
 	}
 	return m, nil
 }
 
+// cycleFormFocus blurs the currently focused textinput (if any), advances
+// *focus by one step (forward or backward) with wraparound over total
+// fields, then focuses the newly selected textinput (if any). *focus may
+// land on an index >= len(inputs) to represent a non-textinput field (e.g.
+// an agent selector); such indices are simply skipped for Blur/Focus.
+func cycleFormFocus(inputs []textinput.Model, focus *int, total int, forward bool) {
+	if *focus < len(inputs) {
+		inputs[*focus].Blur()
+	}
+	if forward {
+		*focus = (*focus + 1) % total
+	} else {
+		*focus = (*focus - 1 + total) % total
+	}
+	if *focus < len(inputs) {
+		inputs[*focus].Focus()
+	}
+}
+
 func (m *Model) updateNewProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	const totalFields = projFormInputCount + 1 // +1 for agent selector
-	switch msg.String() {
-	case "esc":
+	switch {
+	case key.Matches(msg, m.keys.Cancel):
 		m.mode = ModeList
 		return m, nil
-	case "tab", "down":
-		if m.projForm.focus < projFormInputCount {
-			m.projForm.inputs[m.projForm.focus].Blur()
-		}
-		m.projForm.focus = (m.projForm.focus + 1) % totalFields
-		if m.projForm.focus < projFormInputCount {
-			m.projForm.inputs[m.projForm.focus].Focus()
-		}
+	case key.Matches(msg, m.keys.Tab), key.Matches(msg, m.keys.Down):
+		cycleFormFocus(m.projForm.inputs, &m.projForm.focus, totalFields, true)
 		return m, nil
-	case "shift+tab", "up":
-		if m.projForm.focus < projFormInputCount {
-			m.projForm.inputs[m.projForm.focus].Blur()
-		}
-		m.projForm.focus = (m.projForm.focus - 1 + totalFields) % totalFields
-		if m.projForm.focus < projFormInputCount {
-			m.projForm.inputs[m.projForm.focus].Focus()
-		}
+	case key.Matches(msg, m.keys.ShiftTab), key.Matches(msg, m.keys.Up):
+		cycleFormFocus(m.projForm.inputs, &m.projForm.focus, totalFields, false)
 		return m, nil
-	case "left":
+	case key.Matches(msg, m.keys.Left):
 		if m.projForm.focus == projFormInputCount {
 			m.projForm.agentIdx = (m.projForm.agentIdx - 1 + len(agentChoices)) % len(agentChoices)
 			return m, nil
 		}
-	case "right":
+	case key.Matches(msg, m.keys.Right):
 		if m.projForm.focus == projFormInputCount {
 			m.projForm.agentIdx = (m.projForm.agentIdx + 1) % len(agentChoices)
 			return m, nil
 		}
-	case "enter":
+	case key.Matches(msg, m.keys.Enter):
 		name := m.projForm.inputs[0].Value()
 		repo := m.projForm.inputs[1].Value()
 		base := m.projForm.inputs[2].Value()
@@ -286,21 +365,10 @@ func (m *Model) updateNewProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		agent := agentChoices[m.projForm.agentIdx]
 		p := config.Project{Repo: repo, BaseBranch: base, BranchPrefix: prefix, Agent: agent}
-		err := m.backend.AddProject(name, p)
-		if err == nil {
-			m.activateProject(name)
-			m.mode = ModeList
-			m.flash = "added project " + name
-			m.flashTime = time.Now()
-			return m, nil
+		return m, func() tea.Msg {
+			err := m.backend.AddProject(name, p)
+			return ProjectAddedMsg{Kind: "add", Name: name, Project: p, Err: err}
 		}
-		if errors.Is(err, gitwt.ErrNotGitRepo) {
-			m.pending = pendingProject{name: name, p: p}
-			m.mode = ModeProjectInitChoice
-			return m, nil
-		}
-		m.projForm.err = err.Error()
-		return m, nil
 	}
 	if m.projForm.focus < projFormInputCount {
 		var cmd tea.Cmd
@@ -311,20 +379,15 @@ func (m *Model) updateNewProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) updateTagForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
+	switch {
+	case key.Matches(msg, m.keys.Cancel):
 		m.mode = ModeList
 		return m, nil
-	case "tab", "down", "shift+tab", "up":
-		m.tagForm.inputs[m.tagForm.focus].Blur()
-		if msg.String() == "shift+tab" || msg.String() == "up" {
-			m.tagForm.focus = (m.tagForm.focus - 1 + len(m.tagForm.inputs)) % len(m.tagForm.inputs)
-		} else {
-			m.tagForm.focus = (m.tagForm.focus + 1) % len(m.tagForm.inputs)
-		}
-		m.tagForm.inputs[m.tagForm.focus].Focus()
+	case key.Matches(msg, m.keys.Tab), key.Matches(msg, m.keys.Down), key.Matches(msg, m.keys.ShiftTab), key.Matches(msg, m.keys.Up):
+		forward := !(key.Matches(msg, m.keys.ShiftTab) || key.Matches(msg, m.keys.Up))
+		cycleFormFocus(m.tagForm.inputs, &m.tagForm.focus, len(m.tagForm.inputs), forward)
 		return m, nil
-	case "enter":
+	case key.Matches(msg, m.keys.Enter):
 		if len(m.sessions) == 0 {
 			m.mode = ModeList
 			return m, nil
@@ -359,32 +422,26 @@ func (m *Model) activateProject(name string) {
 }
 
 func (m *Model) updateProjectInitChoice(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, m.keys.Cancel) {
+		m.mode = ModeNewProject
+		return m, nil
+	}
 	switch msg.String() {
 	case "i":
-		if err := m.backend.InitProjectAndAdd(m.pending.name, m.pending.p); err != nil {
-			m.mode = ModeNewProject
-			m.projForm.err = err.Error()
-			return m, nil
-		}
 		name := m.pending.name
-		m.activateProject(name)
-		m.mode = ModeList
-		m.flash = "initialized git repo + added " + name
-		m.flashTime = time.Now()
-		return m, nil
+		p := m.pending.p
+		return m, func() tea.Msg {
+			err := m.backend.InitProjectAndAdd(name, p)
+			return ProjectAddedMsg{Kind: "init", Name: name, Project: p, Err: err}
+		}
 	case "s":
-		if err := m.backend.AddPlainProject(m.pending.name, m.pending.p); err != nil {
-			m.mode = ModeNewProject
-			m.projForm.err = err.Error()
-			return m, nil
-		}
 		name := m.pending.name
-		m.activateProject(name)
-		m.mode = ModeList
-		m.flash = "added plain (non-git) project " + name
-		m.flashTime = time.Now()
-		return m, nil
-	case "esc", "b":
+		p := m.pending.p
+		return m, func() tea.Msg {
+			err := m.backend.AddPlainProject(name, p)
+			return ProjectAddedMsg{Kind: "plain", Name: name, Project: p, Err: err}
+		}
+	case "b":
 		m.mode = ModeNewProject
 		return m, nil
 	}
@@ -399,17 +456,11 @@ func (m *Model) updateConfirmDeleteProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 			return m, nil
 		}
 		name := m.projects[m.activeProj]
-		if err := m.backend.RemoveProject(name); err != nil {
-			m.mode = ModeList
-			return m.flashError(err)
-		}
-		m.refreshProjects()
-		m.cursor = 0
-		m.refreshSessions()
 		m.mode = ModeList
-		m.flash = "removed project " + name
-		m.flashTime = time.Now()
-		return m, nil
+		return m, func() tea.Msg {
+			err := m.backend.RemoveProject(name)
+			return ProjectRemovedMsg{Name: name, Err: err}
+		}
 	case "n", "esc":
 		m.mode = ModeList
 	}

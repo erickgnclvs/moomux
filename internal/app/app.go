@@ -315,7 +315,9 @@ func (a *App) DeleteSession(id string) error {
 		return fmt.Errorf("unknown session %q", id)
 	}
 	if has, _ := a.Tmux.HasSession(s.TmuxSession); has {
-		_ = a.Tmux.KillSession(s.TmuxSession)
+		if err := a.Tmux.KillSession(s.TmuxSession); err != nil {
+			return fmt.Errorf("tmux kill-session: %w", err)
+		}
 	}
 	if proj, ok := a.Cfg.Projects[s.Project]; ok {
 		if proj.IsPlain() {
