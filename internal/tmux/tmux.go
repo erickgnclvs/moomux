@@ -83,6 +83,15 @@ func (c *Client) NewSession(name, cwd, cmd, windowName string) error {
 	// Enable mouse support so users can click/scroll/resize panes without
 	// memorizing tmux prefix keybindings.
 	_, _ = c.Runner.Run("set-option", "-t", name, "mouse", "on")
+	// Capture the original (left) pane's stable pane_id before splitting.
+	// We can't assume its index is 0: a user's tmux.conf may set
+	// pane-base-index to 1 (as this README itself recommends), which would
+	// make a hardcoded ".0" target fail with "can't find pane".
+	leftPane, err := c.Runner.Run("list-panes", "-t", name, "-F", "#{pane_id}")
+	if err != nil {
+		return err
+	}
+	leftPane = strings.TrimSpace(leftPane)
 	// Split the window horizontally (side by side): the new pane takes 33% of
 	// the width, leaving the original (left) pane at roughly 2/3.
 	if _, err := c.Runner.Run("split-window", "-h", "-t", name, "-c", cwd, "-p", "33"); err != nil {
@@ -90,11 +99,11 @@ func (c *Client) NewSession(name, cwd, cmd, windowName string) error {
 	}
 	// split-window moves focus to the new (right) pane; return focus to the
 	// left pane before sending the agent command into it.
-	if _, err := c.Runner.Run("select-pane", "-t", name+".0"); err != nil {
+	if _, err := c.Runner.Run("select-pane", "-t", leftPane); err != nil {
 		return err
 	}
 	if cmd != "" {
-		if _, err := c.Runner.Run("send-keys", "-t", name+".0", cmd, "Enter"); err != nil {
+		if _, err := c.Runner.Run("send-keys", "-t", leftPane, cmd, "Enter"); err != nil {
 			return err
 		}
 	}
