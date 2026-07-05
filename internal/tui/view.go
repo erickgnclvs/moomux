@@ -30,9 +30,12 @@ func (m *Model) View() string {
 		bodyHeight = 5
 	}
 
-	left := panelBorder.Width(listW).Height(bodyHeight).Render(m.renderList(listW-2, bodyHeight-2))
+	listContent, hits := m.renderList(listW-2, bodyHeight-2)
+	left := panelBorder.Width(listW).Height(bodyHeight).Render(listContent)
 	right := panelBorder.Width(detailW).Height(bodyHeight).Render(m.renderDetail(detailW-2, bodyHeight-2))
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+
+	m.updateLinkHits(header, hits)
 
 	footer := m.renderFooter()
 	base := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)

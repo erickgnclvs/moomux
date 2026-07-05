@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/erickgnclvs/moomux/internal/browser"
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/gitwt"
 )
@@ -71,6 +72,24 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SessionOpenedMsg:
 		m.flash = "opened " + msg.ID
 		m.flashTime = time.Now()
+		return m, nil
+
+	case LinkOpenedMsg:
+		m.flash = "opened " + msg.URL
+		m.flashTime = time.Now()
+		return m, nil
+
+	case tea.MouseMsg:
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			if url := m.linkAt(msg.X, msg.Y); url != "" {
+				return m, func() tea.Msg {
+					if err := browser.Open(url); err != nil {
+						return ErrorMsg{Err: err}
+					}
+					return LinkOpenedMsg{URL: url}
+				}
+			}
+		}
 		return m, nil
 
 	case tea.KeyMsg:

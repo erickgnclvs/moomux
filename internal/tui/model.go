@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/prompt"
@@ -111,6 +112,51 @@ type Model struct {
 	flashTime       time.Time
 
 	width, height int
+
+	linkHits []resolvedLinkHit
+}
+
+// resolvedLinkHit is a linkHit translated into absolute terminal
+// coordinates, computed fresh on every View() call and consulted by the
+// mouse handler in Update() to resolve a click to a session's ticket/PR URL.
+type resolvedLinkHit struct {
+	sessionID string
+	url       string
+	y         int
+	x0, x1    int // half-open column range
+}
+
+// updateLinkHits recomputes m.linkHits in absolute terminal coordinates
+// from the list-local hits produced by renderList. It's a no-op (clearing
+// hits) outside ModeList, since the list isn't clickable behind an overlay.
+func (m *Model) updateLinkHits(header string, hits []linkHit) {
+	if m.mode != ModeList {
+		m.linkHits = nil
+		return
+	}
+	originX := panelBorder.GetBorderLeftSize() + panelBorder.GetPaddingLeft()
+	originY := lipgloss.Height(header) + panelBorder.GetBorderTopSize()
+	m.linkHits = m.linkHits[:0]
+	for _, h := range hits {
+		m.linkHits = append(m.linkHits, resolvedLinkHit{
+			sessionID: h.sessionID,
+			url:       h.url,
+			y:         originY + h.line,
+			x0:        originX + h.col0,
+			x1:        originX + h.col1,
+		})
+	}
+}
+
+// linkAt returns the URL of the ticket/PR icon at absolute terminal
+// coordinates (x, y), if any.
+func (m *Model) linkAt(x, y int) string {
+	for _, h := range m.linkHits {
+		if y == h.y && x >= h.x0 && x < h.x1 {
+			return h.url
+		}
+	}
+	return ""
 }
 
 func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, cancel context.CancelFunc) *Model {
