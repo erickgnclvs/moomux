@@ -3,6 +3,8 @@ package watcher
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -31,9 +33,16 @@ func (s State) String() string {
 }
 
 // Snapshot maps worktree path → state observed at PollTime.
+//
+// Err is set (non-nil) when this tick failed to fully determine state for
+// one or more paths (e.g. a subprocess failure, unreadable directory, or an
+// unparsable file). When Err is set, States may be incomplete for affected
+// paths — callers should treat this as "unknown, not necessarily unchanged"
+// rather than silently trusting the last-known state forever.
 type Snapshot struct {
 	States   map[string]State
 	PollTime time.Time
+	Err      error
 }
 
 // Watcher is implemented by every agent-specific watcher.
@@ -69,21 +78,30 @@ func (w *DirWatcher) tick(ctx context.Context, out chan<- Snapshot) {
 	snap := Snapshot{States: map[string]State{}, PollTime: time.Now()}
 	entries, err := os.ReadDir(w.Dir)
 	if err != nil {
+		snap.Err = fmt.Errorf("read %s: %w", w.Dir, err)
 		send(ctx, out, snap)
 		return
 	}
+	var parseErrs []error
 	for _, e := range entries {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
 			continue
 		}
 		rs, err := parseFile(filepath.Join(w.Dir, e.Name()))
-		if err != nil || rs.CWD == "" {
+		if err != nil {
+			parseErrs = append(parseErrs, fmt.Errorf("parse %s: %w", e.Name(), err))
+			continue
+		}
+		if rs.CWD == "" {
 			continue
 		}
 		st := classify(rs)
 		if prev, ok := snap.States[rs.CWD]; !ok || st > prev {
 			snap.States[rs.CWD] = st
 		}
+	}
+	if len(parseErrs) > 0 {
+		snap.Err = errors.Join(parseErrs...)
 	}
 	send(ctx, out, snap)
 }

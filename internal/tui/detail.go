@@ -67,10 +67,10 @@ func (m *Model) renderDetail(width, height int) string {
 
 func cowsay(msg string, maxWidth int, st watcher.State) string {
 	const lineMax = 38
-	if maxWidth > 0 && maxWidth < lineMax {
-		maxWidth = lineMax
-	}
 	w := lineMax
+	if maxWidth > 0 && maxWidth < w {
+		w = maxWidth
+	}
 	lines := wrapLines(msg, w)
 	// cap at 4 lines, truncate last with ellipsis
 	if len(lines) > 4 {

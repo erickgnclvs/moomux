@@ -216,6 +216,27 @@ func (m *Model) refreshTmuxAlive() {
 	m.tmuxAlive = m.backend.TmuxAliveAll()
 }
 
+// refreshStatusCmd returns a tea.Cmd that computes the tmux-alive map and
+// missing prompts off the Bubble Tea event-loop goroutine. It must not
+// mutate m — only Update may mutate model state; this closure only reads
+// from m and returns the computed data via StatusRefreshedMsg.
+func refreshStatusCmd(m *Model) tea.Cmd {
+	return func() tea.Msg {
+		tmuxAlive := m.backend.TmuxAliveAll()
+
+		home, _ := os.UserHomeDir()
+		prompts := make(map[string]string)
+		for _, s := range m.backend.Sessions() {
+			if p := m.prompts[s.ID]; p != "" {
+				continue
+			}
+			prompts[s.ID] = prompt.ForAgent(home, s.AgentName(), s.WorktreePath)
+		}
+
+		return StatusRefreshedMsg{TmuxAlive: tmuxAlive, Prompts: prompts}
+	}
+}
+
 // effectiveState returns the state to display: if tmux is dead the
 // Claude-session JSON is stale and the session is effectively parked.
 func (m *Model) effectiveState(s session.Session) watcher.State {
@@ -287,7 +308,7 @@ func listenStatus(ch <-chan watcher.Snapshot) tea.Cmd {
 	return func() tea.Msg {
 		snap, ok := <-ch
 		if !ok {
-			return nil
+			return StatusChannelClosedMsg{}
 		}
 		return StatusTickMsg{Snap: snap}
 	}

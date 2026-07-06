@@ -2,6 +2,8 @@ package watcher
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -45,14 +47,25 @@ func (w *SQLiteWatcher) tick(ctx context.Context, out chan<- Snapshot, activeAge
 	snap := Snapshot{States: map[string]State{}, PollTime: time.Now()}
 
 	dbPaths, err := filepath.Glob(w.DB)
-	if err != nil || len(dbPaths) == 0 {
+	if err != nil {
+		snap.Err = fmt.Errorf("glob %s: %w", w.DB, err)
+		send(ctx, out, snap)
+		return
+	}
+	if len(dbPaths) == 0 {
+		// No matching DB yet (e.g. agent hasn't started); not an error.
 		send(ctx, out, snap)
 		return
 	}
 
+	var queryErrs []error
 	now := time.Now()
 	for _, dbPath := range dbPaths {
-		rows := querySQLite(dbPath, w.Query)
+		rows, err := querySQLite(dbPath, w.Query)
+		if err != nil {
+			queryErrs = append(queryErrs, fmt.Errorf("query %s: %w", dbPath, err))
+			continue
+		}
 		for path, updatedMs := range rows {
 			age := now.Sub(time.UnixMilli(updatedMs))
 			if age <= activeAge {
@@ -62,14 +75,19 @@ func (w *SQLiteWatcher) tick(ctx context.Context, out chan<- Snapshot, activeAge
 			}
 		}
 	}
+	if len(queryErrs) > 0 {
+		snap.Err = errors.Join(queryErrs...)
+	}
 	send(ctx, out, snap)
 }
 
 // querySQLite runs a query via the sqlite3 CLI and returns map[path]updated_ms.
-func querySQLite(dbPath, query string) map[string]int64 {
+// It returns an error if the subprocess fails, so callers can distinguish a
+// transient query failure from a genuinely empty result set.
+func querySQLite(dbPath, query string) (map[string]int64, error) {
 	out, err := exec.Command("sqlite3", "-separator", "\t", dbPath, query).Output()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	result := make(map[string]int64)
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -86,5 +104,5 @@ func querySQLite(dbPath, query string) map[string]int64 {
 		}
 		result[strings.TrimSpace(parts[0])] = ms
 	}
-	return result
+	return result, nil
 }
