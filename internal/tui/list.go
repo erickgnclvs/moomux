@@ -10,13 +10,25 @@ import (
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
-func (m *Model) renderList(width, height int) string {
+// linkHit records where a clickable ticket/PR icon landed within the
+// rendered list, in the list panel's own local coordinates (line index and
+// column range on that line). The TUI translates these to absolute terminal
+// coordinates once the surrounding layout (header height, panel border) is
+// known, so a click can be matched back to the URL to open.
+type linkHit struct {
+	sessionID  string
+	url        string
+	line       int
+	col0, col1 int // half-open column range
+}
+
+func (m *Model) renderList(width, height int) (string, []linkHit) {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("SESSIONS"))
 	b.WriteString("\n\n")
 	if len(m.sessions) == 0 {
 		b.WriteString(muteStyle.Render("  no sessions — press n to create"))
-		return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
+		return lipgloss.NewStyle().Width(width).Height(height).Render(b.String()), nil
 	}
 	visible := height - 2 // header + blank line above
 	if visible < 1 {
@@ -36,9 +48,19 @@ func (m *Model) renderList(width, height int) string {
 	if end > len(m.sessions) {
 		end = len(m.sessions)
 	}
+	var hits []linkHit
 	for i := start; i < end; i++ {
 		s := m.sessions[i]
-		row := renderRow(s, m.effectiveState(s), width-4)
+		row, rowHits := renderRow(s, m.effectiveState(s), width-4)
+		for _, h := range rowHits {
+			h.sessionID = s.ID
+			// +2 lines for the "SESSIONS" title and blank line above;
+			// +1 column for the row style's own left padding.
+			h.line = 2 + (i - start)
+			h.col0++
+			h.col1++
+			hits = append(hits, h)
+		}
 		if i == m.cursor {
 			row = listRowSelected.Render(row)
 		} else {
@@ -47,26 +69,44 @@ func (m *Model) renderList(width, height int) string {
 		b.WriteString(row)
 		b.WriteString("\n")
 	}
-	return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(b.String())
+	return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(b.String()), hits
 }
 
-func renderRow(s session.Session, st watcher.State, width int) string {
+func renderRow(s session.Session, st watcher.State, width int) (string, []linkHit) {
 	dot := dotParked
-	label := "parked"
 	switch st {
 	case watcher.Working:
 		dot = dotWorking
-		label = "work"
 	case watcher.Waiting:
 		dot = dotWaiting
-		label = "wait"
 	}
-	nameWidth := width - 10
+	var icons string
+	var hits []linkHit
+	col := 0
+	addIcon := func(icon, url string) {
+		w := lipgloss.Width(icon)
+		hits = append(hits, linkHit{url: url, col0: col, col1: col + w})
+		icons += icon + " "
+		col += w + 1
+	}
+	if s.Ticket != "" {
+		addIcon(iconTicket, s.Ticket)
+	}
+	if s.PR != "" {
+		addIcon(iconPR, s.PR)
+	}
+	suffix := icons + dot
+	nameWidth := width - 1 - lipgloss.Width(suffix)
 	if nameWidth < 4 {
 		nameWidth = 4
 	}
 	name := truncate(s.Name, nameWidth)
-	return fmt.Sprintf("%-*s %s %s", nameWidth, name, dot+" ", muteStyle.Render(label))
+	offset := nameWidth + 1
+	for i := range hits {
+		hits[i].col0 += offset
+		hits[i].col1 += offset
+	}
+	return fmt.Sprintf("%-*s %s", nameWidth, name, suffix), hits
 }
 
 func truncate(s string, n int) string {

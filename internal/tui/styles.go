@@ -36,6 +36,9 @@ var (
 	dotWaiting = lipgloss.NewStyle().Foreground(colWaiting).Render("⬤")
 	dotParked  = lipgloss.NewStyle().Foreground(colParked).Render("⬤")
 
+	iconTicket = lipgloss.NewStyle().Foreground(colMute).Render("🎫")
+	iconPR     = lipgloss.NewStyle().Foreground(colMute).Render("🔀")
+
 	overlayBox = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colAccent).

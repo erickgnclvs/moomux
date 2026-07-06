@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/erickgnclvs/moomux/internal/browser"
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/gitwt"
 )
@@ -146,6 +147,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshSessions()
 		m.mode = ModeList
 		m.setFlash("info", "removed project "+msg.Name)
+		return m, nil
+
+	case LinkOpenedMsg:
+		m.setFlash("info", "opened "+msg.URL)
+		return m, nil
+
+	case tea.MouseMsg:
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			if url := m.linkAt(msg.X, msg.Y); url != "" {
+				return m, func() tea.Msg {
+					if err := browser.Open(url); err != nil {
+						return ErrorMsg{Err: err}
+					}
+					return LinkOpenedMsg{URL: url}
+				}
+			}
+		}
 		return m, nil
 
 	case tea.KeyMsg:
