@@ -18,7 +18,26 @@ func (m *Model) renderList(width, height int) string {
 		b.WriteString(muteStyle.Render("  no sessions — press n to create"))
 		return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
 	}
-	for i, s := range m.sessions {
+	visible := height - 2 // header + blank line above
+	if visible < 1 {
+		visible = 1
+	}
+	start := 0
+	if len(m.sessions) > visible {
+		start = m.cursor - visible/2
+		if start < 0 {
+			start = 0
+		}
+		if max := len(m.sessions) - visible; start > max {
+			start = max
+		}
+	}
+	end := start + visible
+	if end > len(m.sessions) {
+		end = len(m.sessions)
+	}
+	for i := start; i < end; i++ {
+		s := m.sessions[i]
 		row := renderRow(s, m.effectiveState(s), width-4)
 		if i == m.cursor {
 			row = listRowSelected.Render(row)
@@ -28,7 +47,7 @@ func (m *Model) renderList(width, height int) string {
 		b.WriteString(row)
 		b.WriteString("\n")
 	}
-	return lipgloss.NewStyle().Width(width).Height(height).Render(b.String())
+	return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(b.String())
 }
 
 func renderRow(s session.Session, st watcher.State, width int) string {
