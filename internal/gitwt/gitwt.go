@@ -92,6 +92,14 @@ func (c *Client) AddWorktree(repoDir, worktreePath, branch, baseBranch string) e
 	return err
 }
 
+// AddWorktreeExisting links worktreePath to an already-existing branch
+// (local, or remote-tracking via git's single-remote DWIM) instead of
+// creating a new branch.
+func (c *Client) AddWorktreeExisting(repoDir, worktreePath, branch string) error {
+	_, err := c.Runner.Run(repoDir, "worktree", "add", worktreePath, branch)
+	return err
+}
+
 func (c *Client) RemoveWorktree(repoDir, worktreePath string) error {
 	_, err := c.Runner.Run(repoDir, "worktree", "remove", worktreePath, "--force")
 	return err

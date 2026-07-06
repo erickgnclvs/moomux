@@ -49,44 +49,51 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case TmuxKilledMsg:
-		m.flash = "parked"
-		m.flashTime = time.Now()
+		m.setFlash("info", "parked")
 		return m, refreshStatusCmd(m)
 
 	case InfoMsg:
-		if !m.flashTime.IsZero() && time.Since(m.flashTime) > 3*time.Second {
+		dur := infoFlashDuration
+		if m.flashKind == "error" {
+			dur = errorFlashDuration
+		}
+		if !m.flashTime.IsZero() && time.Since(m.flashTime) > dur {
 			m.flash = ""
+			m.flashKind = ""
 		}
 		return m, tickFlash()
 
 	case ErrorMsg:
-		m.flash = "error: " + msg.Err.Error()
-		m.flashTime = time.Now()
+		m.setError(msg.Err)
 		return m, nil
 
 	case SessionCreatedMsg:
-		m.flash = "created " + msg.Session.Name
-		m.flashTime = time.Now()
+		text := "created " + msg.Session.Name
+		if msg.Hint != "" {
+			text += " — " + msg.Hint
+		}
+		m.setFlash("info", text)
 		// Remove from prompt cache so the next tick scans the new session.
 		delete(m.prompts, msg.Session.ID)
 		m.refreshSessions()
 		return m, refreshStatusCmd(m)
 
 	case SessionDeletedMsg:
-		m.flash = "deleted"
-		m.flashTime = time.Now()
+		m.setFlash("info", "deleted")
 		m.refreshSessions()
 		return m, refreshStatusCmd(m)
 
 	case SessionTaggedMsg:
-		m.flash = "tagged " + msg.Session.Name
-		m.flashTime = time.Now()
+		m.setFlash("info", "tagged "+msg.Session.Name)
 		m.refreshSessions()
 		return m, nil
 
 	case SessionOpenedMsg:
-		m.flash = "opened " + msg.ID
-		m.flashTime = time.Now()
+		text := "opened " + msg.ID
+		if msg.Hint != "" {
+			text += " — " + msg.Hint
+		}
+		m.setFlash("info", text)
 		return m, nil
 
 	case ProjectAddedMsg:
@@ -95,8 +102,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Err == nil {
 				m.activateProject(msg.Name)
 				m.mode = ModeList
-				m.flash = "added project " + msg.Name
-				m.flashTime = time.Now()
+				m.setFlash("info", "added project "+msg.Name)
 				return m, nil
 			}
 			if errors.Is(msg.Err, gitwt.ErrNotGitRepo) {
@@ -114,8 +120,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.activateProject(msg.Name)
 			m.mode = ModeList
-			m.flash = "initialized git repo + added " + msg.Name
-			m.flashTime = time.Now()
+			m.setFlash("info", "initialized git repo + added "+msg.Name)
 			return m, nil
 		case "plain":
 			if msg.Err != nil {
@@ -125,8 +130,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.activateProject(msg.Name)
 			m.mode = ModeList
-			m.flash = "added plain (non-git) project " + msg.Name
-			m.flashTime = time.Now()
+			m.setFlash("info", "added plain (non-git) project "+msg.Name)
 			return m, nil
 		}
 		return m, nil
@@ -134,16 +138,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ProjectRemovedMsg:
 		if msg.Err != nil {
 			m.mode = ModeList
-			m.flash = "error: " + msg.Err.Error()
-			m.flashTime = time.Now()
+			m.setFlash("error", msg.Err.Error())
 			return m, nil
 		}
 		m.refreshProjects()
 		m.cursor = 0
 		m.refreshSessions()
 		m.mode = ModeList
-		m.flash = "removed project " + msg.Name
-		m.flashTime = time.Now()
+		m.setFlash("info", "removed project "+msg.Name)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -212,6 +214,9 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = ModeNewForm
 		m.nameInput.SetValue("")
 		m.nameInput.Focus()
+		m.branchInput.SetValue("")
+		m.branchInput.Blur()
+		m.newFormFocus = 0
 		// pre-select the project's default agent
 		proj := m.projects[m.activeProj]
 		defaultAgent := "claude"
@@ -249,10 +254,11 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.sessions) > 0 {
 			id := m.sessions[m.cursor].ID
 			return m, func() tea.Msg {
-				if err := m.backend.OpenSession(id); err != nil {
+				hint, err := m.backend.OpenSession(id)
+				if err != nil {
 					return ErrorMsg{Err: err}
 				}
-				return SessionOpenedMsg{ID: id}
+				return SessionOpenedMsg{ID: id, Hint: hint}
 			}
 		}
 	}
@@ -264,6 +270,16 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Cancel):
 		m.mode = ModeList
 		return m, nil
+	case key.Matches(msg, m.keys.Tab), key.Matches(msg, m.keys.ShiftTab):
+		m.newFormFocus = (m.newFormFocus + 1) % 2
+		if m.newFormFocus == 0 {
+			m.nameInput.Focus()
+			m.branchInput.Blur()
+		} else {
+			m.nameInput.Blur()
+			m.branchInput.Focus()
+		}
+		return m, nil
 	case key.Matches(msg, m.keys.Left):
 		m.newFormAgentIdx = (m.newFormAgentIdx - 1 + len(agentChoices)) % len(agentChoices)
 		return m, nil
@@ -272,21 +288,30 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case key.Matches(msg, m.keys.Enter):
 		name := m.nameInput.Value()
-		if name == "" {
+		branch := m.branchInput.Value()
+		if name == "" && branch == "" {
 			return m, nil
 		}
 		proj := m.projects[m.activeProj]
 		agent := agentChoices[m.newFormAgentIdx]
 		m.mode = ModeList
-		m.flash = "creating " + name + "…"
-		m.flashTime = time.Now()
+		label := name
+		if label == "" {
+			label = branch
+		}
+		m.setFlash("info", "creating "+label+"…")
 		return m, func() tea.Msg {
-			s, err := m.backend.CreateSession(proj, name, agent)
+			s, hint, err := m.backend.CreateSession(proj, name, agent, branch)
 			if err != nil {
 				return ErrorMsg{Err: err}
 			}
-			return SessionCreatedMsg{Session: s}
+			return SessionCreatedMsg{Session: s, Hint: hint}
 		}
+	}
+	if m.newFormFocus == 1 {
+		var cmd tea.Cmd
+		m.branchInput, cmd = m.branchInput.Update(msg)
+		return m, cmd
 	}
 	var cmd tea.Cmd
 	m.nameInput, cmd = m.nameInput.Update(msg)
@@ -441,7 +466,7 @@ func (m *Model) updateProjectInitChoice(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			err := m.backend.AddPlainProject(name, p)
 			return ProjectAddedMsg{Kind: "plain", Name: name, Project: p, Err: err}
 		}
-	case "b":
+	case "esc", "b":
 		m.mode = ModeNewProject
 		return m, nil
 	}
@@ -468,7 +493,6 @@ func (m *Model) updateConfirmDeleteProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 }
 
 func (m *Model) flashError(err error) (tea.Model, tea.Cmd) {
-	m.flash = "error: " + err.Error()
-	m.flashTime = time.Now()
+	m.setError(err)
 	return m, nil
 }

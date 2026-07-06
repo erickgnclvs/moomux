@@ -39,6 +39,18 @@ func TestAddWorktree(t *testing.T) {
 	}
 }
 
+func TestAddWorktreeExisting(t *testing.T) {
+	fr := &fakeRunner{}
+	c := &Client{Runner: fr}
+	if err := c.AddWorktreeExisting("/repo", "/wt/foo", "user/foo"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"@/repo", "worktree", "add", "/wt/foo", "user/foo"}
+	if !reflect.DeepEqual(fr.calls[len(fr.calls)-1], want) {
+		t.Fatalf("calls = %v", fr.calls)
+	}
+}
+
 func TestRemoveWorktree(t *testing.T) {
 	fr := &fakeRunner{}
 	c := &Client{Runner: fr}

@@ -31,8 +31,14 @@ type InfoMsg struct {
 	When time.Time
 }
 
-type SessionOpenedMsg struct{ ID string }
-type SessionCreatedMsg struct{ Session session.Session }
+type SessionOpenedMsg struct {
+	ID   string
+	Hint string
+}
+type SessionCreatedMsg struct {
+	Session session.Session
+	Hint    string
+}
 type SessionDeletedMsg struct{ ID string }
 type SessionTaggedMsg struct{ Session session.Session }
 type TmuxKilledMsg struct{ ID string }

@@ -18,7 +18,7 @@ func (f *fakeExec) Command(binary string, args ...string) error {
 func TestWindowOpenerKittyArgs(t *testing.T) {
 	fe := &fakeExec{}
 	w := &windowOpener{binary: "kitty", args: kittyArgs, exec: fe.Command}
-	if err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
+	if _, err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
 		t.Fatal(err)
 	}
 	if fe.binary != "kitty" {
@@ -35,7 +35,7 @@ func TestWindowOpenerKittyArgs(t *testing.T) {
 func TestWindowOpenerWezTermArgs(t *testing.T) {
 	fe := &fakeExec{}
 	w := &windowOpener{binary: "wezterm", args: weztermArgs, exec: fe.Command}
-	if err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
+	if _, err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
 		t.Fatal(err)
 	}
 	if fe.binary != "wezterm" {
@@ -49,7 +49,7 @@ func TestWindowOpenerWezTermArgs(t *testing.T) {
 func TestWindowOpenerAlacrittyArgs(t *testing.T) {
 	fe := &fakeExec{}
 	w := &windowOpener{binary: "alacritty", args: alacrittyArgs, exec: fe.Command}
-	if err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
+	if _, err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
 		t.Fatal(err)
 	}
 	assertContains(t, fe.args, "--title")
@@ -59,7 +59,7 @@ func TestWindowOpenerAlacrittyArgs(t *testing.T) {
 func TestWindowOpenerGnomeTerminalArgs(t *testing.T) {
 	fe := &fakeExec{}
 	w := &windowOpener{binary: "gnome-terminal", args: gnomeTerminalArgs, exec: fe.Command}
-	if err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
+	if _, err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
 		t.Fatal(err)
 	}
 	if fe.binary != "gnome-terminal" {
@@ -77,7 +77,7 @@ func TestWindowOpenerGnomeTerminalArgs(t *testing.T) {
 func TestWindowOpenerKonsoleArgs(t *testing.T) {
 	fe := &fakeExec{}
 	w := &windowOpener{binary: "konsole", args: konsoleArgs, exec: fe.Command}
-	if err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
+	if _, err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
 		t.Fatal(err)
 	}
 	if fe.binary != "konsole" {
@@ -93,7 +93,7 @@ func TestWindowOpenerKonsoleArgs(t *testing.T) {
 func TestWindowOpenerXtermArgs(t *testing.T) {
 	fe := &fakeExec{}
 	w := &windowOpener{binary: "xterm", args: xtermArgs, exec: fe.Command}
-	if err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
+	if _, err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
 		t.Fatal(err)
 	}
 	if fe.binary != "xterm" {
@@ -109,7 +109,7 @@ func TestWindowOpenerXtermArgs(t *testing.T) {
 func TestWindowOpenerTilixArgs(t *testing.T) {
 	fe := &fakeExec{}
 	w := &windowOpener{binary: "tilix", args: tilixArgs, exec: fe.Command}
-	if err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
+	if _, err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
 		t.Fatal(err)
 	}
 	if fe.binary != "tilix" {

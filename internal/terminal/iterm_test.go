@@ -15,7 +15,7 @@ func (f *fakeRunner) Run(script string) (string, error) {
 func TestITermOpenSessionAttachesAndSetsTitle(t *testing.T) {
 	fr := &fakeRunner{}
 	c := &itermClient{runner: fr}
-	if err := c.OpenSession("moomux-foo", "feat/bar"); err != nil {
+	if _, err := c.OpenSession("moomux-foo", "feat/bar"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(fr.script, "tmux attach -t moomux-foo") {
@@ -32,7 +32,7 @@ func TestITermOpenSessionAttachesAndSetsTitle(t *testing.T) {
 func TestITermOpenSessionOmitsTitleWhenEmpty(t *testing.T) {
 	fr := &fakeRunner{}
 	c := &itermClient{runner: fr}
-	if err := c.OpenSession("moomux-foo", ""); err != nil {
+	if _, err := c.OpenSession("moomux-foo", ""); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(fr.script, "set name to") {
@@ -43,7 +43,7 @@ func TestITermOpenSessionOmitsTitleWhenEmpty(t *testing.T) {
 func TestITermEscapesAppleScript(t *testing.T) {
 	fr := &fakeRunner{}
 	c := &itermClient{runner: fr}
-	if err := c.OpenSession("moomux-foo", `branch"with\special`); err != nil {
+	if _, err := c.OpenSession("moomux-foo", `branch"with\special`); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(fr.script, `branch\"with\\special`) {

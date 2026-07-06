@@ -3,9 +3,13 @@ package terminal
 
 import "os"
 
-// TerminalOpener opens a tmux session in the detected terminal.
+// TerminalOpener opens a tmux session in the detected terminal. The returned
+// hint is a non-empty, user-facing instruction when the opener couldn't
+// actually attach a terminal for the caller (e.g. no supported terminal was
+// detected) but still succeeded in the sense that there's nothing more it
+// can do — callers should surface it, not treat it as failure.
 type TerminalOpener interface {
-	OpenSession(tmuxSession, title string) error
+	OpenSession(tmuxSession, title string) (hint string, err error)
 }
 
 // Detect returns the best TerminalOpener for the current environment by

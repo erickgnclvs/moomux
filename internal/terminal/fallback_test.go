@@ -1,19 +1,17 @@
 package terminal
 
 import (
-	"bytes"
 	"strings"
 	"testing"
 )
 
-func TestFallbackPrintsAttachCommand(t *testing.T) {
-	var buf bytes.Buffer
-	f := &fallbackOpener{out: &buf}
-	if err := f.OpenSession("moomux-foo", "feat/bar"); err != nil {
+func TestFallbackReturnsAttachHint(t *testing.T) {
+	f := &fallbackOpener{}
+	hint, err := f.OpenSession("moomux-foo", "feat/bar")
+	if err != nil {
 		t.Fatal(err)
 	}
-	got := buf.String()
-	if !strings.Contains(got, "tmux attach -t moomux-foo") {
-		t.Fatalf("expected attach command in output, got: %s", got)
+	if !strings.Contains(hint, "tmux attach -t moomux-foo") {
+		t.Fatalf("expected attach command in hint, got: %s", hint)
 	}
 }

@@ -11,12 +11,12 @@ type windowOpener struct {
 	exec   func(binary string, args ...string) error
 }
 
-func (w *windowOpener) OpenSession(tmuxSession, title string) error {
+func (w *windowOpener) OpenSession(tmuxSession, title string) (string, error) {
 	args := w.args(title, tmuxSession)
 	if w.exec != nil {
-		return w.exec(w.binary, args...)
+		return "", w.exec(w.binary, args...)
 	}
-	return exec.Command(w.binary, args...).Start()
+	return "", exec.Command(w.binary, args...).Start()
 }
 
 func kittyArgs(title, tmuxSession string) []string {

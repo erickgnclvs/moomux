@@ -1,20 +1,13 @@
 package terminal
 
-import (
-	"fmt"
-	"io"
-	"os"
-)
+import "fmt"
 
-type fallbackOpener struct {
-	out io.Writer
-}
+// fallbackOpener is used when no supported terminal is detected. It cannot
+// open anything itself, so it hands the caller an attach instruction to
+// display instead of writing to stdout directly — moomux runs its TUI on
+// the alt screen, and writing straight to stdout there corrupts the display.
+type fallbackOpener struct{}
 
-func (f *fallbackOpener) OpenSession(tmuxSession, title string) error {
-	w := f.out
-	if w == nil {
-		w = os.Stdout
-	}
-	fmt.Fprintf(w, "moomux: run the following to attach to your session:\n  tmux attach -t %s\n", tmuxSession)
-	return nil
+func (f *fallbackOpener) OpenSession(tmuxSession, title string) (string, error) {
+	return fmt.Sprintf("no terminal detected, attach yourself: tmux attach -t %s", tmuxSession), nil
 }

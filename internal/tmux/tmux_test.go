@@ -27,7 +27,7 @@ func (e exitErr) Error() string { return "exit" }
 func (e exitErr) ExitCode() int { return e.code }
 
 func TestNewSession(t *testing.T) {
-	fr := &fakeRunner{}
+	fr := &fakeRunner{out: map[string]string{"list-panes -t moomux-foo -F #{pane_id}": "%3\n"}}
 	c := &Client{Runner: fr}
 	if err := c.NewSession("moomux-foo", "/tmp/wt", "claude", "foo"); err != nil {
 		t.Fatal(err)
@@ -37,7 +37,11 @@ func TestNewSession(t *testing.T) {
 		{"set-window-option", "-t", "moomux-foo", "automatic-rename", "off"},
 		{"set-option", "-t", "moomux-foo", "set-titles", "on"},
 		{"set-option", "-t", "moomux-foo", "set-titles-string", "#{window_name}"},
-		{"send-keys", "-t", "moomux-foo", "claude", "Enter"},
+		{"set-option", "-t", "moomux-foo", "mouse", "on"},
+		{"list-panes", "-t", "moomux-foo", "-F", "#{pane_id}"},
+		{"split-window", "-h", "-t", "moomux-foo", "-c", "/tmp/wt", "-p", "33"},
+		{"select-pane", "-t", "%3"},
+		{"send-keys", "-t", "%3", "claude", "Enter"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
 		t.Fatalf("calls = %v", fr.calls)
@@ -45,14 +49,18 @@ func TestNewSession(t *testing.T) {
 }
 
 func TestNewSessionNoWindowName(t *testing.T) {
-	fr := &fakeRunner{}
+	fr := &fakeRunner{out: map[string]string{"list-panes -t moomux-foo -F #{pane_id}": "%3\n"}}
 	c := &Client{Runner: fr}
 	if err := c.NewSession("moomux-foo", "/tmp/wt", "claude", ""); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{
 		{"new-session", "-d", "-s", "moomux-foo", "-c", "/tmp/wt"},
-		{"send-keys", "-t", "moomux-foo", "claude", "Enter"},
+		{"set-option", "-t", "moomux-foo", "mouse", "on"},
+		{"list-panes", "-t", "moomux-foo", "-F", "#{pane_id}"},
+		{"split-window", "-h", "-t", "moomux-foo", "-c", "/tmp/wt", "-p", "33"},
+		{"select-pane", "-t", "%3"},
+		{"send-keys", "-t", "%3", "claude", "Enter"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
 		t.Fatalf("calls = %v", fr.calls)
@@ -60,7 +68,7 @@ func TestNewSessionNoWindowName(t *testing.T) {
 }
 
 func TestNewSessionNoCmd(t *testing.T) {
-	fr := &fakeRunner{}
+	fr := &fakeRunner{out: map[string]string{"list-panes -t moomux-foo -F #{pane_id}": "%3\n"}}
 	c := &Client{Runner: fr}
 	if err := c.NewSession("moomux-foo", "/tmp/wt", "", "foo"); err != nil {
 		t.Fatal(err)
@@ -70,6 +78,10 @@ func TestNewSessionNoCmd(t *testing.T) {
 		{"set-window-option", "-t", "moomux-foo", "automatic-rename", "off"},
 		{"set-option", "-t", "moomux-foo", "set-titles", "on"},
 		{"set-option", "-t", "moomux-foo", "set-titles-string", "#{window_name}"},
+		{"set-option", "-t", "moomux-foo", "mouse", "on"},
+		{"list-panes", "-t", "moomux-foo", "-F", "#{pane_id}"},
+		{"split-window", "-h", "-t", "moomux-foo", "-c", "/tmp/wt", "-p", "33"},
+		{"select-pane", "-t", "%3"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
 		t.Fatalf("calls = %v", fr.calls)

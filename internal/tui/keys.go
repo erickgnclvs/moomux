@@ -28,7 +28,7 @@ func DefaultKeyMap() KeyMap {
 	return KeyMap{
 		Up:         key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 		Down:       key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
-		Open:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
+		Open:       key.NewBinding(key.WithKeys("enter", "o"), key.WithHelp("enter/o", "open")),
 		New:        key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new")),
 		Delete:     key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
 		Kill:       key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "park")),

@@ -6,12 +6,40 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// truncateToWidth clips s to at most w cells, appending an ellipsis if it
+// had to cut. Used to keep footer rows to a single, fixed-height line so the
+// overall layout never shifts between frames.
+func truncateToWidth(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= w {
+		return s
+	}
+	if w == 1 {
+		return "…"
+	}
+	r := []rune(s)
+	out := make([]rune, 0, len(r))
+	width := 0
+	for _, c := range r {
+		cw := lipgloss.Width(string(c))
+		if width+cw > w-1 {
+			break
+		}
+		out = append(out, c)
+		width += cw
+	}
+	return string(out) + "…"
+}
+
 func (m *Model) View() string {
 	if m.width == 0 {
 		return "starting…"
 	}
 
 	header := m.renderHeader()
+	footer := m.renderFooter()
 
 	listW := 42
 	if m.width-listW < 30 {
@@ -25,7 +53,9 @@ func (m *Model) View() string {
 		detailW = 20
 	}
 
-	bodyHeight := m.height - 6
+	// -2 accounts for panelBorder's top/bottom border lines, which sit
+	// outside the Height() passed to it below.
+	bodyHeight := m.height - lipgloss.Height(header) - lipgloss.Height(footer) - 2
 	if bodyHeight < 5 {
 		bodyHeight = 5
 	}
@@ -34,7 +64,6 @@ func (m *Model) View() string {
 	right := panelBorder.Width(detailW).Height(bodyHeight).Render(m.renderDetail(detailW-2, bodyHeight-2))
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
-	footer := m.renderFooter()
 	base := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 
 	switch m.mode {
@@ -78,21 +107,38 @@ func (m *Model) renderHeader() string {
 	return lipgloss.NewStyle().Padding(0, 1).Render(row)
 }
 
+// renderFooter always returns exactly two lines — a message row (blank when
+// there's no flash) and a hints row — so the overall layout height never
+// changes between frames. Both rows are truncated rather than word-wrapped;
+// letting them grow to variable heights previously caused the body/footer
+// split to jitter across renders, which could leave stale content on screen
+// or push the hints row out of view.
 func (m *Model) renderFooter() string {
-	left := "n:new  enter:open  x:park  d:delete  t:tag  tab:project  r:refresh  q:quit"
-	if m.flash != "" {
-		left = m.flash + "  •  " + left
-	}
+	hints := "n:new  enter:open  x:park  d:delete  t:tag  tab:project  r:refresh  q:quit"
 	right := "P:+project  D:-project"
 	// subtract 2 for the footer's horizontal padding (Padding(0,1) = 1 each side)
 	inner := m.width - 2
-	leftW := inner - lipgloss.Width(right)
-	if leftW < 0 {
-		leftW = 0
+	hintsW := inner - lipgloss.Width(right)
+	if hintsW < 0 {
+		hintsW = 0
 	}
-	row := lipgloss.JoinHorizontal(lipgloss.Bottom,
-		lipgloss.NewStyle().Width(leftW).Render(left),
+	hintRow := lipgloss.JoinHorizontal(lipgloss.Bottom,
+		lipgloss.NewStyle().Width(hintsW).Render(truncateToWidth(hints, hintsW)),
 		lipgloss.NewStyle().Width(lipgloss.Width(right)).Align(lipgloss.Right).Render(right),
 	)
-	return footerStyle.Width(m.width).Render(row)
+
+	messageLine := ""
+	if m.flash != "" {
+		flashStyle := infoFlashStyle
+		prefix := "✓ "
+		if m.flashKind == "error" {
+			flashStyle = errorFlashStyle
+			prefix = "✖ "
+		}
+		messageLine = flashStyle.Render(truncateToWidth(prefix+m.flash, inner))
+	}
+	messageRow := lipgloss.NewStyle().Width(inner).Render(messageLine)
+
+	rows := lipgloss.JoinVertical(lipgloss.Left, messageRow, hintRow)
+	return footerStyle.Width(m.width).Render(rows)
 }

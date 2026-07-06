@@ -29,6 +29,9 @@ var (
 
 	footerStyle = lipgloss.NewStyle().Foreground(colMute).Padding(0, 1)
 
+	infoFlashStyle  = lipgloss.NewStyle().Foreground(colFg).Bold(true)
+	errorFlashStyle = lipgloss.NewStyle().Foreground(colDanger).Bold(true)
+
 	dotWorking = lipgloss.NewStyle().Foreground(colWorking).Render("⬤")
 	dotWaiting = lipgloss.NewStyle().Foreground(colWaiting).Render("⬤")
 	dotParked  = lipgloss.NewStyle().Foreground(colParked).Render("⬤")
