@@ -22,6 +22,7 @@ type SessionOpenedMsg struct {
 	ID   string
 	Hint string
 }
+type LinkOpenedMsg struct{ URL string }
 type SessionCreatedMsg struct {
 	Session session.Session
 	Hint    string
