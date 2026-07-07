@@ -218,16 +218,24 @@ func (m *Model) refreshTmuxAlive() {
 
 // refreshStatusCmd returns a tea.Cmd that computes the tmux-alive map and
 // missing prompts off the Bubble Tea event-loop goroutine. It must not
-// mutate m — only Update may mutate model state; this closure only reads
-// from m and returns the computed data via StatusRefreshedMsg.
+// mutate m — only Update may mutate model state. m.prompts is also written
+// concurrently by Update, so we snapshot the keys we already know about here
+// (on the caller's goroutine) rather than reading m.prompts from the
+// returned closure, which would race.
 func refreshStatusCmd(m *Model) tea.Cmd {
+	backend := m.backend
+	known := make(map[string]string, len(m.prompts))
+	for id, p := range m.prompts {
+		known[id] = p
+	}
+
 	return func() tea.Msg {
-		tmuxAlive := m.backend.TmuxAliveAll()
+		tmuxAlive := backend.TmuxAliveAll()
 
 		home, _ := os.UserHomeDir()
 		prompts := make(map[string]string)
-		for _, s := range m.backend.Sessions() {
-			if p := m.prompts[s.ID]; p != "" {
+		for _, s := range backend.Sessions() {
+			if p := known[s.ID]; p != "" {
 				continue
 			}
 			prompts[s.ID] = prompt.ForAgent(home, s.AgentName(), s.WorktreePath)
