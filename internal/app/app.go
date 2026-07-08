@@ -106,7 +106,7 @@ func (a *App) uniqueNameFromBranch(project, branch string) string {
 // CreateSession's hint, when non-empty, is a user-facing instruction
 // (e.g. "run: tmux attach -t ...") to show alongside success — it is
 // not an error.
-func (a *App) CreateSession(project, name, agent, existingBranch string) (session.Session, string, error) {
+func (a *App) CreateSession(project, name, agent, existingBranch, ticket string) (session.Session, string, error) {
 	proj, ok := a.Cfg.Projects[project]
 	if !ok {
 		return session.Session{}, "", fmt.Errorf("unknown project %q", project)
@@ -186,6 +186,7 @@ func (a *App) CreateSession(project, name, agent, existingBranch string) (sessio
 		CreatedAt:    time.Now().UTC(),
 		Agent:        agent,
 		AgentPort:    agentPort,
+		Ticket:       ticket,
 	}
 	if err := a.Store.Put(s); err != nil {
 		slog.Error("store put failed", "id", s.ID, "err", err)

@@ -15,7 +15,7 @@ type fakeBackend struct {
 	sessions []session.Session
 }
 
-func (f *fakeBackend) CreateSession(project, name, agent, existingBranch string) (session.Session, string, error) {
+func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string) (session.Session, string, error) {
 	return session.Session{}, "", nil
 }
 func (f *fakeBackend) OpenSession(id string) (string, error) { return "", nil }
