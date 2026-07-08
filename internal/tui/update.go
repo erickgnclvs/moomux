@@ -89,6 +89,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshSessions()
 		return m, nil
 
+	case SessionMovedMsg:
+		if msg.Err != nil {
+			m.setError(msg.Err)
+			return m, nil
+		}
+		m.refreshSessions()
+		for i, s := range m.sessions {
+			if s.ID == msg.ID {
+				m.cursor = i
+				break
+			}
+		}
+		return m, nil
+
 	case SessionOpenedMsg:
 		text := "opened " + msg.ID
 		if msg.Hint != "" {
@@ -199,6 +213,26 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Down):
 		if len(m.sessions) > 0 {
 			m.cursor = (m.cursor + 1) % len(m.sessions)
+		}
+	case key.Matches(msg, m.keys.MoveUp):
+		if len(m.sessions) > 0 && m.cursor > 0 {
+			id := m.sessions[m.cursor].ID
+			return m, func() tea.Msg {
+				if err := m.backend.MoveSession(id, -1); err != nil {
+					return SessionMovedMsg{ID: id, Err: err}
+				}
+				return SessionMovedMsg{ID: id}
+			}
+		}
+	case key.Matches(msg, m.keys.MoveDown):
+		if len(m.sessions) > 0 && m.cursor < len(m.sessions)-1 {
+			id := m.sessions[m.cursor].ID
+			return m, func() tea.Msg {
+				if err := m.backend.MoveSession(id, 1); err != nil {
+					return SessionMovedMsg{ID: id, Err: err}
+				}
+				return SessionMovedMsg{ID: id}
+			}
 		}
 	case key.Matches(msg, m.keys.Tab):
 		if len(m.projects) > 0 {

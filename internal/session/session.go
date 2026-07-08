@@ -24,6 +24,7 @@ type Session struct {
 	AgentPort    int       `json:"agent_port,omitempty"` // HTTP port for OpenCode API; 0 = not applicable
 	Ticket       string    `json:"ticket,omitempty"`     // ticket URL (e.g. Asana, Jira, Linear)
 	PR           string    `json:"pr,omitempty"`         // pull request URL (e.g. GitHub, GitLab)
+	Order        int64     `json:"order,omitempty"`      // manual sort position within a project; 0 = unset, falls back to CreatedAt
 }
 
 // AgentName returns the effective agent name, defaulting to "claude" for legacy sessions.
@@ -107,6 +108,10 @@ func (s *Store) Get(id string) (Session, bool) {
 	return sess, ok
 }
 
+// All returns every session ordered by manual Order ascending (0 = unset,
+// so unordered sessions sort first — matching where a freshly created
+// session should land), falling back to CreatedAt descending among
+// sessions with equal Order.
 func (s *Store) All() []Session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -114,7 +119,12 @@ func (s *Store) All() []Session {
 	for _, v := range s.sessions {
 		out = append(out, v)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Order != out[j].Order {
+			return out[i].Order < out[j].Order
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
 	return out
 }
 
@@ -127,6 +137,21 @@ func (s *Store) ByProject(project string) []Session {
 		}
 	}
 	return out
+}
+
+// Reorder assigns sequential Order values (1..N) to the given sessions, in
+// the order given, and persists the store in a single write. Callers pass a
+// full project's sessions (e.g. from ByProject) after rearranging them, so
+// the rest of that project's ordering stays self-consistent; sessions
+// outside the given slice are left untouched.
+func (s *Store) Reorder(sessions []Session) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, sess := range sessions {
+		sess.Order = int64(i + 1)
+		s.sessions[sess.ID] = sess
+	}
+	return s.save()
 }
 
 func MakeID(project, name string) string { return project + ":" + name }

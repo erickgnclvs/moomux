@@ -44,6 +44,14 @@ type SessionDeletedMsg struct{ ID string }
 type SessionTaggedMsg struct{ Session session.Session }
 type TmuxKilledMsg struct{ ID string }
 
+// SessionMovedMsg is the result of an async reorder (MoveSession) call.
+// Update() re-syncs m.sessions and re-anchors the cursor on ID once this
+// arrives; Err is set if the persisted reorder failed.
+type SessionMovedMsg struct {
+	ID  string
+	Err error
+}
+
 // ProjectAddedMsg is the result of an async project-add flow. Kind
 // distinguishes which backend call produced it ("add" for AddProject,
 // "init" for InitProjectAndAdd, "plain" for AddPlainProject) since each

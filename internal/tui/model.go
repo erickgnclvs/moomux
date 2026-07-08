@@ -27,6 +27,7 @@ type Backend interface {
 	DeleteSession(id string) error
 	KillTmux(id string) error
 	SetSessionTags(id, ticket, pr string) (session.Session, error)
+	MoveSession(id string, delta int) error
 	// TmuxAliveAll returns id→alive for every stored session using a single
 	// tmux list-sessions call instead of N has-session calls.
 	TmuxAliveAll() map[string]bool

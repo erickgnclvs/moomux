@@ -195,6 +195,33 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string)
 	return s, hint, nil
 }
 
+// MoveSession shifts the session with the given id by delta positions (-1
+// up, +1 down) within its project's session list, and persists the new
+// order. It's a no-op if the move would go out of bounds.
+func (a *App) MoveSession(id string, delta int) error {
+	s, ok := a.Store.Get(id)
+	if !ok {
+		return fmt.Errorf("unknown session %q", id)
+	}
+	peers := a.Store.ByProject(s.Project)
+	idx := -1
+	for i, p := range peers {
+		if p.ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return fmt.Errorf("unknown session %q", id)
+	}
+	j := idx + delta
+	if j < 0 || j >= len(peers) {
+		return nil
+	}
+	peers[idx], peers[j] = peers[j], peers[idx]
+	return a.Store.Reorder(peers)
+}
+
 func (a *App) SetSessionTags(id, ticket, pr string) (session.Session, error) {
 	s, ok := a.Store.Get(id)
 	if !ok {

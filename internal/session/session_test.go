@@ -76,6 +76,61 @@ func TestAllSortedByCreatedDesc(t *testing.T) {
 	}
 }
 
+func TestReorderPersistsAndOverridesCreatedAt(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.json")
+	s := &Store{Path: path}
+	_ = s.Load()
+	t0 := time.Now()
+	_ = s.Put(Session{ID: "a", Project: "p", CreatedAt: t0.Add(-time.Hour)})
+	_ = s.Put(Session{ID: "b", Project: "p", CreatedAt: t0})
+
+	// Without a manual order, "b" (newer) sorts first.
+	all := s.ByProject("p")
+	if all[0].ID != "b" {
+		t.Fatalf("expected b first before reorder, got %s", all[0].ID)
+	}
+
+	// Move "a" to the front and persist.
+	all[0], all[1] = all[1], all[0]
+	if err := s.Reorder(all); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.ByProject("p"); got[0].ID != "a" {
+		t.Fatalf("expected a first after reorder, got %s", got[0].ID)
+	}
+
+	// Order survives a reload.
+	s2 := &Store{Path: path}
+	if err := s2.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if got := s2.ByProject("p"); got[0].ID != "a" {
+		t.Fatalf("expected a first after reload, got %s", got[0].ID)
+	}
+}
+
+func TestUnorderedSessionSortsBeforeReorderedPeers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.json")
+	s := &Store{Path: path}
+	_ = s.Load()
+	t0 := time.Now()
+	_ = s.Put(Session{ID: "a", Project: "p", CreatedAt: t0.Add(-time.Hour)})
+	_ = s.Put(Session{ID: "b", Project: "p", CreatedAt: t0})
+	if err := s.Reorder(s.ByProject("p")); err != nil {
+		t.Fatal(err)
+	}
+
+	// A freshly created session (Order unset) should land ahead of any
+	// explicitly ordered peer, mirroring today's "newest on top" default.
+	_ = s.Put(Session{ID: "c", Project: "p", CreatedAt: t0.Add(time.Minute)})
+	got := s.ByProject("p")
+	if got[0].ID != "c" {
+		t.Fatalf("expected unordered c first, got %s", got[0].ID)
+	}
+}
+
 func TestMakeID(t *testing.T) {
 	if got := MakeID("eg_system", "hash-password"); got != "eg_system:hash-password" {
 		t.Fatalf("got %q", got)

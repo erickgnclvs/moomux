@@ -103,4 +103,4 @@ go build -o moomux . && ./moomux
 moomux
 ```
 
-Keys: `n` new · `enter` open · `x` kill · `d` delete · `tab` switch project · `q` quit
+Keys: `n` new · `enter` open · `x` kill · `d` delete · `t` tag · `shift+↑`/`shift+↓` reorder · `tab` switch project · `q` quit

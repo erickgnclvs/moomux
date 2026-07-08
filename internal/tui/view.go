@@ -117,7 +117,7 @@ func (m *Model) renderHeader() string {
 // split to jitter across renders, which could leave stale content on screen
 // or push the hints row out of view.
 func (m *Model) renderFooter() string {
-	hints := "n:new  enter:open  x:park  d:delete  t:tag  tab:project  r:refresh  q:quit"
+	hints := "n:new  enter:open  x:park  d:delete  t:tag  shift+↑/↓:move  tab:project  r:refresh  q:quit"
 	right := "P:+project  D:-project"
 	// subtract 2 for the footer's horizontal padding (Padding(0,1) = 1 each side)
 	inner := m.width - 2

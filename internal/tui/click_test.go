@@ -13,6 +13,14 @@ import (
 
 type fakeBackend struct {
 	sessions []session.Session
+
+	moveSessionCalls []moveSessionCall
+	moveSessionErr   error
+}
+
+type moveSessionCall struct {
+	id    string
+	delta int
 }
 
 func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string) (session.Session, string, error) {
@@ -23,6 +31,10 @@ func (f *fakeBackend) DeleteSession(id string) error         { return nil }
 func (f *fakeBackend) KillTmux(id string) error              { return nil }
 func (f *fakeBackend) SetSessionTags(id, ticket, pr string) (session.Session, error) {
 	return session.Session{}, nil
+}
+func (f *fakeBackend) MoveSession(id string, delta int) error {
+	f.moveSessionCalls = append(f.moveSessionCalls, moveSessionCall{id: id, delta: delta})
+	return f.moveSessionErr
 }
 func (f *fakeBackend) TmuxAliveAll() map[string]bool                         { return map[string]bool{} }
 func (f *fakeBackend) Sessions() []session.Session                           { return f.sessions }
