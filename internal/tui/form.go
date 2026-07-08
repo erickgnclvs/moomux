@@ -24,6 +24,8 @@ func (m *Model) renderNewForm() string {
 	b.WriteString(muteStyle.Render("agent:  "))
 	b.WriteString(m.renderNewFormAgentSelector())
 	b.WriteString("\n\n")
+	b.WriteString(m.ticketInput.View())
+	b.WriteString("\n\n")
 	b.WriteString(muteStyle.Render("tab to switch field   ←→ to pick agent   enter to create   esc to cancel"))
 	b.WriteString("\n")
 	b.WriteString(muteStyle.Render("(leave name blank to derive it from the branch)"))

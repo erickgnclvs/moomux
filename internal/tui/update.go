@@ -234,6 +234,8 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.nameInput.Focus()
 		m.branchInput.SetValue("")
 		m.branchInput.Blur()
+		m.ticketInput.SetValue("")
+		m.ticketInput.Blur()
 		m.newFormFocus = 0
 		// pre-select the project's default agent
 		proj := m.projects[m.activeProj]
@@ -289,14 +291,13 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = ModeList
 		return m, nil
 	case key.Matches(msg, m.keys.Tab), key.Matches(msg, m.keys.ShiftTab):
-		m.newFormFocus = (m.newFormFocus + 1) % 2
-		if m.newFormFocus == 0 {
-			m.nameInput.Focus()
-			m.branchInput.Blur()
+		m.newFormBlurAll()
+		if key.Matches(msg, m.keys.ShiftTab) {
+			m.newFormFocus = (m.newFormFocus - 1 + 3) % 3
 		} else {
-			m.nameInput.Blur()
-			m.branchInput.Focus()
+			m.newFormFocus = (m.newFormFocus + 1) % 3
 		}
+		m.newFormFocusInput()
 		return m, nil
 	case key.Matches(msg, m.keys.Left):
 		m.newFormAgentIdx = (m.newFormAgentIdx - 1 + len(agentChoices)) % len(agentChoices)
@@ -307,6 +308,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Enter):
 		name := m.nameInput.Value()
 		branch := m.branchInput.Value()
+		ticket := m.ticketInput.Value()
 		if name == "" && branch == "" {
 			return m, nil
 		}
@@ -319,21 +321,40 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.setFlash("info", "creating "+label+"…")
 		return m, func() tea.Msg {
-			s, hint, err := m.backend.CreateSession(proj, name, agent, branch)
+			s, hint, err := m.backend.CreateSession(proj, name, agent, branch, ticket)
 			if err != nil {
 				return ErrorMsg{Err: err}
 			}
 			return SessionCreatedMsg{Session: s, Hint: hint}
 		}
 	}
-	if m.newFormFocus == 1 {
-		var cmd tea.Cmd
-		m.branchInput, cmd = m.branchInput.Update(msg)
-		return m, cmd
-	}
 	var cmd tea.Cmd
-	m.nameInput, cmd = m.nameInput.Update(msg)
+	switch m.newFormFocus {
+	case 1:
+		m.branchInput, cmd = m.branchInput.Update(msg)
+	case 2:
+		m.ticketInput, cmd = m.ticketInput.Update(msg)
+	default:
+		m.nameInput, cmd = m.nameInput.Update(msg)
+	}
 	return m, cmd
+}
+
+func (m *Model) newFormBlurAll() {
+	m.nameInput.Blur()
+	m.branchInput.Blur()
+	m.ticketInput.Blur()
+}
+
+func (m *Model) newFormFocusInput() {
+	switch m.newFormFocus {
+	case 1:
+		m.branchInput.Focus()
+	case 2:
+		m.ticketInput.Focus()
+	default:
+		m.nameInput.Focus()
+	}
 }
 
 func (m *Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

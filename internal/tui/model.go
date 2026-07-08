@@ -22,7 +22,7 @@ type Backend interface {
 	// CreateSession's hint, when non-empty, is a user-facing instruction
 	// (e.g. "run: tmux attach -t ...") to show alongside success — it is
 	// not an error.
-	CreateSession(project, name, agent, existingBranch string) (s session.Session, hint string, err error)
+	CreateSession(project, name, agent, existingBranch, ticket string) (s session.Session, hint string, err error)
 	OpenSession(id string) (hint string, err error)
 	DeleteSession(id string) error
 	KillTmux(id string) error
@@ -108,7 +108,8 @@ type Model struct {
 	mode            Mode
 	nameInput       textinput.Model
 	branchInput     textinput.Model
-	newFormFocus    int // 0=nameInput, 1=branchInput
+	ticketInput     textinput.Model
+	newFormFocus    int // 0=nameInput, 1=branchInput, 2=ticketInput
 	newFormAgentIdx int // agent selector in the new-session form
 	projForm        projectForm
 	tagForm         tagForm
@@ -176,6 +177,11 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 	bi.CharLimit = 128
 	bi.Width = 40
 
+	tki := textinput.New()
+	tki.Placeholder = "ticket url (optional)"
+	tki.CharLimit = 256
+	tki.Width = 40
+
 	m := &Model{
 		cfg:         cfg,
 		backend:     backend,
@@ -187,6 +193,7 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 		cancelPoll:  cancel,
 		nameInput:   ti,
 		branchInput: bi,
+		ticketInput: tki,
 	}
 	for name := range cfg.Projects {
 		m.projects = append(m.projects, name)
