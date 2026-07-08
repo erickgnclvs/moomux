@@ -193,12 +193,12 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cancelPoll()
 		return m, tea.Quit
 	case key.Matches(msg, m.keys.Up):
-		if m.cursor > 0 {
-			m.cursor--
+		if len(m.sessions) > 0 {
+			m.cursor = (m.cursor - 1 + len(m.sessions)) % len(m.sessions)
 		}
 	case key.Matches(msg, m.keys.Down):
-		if m.cursor < len(m.sessions)-1 {
-			m.cursor++
+		if len(m.sessions) > 0 {
+			m.cursor = (m.cursor + 1) % len(m.sessions)
 		}
 	case key.Matches(msg, m.keys.Tab):
 		if len(m.projects) > 0 {
