@@ -17,7 +17,10 @@ func hasSQLite3() bool {
 }
 
 // createTestDB creates a temporary SQLite DB with a simple schema.
-func createTestDB(t *testing.T, rows []struct{ cwd string; updatedMs int64 }) string {
+func createTestDB(t *testing.T, rows []struct {
+	cwd       string
+	updatedMs int64
+}) string {
 	t.Helper()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
@@ -37,7 +40,10 @@ func TestSQLiteWatcherWorking(t *testing.T) {
 		t.Skip("sqlite3 CLI not available")
 	}
 	now := time.Now().UnixMilli()
-	dbPath := createTestDB(t, []struct{ cwd string; updatedMs int64 }{
+	dbPath := createTestDB(t, []struct {
+		cwd       string
+		updatedMs int64
+	}{
 		{"/tmp/proj", now - 2000}, // 2 seconds ago — within 10s ActiveAge
 	})
 
@@ -67,7 +73,10 @@ func TestSQLiteWatcherWaiting(t *testing.T) {
 		t.Skip("sqlite3 CLI not available")
 	}
 	now := time.Now().UnixMilli()
-	dbPath := createTestDB(t, []struct{ cwd string; updatedMs int64 }{
+	dbPath := createTestDB(t, []struct {
+		cwd       string
+		updatedMs int64
+	}{
 		{"/tmp/proj", now - 60000}, // 60 seconds ago — stale
 	})
 

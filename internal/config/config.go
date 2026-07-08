@@ -12,11 +12,11 @@ import (
 )
 
 type Project struct {
-	Kind         string `toml:"kind,omitempty"`         // "git" (default) or "plain"
+	Kind         string `toml:"kind,omitempty"` // "git" (default) or "plain"
 	Repo         string `toml:"repo"`
 	BranchPrefix string `toml:"branch_prefix,omitempty"`
 	BaseBranch   string `toml:"base_branch,omitempty"`
-	Agent        string `toml:"agent,omitempty"`         // "claude" (default), "codex", "opencode"
+	Agent        string `toml:"agent,omitempty"` // "claude" (default), "codex", "opencode"
 }
 
 func (p Project) IsPlain() bool { return p.Kind == "plain" }
