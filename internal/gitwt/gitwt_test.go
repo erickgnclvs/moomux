@@ -62,3 +62,15 @@ func TestRemoveWorktree(t *testing.T) {
 		t.Fatalf("calls = %v", fr.calls)
 	}
 }
+
+func TestDeleteBranch(t *testing.T) {
+	fr := &fakeRunner{}
+	c := &Client{Runner: fr}
+	if err := c.DeleteBranch("/repo", "user/foo"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"@/repo", "branch", "-D", "user/foo"}
+	if !reflect.DeepEqual(fr.calls[0], want) {
+		t.Fatalf("calls = %v", fr.calls)
+	}
+}

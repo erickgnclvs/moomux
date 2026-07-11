@@ -181,6 +181,7 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string)
 		Project:      project,
 		Name:         name,
 		Branch:       branch,
+		NewBranch:    !proj.IsPlain() && existingBranch == "",
 		WorktreePath: wt,
 		TmuxSession:  tmuxName,
 		CreatedAt:    time.Now().UTC(),
@@ -411,6 +412,9 @@ func (a *App) DeleteSession(id string) error {
 			_ = os.RemoveAll(s.WorktreePath)
 		} else {
 			_ = a.Git.RemoveWorktree(proj.Repo, s.WorktreePath)
+			if s.NewBranch && s.Branch != "" {
+				_ = a.Git.DeleteBranch(proj.Repo, s.Branch)
+			}
 		}
 	} else {
 		_ = os.RemoveAll(s.WorktreePath)
