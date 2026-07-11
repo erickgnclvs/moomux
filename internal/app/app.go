@@ -120,18 +120,19 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string)
 	if agent == "" {
 		agent = proj.AgentName()
 	}
-	wt := filepath.Join(a.WorktreeRoot, project, name)
+	var wt string
 	tmuxName := "moomux-" + name
 	branch := ""
 
+	if proj.IsPlain() {
+		wt = proj.Repo
+	} else {
+		wt = filepath.Join(a.WorktreeRoot, project, name)
+	}
+
 	slog.Info("create session", "project", project, "name", name, "agent", agent, "worktree", wt, "branch", existingBranch)
 
-	if proj.IsPlain() {
-		if err := os.MkdirAll(wt, 0o755); err != nil {
-			slog.Error("mkdir session dir failed", "path", wt, "err", err)
-			return session.Session{}, "", fmt.Errorf("mkdir session dir: %w", err)
-		}
-	} else {
+	if !proj.IsPlain() {
 		fetchTarget := proj.BaseBranch
 		if existingBranch != "" {
 			branch = existingBranch
@@ -353,8 +354,8 @@ func (a *App) InitProjectAndAdd(name string, p config.Project) error {
 	return a.saveProject(name, p)
 }
 
-// AddPlainProject saves a non-git project. Each session is just a subdirectory
-// under WorktreeRoot; no branches, no worktrees.
+// AddPlainProject saves a non-git project. Sessions run directly in the
+// project folder; no branches, no worktrees, no per-session isolation.
 func (a *App) AddPlainProject(name string, p config.Project) error {
 	if err := a.validateProject(name, &p); err != nil {
 		return err
@@ -408,9 +409,7 @@ func (a *App) DeleteSession(id string) error {
 		}
 	}
 	if proj, ok := a.Cfg.Projects[s.Project]; ok {
-		if proj.IsPlain() {
-			_ = os.RemoveAll(s.WorktreePath)
-		} else {
+		if !proj.IsPlain() {
 			_ = a.Git.RemoveWorktree(proj.Repo, s.WorktreePath)
 			if s.NewBranch && s.Branch != "" {
 				_ = a.Git.DeleteBranch(proj.Repo, s.Branch)
