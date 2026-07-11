@@ -417,7 +417,9 @@ func (a *App) DeleteSession(id string) error {
 	}
 	if proj, ok := a.Cfg.Projects[s.Project]; ok {
 		if !proj.IsPlain() {
-			_ = a.Git.RemoveWorktree(proj.Repo, s.WorktreePath)
+			if err := a.Git.RemoveWorktree(proj.Repo, s.WorktreePath); err != nil {
+				return fmt.Errorf("remove worktree: %w", err)
+			}
 			if s.NewBranch && s.Branch != "" {
 				_ = a.Git.DeleteBranch(proj.Repo, s.Branch)
 			}
