@@ -89,6 +89,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshSessions()
 		return m, refreshStatusCmd(m)
 
+	case SessionArchivedMsg:
+		if msg.Err != nil {
+			m.setError(msg.Err)
+			return m, nil
+		}
+		if msg.Archived {
+			m.setFlash("info", "archived")
+		} else {
+			m.setFlash("info", "restored")
+		}
+		m.refreshSessions()
+		return m, nil
+
 	case SessionTaggedMsg:
 		m.setFlash("info", "tagged "+msg.Session.Name)
 		m.refreshSessions()
@@ -293,6 +306,21 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.sessions) > 0 {
 			m.mode = ModeConfirmDelete
 		}
+	case key.Matches(msg, m.keys.Archive):
+		if len(m.sessions) > 0 {
+			id := m.sessions[m.cursor].ID
+			archive := !m.showArchived
+			return m, func() tea.Msg {
+				if _, err := m.backend.SetSessionArchived(id, archive); err != nil {
+					return SessionArchivedMsg{ID: id, Archived: archive, Err: err}
+				}
+				return SessionArchivedMsg{ID: id, Archived: archive}
+			}
+		}
+	case key.Matches(msg, m.keys.ShowArchived):
+		m.showArchived = !m.showArchived
+		m.cursor = 0
+		m.refreshSessions()
 	case key.Matches(msg, m.keys.Tag):
 		if len(m.sessions) > 0 {
 			s := m.sessions[m.cursor]

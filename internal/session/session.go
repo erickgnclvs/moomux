@@ -4,6 +4,7 @@ package session
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -25,6 +26,7 @@ type Session struct {
 	Ticket       string    `json:"ticket,omitempty"`     // ticket URL (e.g. Asana, Jira, Linear)
 	PR           string    `json:"pr,omitempty"`         // pull request URL (e.g. GitHub, GitLab)
 	Order        int64     `json:"order,omitempty"`      // manual sort position within a project; 0 = unset, falls back to CreatedAt
+	Archived     bool      `json:"archived,omitempty"`   // hidden from the default list, but not deleted
 	NewBranch    bool      `json:"new_branch,omitempty"` // true if moomux created Branch fresh (vs. checking out an existing one); safe to delete on session delete
 }
 
@@ -100,6 +102,24 @@ func (s *Store) Delete(id string) error {
 	defer s.mu.Unlock()
 	delete(s.sessions, id)
 	return s.save()
+}
+
+// SetArchived flips a session's Archived flag and persists it. The session
+// itself (worktree, tmux entry, metadata) is left untouched — archiving only
+// hides it from the default list.
+func (s *Store) SetArchived(id string, archived bool) (Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[id]
+	if !ok {
+		return Session{}, fmt.Errorf("unknown session %q", id)
+	}
+	sess.Archived = archived
+	s.sessions[id] = sess
+	if err := s.save(); err != nil {
+		return Session{}, err
+	}
+	return sess, nil
 }
 
 func (s *Store) Get(id string) (Session, bool) {

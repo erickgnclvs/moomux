@@ -41,6 +41,14 @@ type SessionCreatedMsg struct {
 	Hint    string
 }
 type SessionDeletedMsg struct{ ID string }
+
+// SessionArchivedMsg is the result of an async archive/restore toggle.
+// Archived reflects the state applied (true = archived, false = restored).
+type SessionArchivedMsg struct {
+	ID       string
+	Archived bool
+	Err      error
+}
 type SessionTaggedMsg struct{ Session session.Session }
 type TmuxKilledMsg struct{ ID string }
 

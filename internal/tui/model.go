@@ -27,6 +27,9 @@ type Backend interface {
 	DeleteSession(id string) error
 	KillTmux(id string) error
 	SetSessionTags(id, ticket, pr string) (session.Session, error)
+	// SetSessionArchived hides (or restores) a session from the default
+	// list without touching its tmux session or worktree.
+	SetSessionArchived(id string, archived bool) (session.Session, error)
 	MoveSession(id string, delta int) error
 	// TmuxAliveAll returns id→alive for every stored session using a single
 	// tmux list-sessions call instead of N has-session calls.
@@ -96,15 +99,16 @@ type Model struct {
 	backend Backend
 	keys    KeyMap
 
-	projects   []string
-	activeProj int
-	sessions   []session.Session
-	cursor     int
-	states     map[string]watcher.State
-	tmuxAlive  map[string]bool
-	prompts    map[string]string
-	statusCh   <-chan watcher.Snapshot
-	cancelPoll context.CancelFunc
+	projects     []string
+	activeProj   int
+	sessions     []session.Session
+	showArchived bool // when true, the list shows archived sessions instead of active ones
+	cursor       int
+	states       map[string]watcher.State
+	tmuxAlive    map[string]bool
+	prompts      map[string]string
+	statusCh     <-chan watcher.Snapshot
+	cancelPoll   context.CancelFunc
 
 	mode            Mode
 	nameInput       textinput.Model
@@ -303,7 +307,7 @@ func (m *Model) refreshSessions() {
 	all := m.backend.Sessions()
 	out := make([]session.Session, 0, len(all))
 	for _, s := range all {
-		if s.Project == proj {
+		if s.Project == proj && s.Archived == m.showArchived {
 			out = append(out, s)
 		}
 	}

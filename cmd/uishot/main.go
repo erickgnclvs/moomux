@@ -32,6 +32,7 @@ var screens = map[string][]string{
 	"tag":                    {"t"},
 	"confirm-delete":         {"d"},
 	"confirm-delete-project": {"D"},
+	"archived":               {"A"},
 }
 
 type fakeBackend struct {
@@ -41,11 +42,14 @@ type fakeBackend struct {
 func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string) (session.Session, string, error) {
 	return session.Session{}, "", nil
 }
-func (f *fakeBackend) OpenSession(id string) (string, error) { return "", nil }
-func (f *fakeBackend) DeleteSession(id string) error         { return nil }
-func (f *fakeBackend) KillTmux(id string) error              { return nil }
+func (f *fakeBackend) OpenSession(id string) (string, error)  { return "", nil }
+func (f *fakeBackend) DeleteSession(id string) error          { return nil }
+func (f *fakeBackend) KillTmux(id string) error               { return nil }
 func (f *fakeBackend) MoveSession(id string, delta int) error { return nil }
 func (f *fakeBackend) SetSessionTags(id, ticket, pr string) (session.Session, error) {
+	return session.Session{}, nil
+}
+func (f *fakeBackend) SetSessionArchived(id string, archived bool) (session.Session, error) {
 	return session.Session{}, nil
 }
 func (f *fakeBackend) TmuxAliveAll() map[string]bool                         { return map[string]bool{} }
@@ -80,6 +84,17 @@ func sampleSessions() []session.Session {
 			CreatedAt:    now,
 			Agent:        "codex",
 			PR:           "https://github.com/example/repo/pull/42",
+		},
+		{
+			ID:           "demo:old-spike",
+			Project:      "demo",
+			Name:         "old-spike",
+			Branch:       "spike/old-idea",
+			WorktreePath: "/tmp/demo/old-spike",
+			TmuxSession:  "moomux-old-spike",
+			CreatedAt:    now,
+			Agent:        "claude",
+			Archived:     true,
 		},
 	}
 }

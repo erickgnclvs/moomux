@@ -237,6 +237,13 @@ func (a *App) SetSessionTags(id, ticket, pr string) (session.Session, error) {
 	return s, nil
 }
 
+// SetSessionArchived hides (or restores) a session from the default list
+// without touching its tmux session or worktree — the reverse of
+// DeleteSession, which is destructive.
+func (a *App) SetSessionArchived(id string, archived bool) (session.Session, error) {
+	return a.Store.SetArchived(id, archived)
+}
+
 func (a *App) OpenSession(id string) (string, error) {
 	s, ok := a.Store.Get(id)
 	if !ok {

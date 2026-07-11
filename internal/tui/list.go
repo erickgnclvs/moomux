@@ -24,10 +24,16 @@ type linkHit struct {
 
 func (m *Model) renderList(width, height int) (string, []linkHit) {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("SESSIONS"))
+	title := "SESSIONS"
+	empty := "  no sessions — press n to create"
+	if m.showArchived {
+		title = "ARCHIVED"
+		empty = "  no archived sessions"
+	}
+	b.WriteString(titleStyle.Render(title))
 	b.WriteString("\n\n")
 	if len(m.sessions) == 0 {
-		b.WriteString(muteStyle.Render("  no sessions — press n to create"))
+		b.WriteString(muteStyle.Render(empty))
 		return lipgloss.NewStyle().Width(width).Height(height).Render(b.String()), nil
 	}
 	visible := height - 2 // header + blank line above
