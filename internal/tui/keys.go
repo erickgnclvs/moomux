@@ -26,6 +26,8 @@ type KeyMap struct {
 	Left         key.Binding
 	Right        key.Binding
 	No           key.Binding
+	FormUp       key.Binding
+	FormDown     key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -53,5 +55,8 @@ func DefaultKeyMap() KeyMap {
 		Left:         key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "left")),
 		Right:        key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "right")),
 		No:           key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "no")),
+		// Arrow-only (no j/k) for forms with text inputs, so typing "j"/"k" isn't hijacked as navigation.
+		FormUp:   key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "up")),
+		FormDown: key.NewBinding(key.WithKeys("down"), key.WithHelp("↓", "down")),
 	}
 }

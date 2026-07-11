@@ -27,6 +27,7 @@ type Session struct {
 	PR           string    `json:"pr,omitempty"`         // pull request URL (e.g. GitHub, GitLab)
 	Order        int64     `json:"order,omitempty"`      // manual sort position within a project; 0 = unset, falls back to CreatedAt
 	Archived     bool      `json:"archived,omitempty"`   // hidden from the default list, but not deleted
+	NewBranch    bool      `json:"new_branch,omitempty"` // true if moomux created Branch fresh (vs. checking out an existing one); safe to delete on session delete
 }
 
 // AgentName returns the effective agent name, defaulting to "claude" for legacy sessions.
