@@ -32,6 +32,9 @@ func (f *fakeBackend) KillTmux(id string) error              { return nil }
 func (f *fakeBackend) SetSessionTags(id, ticket, pr string) (session.Session, error) {
 	return session.Session{}, nil
 }
+func (f *fakeBackend) SetSessionArchived(id string, archived bool) (session.Session, error) {
+	return session.Session{}, nil
+}
 func (f *fakeBackend) MoveSession(id string, delta int) error {
 	f.moveSessionCalls = append(f.moveSessionCalls, moveSessionCall{id: id, delta: delta})
 	return f.moveSessionErr

@@ -62,6 +62,43 @@ func TestStoreDelete(t *testing.T) {
 	}
 }
 
+func TestSetArchivedTogglesAndPersists(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.json")
+	s := &Store{Path: path}
+	_ = s.Load()
+	_ = s.Put(Session{ID: "a", Project: "p", Name: "a", CreatedAt: time.Now()})
+
+	if _, err := s.SetArchived("a", true); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get("a")
+	if !got.Archived {
+		t.Fatalf("expected archived")
+	}
+
+	s2 := &Store{Path: path}
+	if err := s2.Load(); err != nil {
+		t.Fatal(err)
+	}
+	got2, _ := s2.Get("a")
+	if !got2.Archived {
+		t.Fatalf("archived flag not persisted across reload")
+	}
+
+	if _, err := s2.SetArchived("a", false); err != nil {
+		t.Fatal(err)
+	}
+	got3, _ := s2.Get("a")
+	if got3.Archived {
+		t.Fatalf("expected restored (not archived)")
+	}
+
+	if _, err := s2.SetArchived("missing", true); err == nil {
+		t.Fatalf("expected error for unknown session")
+	}
+}
+
 func TestAllSortedByCreatedDesc(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sessions.json")
