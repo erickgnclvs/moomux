@@ -443,10 +443,10 @@ func (m *Model) updateNewProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Cancel):
 		m.mode = ModeList
 		return m, nil
-	case key.Matches(msg, m.keys.Tab), key.Matches(msg, m.keys.Down):
+	case key.Matches(msg, m.keys.Tab), key.Matches(msg, m.keys.FormDown):
 		cycleFormFocus(m.projForm.inputs, &m.projForm.focus, totalFields, true)
 		return m, nil
-	case key.Matches(msg, m.keys.ShiftTab), key.Matches(msg, m.keys.Up):
+	case key.Matches(msg, m.keys.ShiftTab), key.Matches(msg, m.keys.FormUp):
 		cycleFormFocus(m.projForm.inputs, &m.projForm.focus, totalFields, false)
 		return m, nil
 	case key.Matches(msg, m.keys.Left):
@@ -487,8 +487,8 @@ func (m *Model) updateTagForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Cancel):
 		m.mode = ModeList
 		return m, nil
-	case key.Matches(msg, m.keys.Tab), key.Matches(msg, m.keys.Down), key.Matches(msg, m.keys.ShiftTab), key.Matches(msg, m.keys.Up):
-		forward := !(key.Matches(msg, m.keys.ShiftTab) || key.Matches(msg, m.keys.Up))
+	case key.Matches(msg, m.keys.Tab), key.Matches(msg, m.keys.FormDown), key.Matches(msg, m.keys.ShiftTab), key.Matches(msg, m.keys.FormUp):
+		forward := !(key.Matches(msg, m.keys.ShiftTab) || key.Matches(msg, m.keys.FormUp))
 		cycleFormFocus(m.tagForm.inputs, &m.tagForm.focus, len(m.tagForm.inputs), forward)
 		return m, nil
 	case key.Matches(msg, m.keys.Enter):
