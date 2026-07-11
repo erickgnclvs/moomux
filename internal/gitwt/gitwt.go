@@ -104,3 +104,11 @@ func (c *Client) RemoveWorktree(repoDir, worktreePath string) error {
 	_, err := c.Runner.Run(repoDir, "worktree", "remove", worktreePath, "--force")
 	return err
 }
+
+// DeleteBranch force-deletes a local branch, e.g. after its worktree has been
+// removed. Callers should only do this for branches moomux created itself —
+// deleting a branch the user checked out on purpose would be destructive.
+func (c *Client) DeleteBranch(repoDir, branch string) error {
+	_, err := c.Runner.Run(repoDir, "branch", "-D", branch)
+	return err
+}
