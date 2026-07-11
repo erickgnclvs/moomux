@@ -39,6 +39,23 @@ func agentCmd(agent string) string {
 	}
 }
 
+// waitForDir polls for path to become stat-able. git worktree add can return
+// success in one process microseconds before another process (the tmux
+// server) can see the new directory, which makes tmux's chdir into it fail
+// silently and drop the new pane's shell into an unrelated cwd instead.
+func waitForDir(path string) error {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for %s", path)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func WorktreeRootDefault() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".local", "share", "moomux", "worktrees")
@@ -157,6 +174,9 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string)
 			return session.Session{}, "", fmt.Errorf("git worktree add: %w", err)
 		}
 		slog.Info("worktree added", "path", wt, "branch", branch)
+		if err := waitForDir(wt); err != nil {
+			return session.Session{}, "", fmt.Errorf("worktree not visible after creation: %w", err)
+		}
 	}
 	cmd := agentCmd(agent)
 	agentPort := 0
