@@ -88,8 +88,23 @@ func (c *Client) AddWorktree(repoDir, worktreePath, branch, baseBranch string) e
 	if c.HasRemote(repoDir, "origin") {
 		start = "origin/" + baseBranch
 	}
+	if c.BranchExists(repoDir, branch) {
+		// Leftover from an orphaned worktree (branch survives, checkout doesn't).
+		// If it's actually checked out elsewhere, this delete fails with a clear
+		// "cannot delete branch checked out at ..." error instead of the more
+		// confusing "-b" already-exists error below.
+		if _, err := c.Runner.Run(repoDir, "branch", "-D", branch); err != nil {
+			return err
+		}
+	}
 	_, err := c.Runner.Run(repoDir, "worktree", "add", worktreePath, "-b", branch, start)
 	return err
+}
+
+// BranchExists reports whether a local branch with the given name exists.
+func (c *Client) BranchExists(repoDir, branch string) bool {
+	_, err := c.Runner.Run(repoDir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
+	return err == nil
 }
 
 // AddWorktreeExisting links worktreePath to an already-existing branch
