@@ -118,6 +118,7 @@ type Model struct {
 	flash           string
 	flashKind       string // "info" or "error"
 	flashTime       time.Time
+	busy            bool // true while a background op (e.g. session create) is in flight; suppresses flash expiry
 
 	width, height int
 

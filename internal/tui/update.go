@@ -54,6 +54,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, refreshStatusCmd(m)
 
 	case InfoMsg:
+		if m.busy {
+			return m, tickFlash()
+		}
 		dur := infoFlashDuration
 		if m.flashKind == "error" {
 			dur = errorFlashDuration
@@ -65,10 +68,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickFlash()
 
 	case ErrorMsg:
+		m.busy = false
 		m.setError(msg.Err)
 		return m, nil
 
 	case SessionCreatedMsg:
+		m.busy = false
 		text := "created " + msg.Session.Name
 		if msg.Hint != "" {
 			text += " — " + msg.Hint
@@ -354,6 +359,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			label = branch
 		}
 		m.setFlash("info", "creating "+label+"…")
+		m.busy = true
 		return m, func() tea.Msg {
 			s, hint, err := m.backend.CreateSession(proj, name, agent, branch, ticket)
 			if err != nil {
