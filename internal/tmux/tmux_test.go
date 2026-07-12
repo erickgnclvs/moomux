@@ -106,6 +106,15 @@ func TestHasSessionAbsent(t *testing.T) {
 	}
 }
 
+func TestPaneCwd(t *testing.T) {
+	fr := &fakeRunner{out: map[string]string{"list-panes -t moomux-foo -F #{pane_current_path}": "/tmp/wt\n"}}
+	c := &Client{Runner: fr}
+	got, err := c.PaneCwd("moomux-foo")
+	if err != nil || got != "/tmp/wt" {
+		t.Fatalf("got %q err %v", got, err)
+	}
+}
+
 func TestKillSession(t *testing.T) {
 	fr := &fakeRunner{}
 	c := &Client{Runner: fr}

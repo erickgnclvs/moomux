@@ -255,6 +255,16 @@ func (a *App) OpenSession(id string) (string, error) {
 		slog.Error("HasSession error", "id", id, "err", err)
 		return "", err
 	}
+	if has {
+		if cwd, err := a.Tmux.PaneCwd(s.TmuxSession); err == nil && cwd != s.WorktreePath {
+			slog.Info("tmux session cwd mismatch, recreating", "tmux_session", s.TmuxSession, "pane_cwd", cwd, "want", s.WorktreePath)
+			if err := a.Tmux.KillSession(s.TmuxSession); err != nil {
+				slog.Error("KillSession failed", "id", id, "err", err)
+				return "", err
+			}
+			has = false
+		}
+	}
 	if !has {
 		slog.Info("tmux session absent, recreating", "tmux_session", s.TmuxSession, "cwd", s.WorktreePath)
 		cmd := agentCmd(s.AgentName())
