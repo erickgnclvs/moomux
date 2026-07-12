@@ -82,6 +82,8 @@ func (m *Model) View() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, overlayBox.Render(m.renderProjectInitChoice()))
 	case ModeTagForm:
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, overlayBox.Render(m.renderTagForm()))
+	case ModeHelp:
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, overlayBox.Render(m.renderHelp()))
 	}
 	return base
 }
@@ -117,22 +119,12 @@ func (m *Model) renderHeader() string {
 // split to jitter across renders, which could leave stale content on screen
 // or push the hints row out of view.
 func (m *Model) renderFooter() string {
-	archiveHint := "a:archive"
-	if m.showArchived {
-		archiveHint = "a:restore"
-	}
-	hints := "n:new  enter:open  x:park  d:delete  " + archiveHint + "  A:archived  t:tag  shift+↑/↓:move  tab:project  r:refresh  q:quit"
-	right := "P:+project  D:-project"
+	// The footer advertises a single entry point — the full command reference
+	// lives behind ?:help. Left-aligned to line up with the header and panels.
 	// subtract 2 for the footer's horizontal padding (Padding(0,1) = 1 each side)
 	inner := m.width - 2
-	hintsW := inner - lipgloss.Width(right)
-	if hintsW < 0 {
-		hintsW = 0
-	}
-	hintRow := lipgloss.JoinHorizontal(lipgloss.Bottom,
-		lipgloss.NewStyle().Width(hintsW).Render(truncateToWidth(hints, hintsW)),
-		lipgloss.NewStyle().Width(lipgloss.Width(right)).Align(lipgloss.Right).Render(right),
-	)
+	hint := helpKeyStyle.Foreground(colAccent).Render("?") + helpDescStyle.Render(" help")
+	hintRow := lipgloss.NewStyle().Width(inner).Render(hint)
 
 	messageLine := ""
 	if m.flash != "" {

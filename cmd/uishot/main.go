@@ -33,6 +33,7 @@ var screens = map[string][]string{
 	"confirm-delete":         {"d"},
 	"confirm-delete-project": {"D"},
 	"archived":               {"A"},
+	"help":                   {"?"},
 }
 
 type fakeBackend struct {

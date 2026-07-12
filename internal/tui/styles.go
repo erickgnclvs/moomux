@@ -45,4 +45,9 @@ var (
 			Padding(1, 2)
 
 	dangerStyle = lipgloss.NewStyle().Foreground(colDanger).Bold(true)
+
+	// help overlay
+	helpGroupStyle = lipgloss.NewStyle().Bold(true).Foreground(colAccent)
+	helpKeyStyle   = lipgloss.NewStyle().Bold(true).Foreground(colFg)
+	helpDescStyle  = lipgloss.NewStyle().Foreground(colMute)
 )
