@@ -120,6 +120,22 @@ func TestWindowOpenerTilixArgs(t *testing.T) {
 	assertContains(t, fe.args, "moomux-foo")
 }
 
+func TestWindowOpenerCmuxArgs(t *testing.T) {
+	fe := &fakeExec{}
+	w := &windowOpener{binary: "cmux", args: cmuxArgs, exec: fe.Command}
+	if _, err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
+		t.Fatal(err)
+	}
+	if fe.binary != "cmux" {
+		t.Fatalf("wrong binary: %s", fe.binary)
+	}
+	assertContains(t, fe.args, "new-workspace")
+	assertContains(t, fe.args, "--name")
+	assertContains(t, fe.args, "feat/bar")
+	assertContains(t, fe.args, "--command")
+	assertContains(t, fe.args, "tmux attach -t moomux-foo")
+}
+
 func assertContains(t *testing.T, haystack []string, needle string) {
 	t.Helper()
 	for _, s := range haystack {
