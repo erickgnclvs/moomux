@@ -121,6 +121,19 @@ func (c *Client) ConfigureTitleTracking(session, windowName string) {
 	_, _ = c.Runner.Run("set-option", "-t", session, "mouse", "on")
 }
 
+// PaneCwd returns the current working directory of session `name`'s first
+// pane. tmux silently falls back to its own launch cwd when a requested
+// -c directory doesn't exist (e.g. a worktree not yet created), so this is
+// used to detect sessions that ended up in the wrong place.
+func (c *Client) PaneCwd(name string) (string, error) {
+	out, err := c.Runner.Run("list-panes", "-t", name, "-F", "#{pane_current_path}")
+	if err != nil {
+		return "", err
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	return lines[0], nil
+}
+
 func (c *Client) KillSession(name string) error {
 	_, err := c.Runner.Run("kill-session", "-t", name)
 	return err
