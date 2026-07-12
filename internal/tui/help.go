@@ -100,12 +100,14 @@ func (m *Model) renderHelp() string {
 
 	var rows []string
 	for i := 0; i < len(cols); i += 2 {
+		if len(rows) > 0 {
+			rows = append(rows, "") // blank line between group-pairs, not after the last
+		}
 		if i+1 < len(cols) {
 			rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, cols[i], cols[i+1]))
 		} else {
 			rows = append(rows, cols[i])
 		}
-		rows = append(rows, "")
 	}
 
 	var b strings.Builder
