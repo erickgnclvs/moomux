@@ -18,7 +18,9 @@ func Detect() TerminalOpener {
 	switch {
 	case os.Getenv("TERM_PROGRAM") == "iTerm.app":
 		return newITermClient()
-	case os.Getenv("CMUX_SURFACE_ID") != "":
+	// cmux is Ghostty-based and sets the same GHOSTTY_* vars as vanilla
+	// Ghostty, so the bundle ID is the only thing that tells them apart.
+	case os.Getenv("__CFBundleIdentifier") == "com.cmuxterm.app":
 		return &windowOpener{binary: "cmux", args: cmuxArgs}
 	case os.Getenv("KITTY_WINDOW_ID") != "":
 		return &windowOpener{binary: "kitty", args: kittyArgs}

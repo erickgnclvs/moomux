@@ -6,7 +6,7 @@ import (
 
 func TestDetectReturnsITermForITermApp(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "iTerm.app")
-	t.Setenv("CMUX_SURFACE_ID", "")
+	t.Setenv("__CFBundleIdentifier", "")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("WEZTERM_PANE", "")
 	got := Detect()
@@ -17,7 +17,7 @@ func TestDetectReturnsITermForITermApp(t *testing.T) {
 
 func TestDetectReturnsWindowOpenerForCmux(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "ghostty")
-	t.Setenv("CMUX_SURFACE_ID", "surface:1")
+	t.Setenv("__CFBundleIdentifier", "com.cmuxterm.app")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("WEZTERM_PANE", "")
 	got := Detect()
@@ -32,7 +32,7 @@ func TestDetectReturnsWindowOpenerForCmux(t *testing.T) {
 
 func TestDetectReturnsWindowOpenerForKitty(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "")
-	t.Setenv("CMUX_SURFACE_ID", "")
+	t.Setenv("__CFBundleIdentifier", "")
 	t.Setenv("KITTY_WINDOW_ID", "1")
 	t.Setenv("WEZTERM_PANE", "")
 	got := Detect()
@@ -47,7 +47,7 @@ func TestDetectReturnsWindowOpenerForKitty(t *testing.T) {
 
 func TestDetectReturnsWindowOpenerForWezTerm(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "")
-	t.Setenv("CMUX_SURFACE_ID", "")
+	t.Setenv("__CFBundleIdentifier", "")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("WEZTERM_PANE", "1")
 	got := Detect()
@@ -62,7 +62,7 @@ func TestDetectReturnsWindowOpenerForWezTerm(t *testing.T) {
 
 func TestDetectReturnsFallbackForUnknown(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "")
-	t.Setenv("CMUX_SURFACE_ID", "")
+	t.Setenv("__CFBundleIdentifier", "")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("WEZTERM_PANE", "")
 	t.Setenv("TERM", "")
@@ -78,7 +78,7 @@ func TestDetectReturnsFallbackForUnknown(t *testing.T) {
 
 func TestDetectReturnsWindowOpenerForTilix(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "")
-	t.Setenv("CMUX_SURFACE_ID", "")
+	t.Setenv("__CFBundleIdentifier", "")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("WEZTERM_PANE", "")
 	t.Setenv("TERM", "")
@@ -96,7 +96,7 @@ func TestDetectReturnsWindowOpenerForTilix(t *testing.T) {
 
 func TestDetectReturnsWindowOpenerForKonsole(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "")
-	t.Setenv("CMUX_SURFACE_ID", "")
+	t.Setenv("__CFBundleIdentifier", "")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("WEZTERM_PANE", "")
 	t.Setenv("TERM", "")
@@ -114,7 +114,7 @@ func TestDetectReturnsWindowOpenerForKonsole(t *testing.T) {
 
 func TestDetectReturnsWindowOpenerForXterm(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "")
-	t.Setenv("CMUX_SURFACE_ID", "")
+	t.Setenv("__CFBundleIdentifier", "")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("WEZTERM_PANE", "")
 	t.Setenv("TERM", "")
@@ -133,7 +133,7 @@ func TestDetectReturnsWindowOpenerForXterm(t *testing.T) {
 
 func TestDetectReturnsWindowOpenerForGnomeTerminal(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "")
-	t.Setenv("CMUX_SURFACE_ID", "")
+	t.Setenv("__CFBundleIdentifier", "")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("WEZTERM_PANE", "")
 	t.Setenv("TERM", "")
@@ -153,7 +153,7 @@ func TestDetectReturnsWindowOpenerForGnomeTerminal(t *testing.T) {
 
 func TestDetectReturnsWindowOpenerForAppleTerminal(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
-	t.Setenv("CMUX_SURFACE_ID", "")
+	t.Setenv("__CFBundleIdentifier", "")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("WEZTERM_PANE", "")
 	t.Setenv("TERM", "")
@@ -169,7 +169,7 @@ func TestDetectReturnsWindowOpenerForAppleTerminal(t *testing.T) {
 
 func TestDetectReturnsWindowOpenerForAlacritty(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "")
-	t.Setenv("CMUX_SURFACE_ID", "")
+	t.Setenv("__CFBundleIdentifier", "")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("WEZTERM_PANE", "")
 	t.Setenv("TERM", "alacritty")
