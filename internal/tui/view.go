@@ -120,12 +120,11 @@ func (m *Model) renderHeader() string {
 // or push the hints row out of view.
 func (m *Model) renderFooter() string {
 	// The footer advertises a single entry point — the full command reference
-	// lives behind ?:help. Centered so a lone hint reads as deliberate rather
-	// than a truncated row.
+	// lives behind ?:help. Left-aligned to line up with the header and panels.
 	// subtract 2 for the footer's horizontal padding (Padding(0,1) = 1 each side)
 	inner := m.width - 2
 	hint := helpKeyStyle.Foreground(colAccent).Render("?") + helpDescStyle.Render(" help")
-	hintRow := lipgloss.NewStyle().Width(inner).Align(lipgloss.Center).Render(hint)
+	hintRow := lipgloss.NewStyle().Width(inner).Render(hint)
 
 	messageLine := ""
 	if m.flash != "" {
