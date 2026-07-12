@@ -87,15 +87,25 @@ func TestParseNumstat(t *testing.T) {
 	}
 }
 
-// scriptRunner returns canned output per git subcommand (args[0]).
+type scriptErr string
+
+func (s scriptErr) Error() string { return string(s) }
+
+// scriptRunner returns canned output per git subcommand (args[0]). Refs whose
+// `rev-parse --verify` target is listed in unresolvable return an error, so a
+// test can simulate a base ref that doesn't exist in the worktree.
 type scriptRunner struct {
-	outputs map[string]string
-	calls   [][]string
+	outputs      map[string]string
+	unresolvable map[string]bool // rev-parse target (last arg) -> should fail
+	calls        [][]string
 }
 
 func (s *scriptRunner) Run(dir string, args ...string) (string, error) {
 	s.calls = append(s.calls, append([]string{"@" + dir}, args...))
 	if len(args) > 0 {
+		if args[0] == "rev-parse" && s.unresolvable[args[len(args)-1]] {
+			return "", scriptErr("no such ref")
+		}
 		if out, ok := s.outputs[args[0]]; ok {
 			return out, nil
 		}
@@ -124,9 +134,23 @@ func TestDiffStatAgainstUsesMergeBase(t *testing.T) {
 	}
 }
 
-func TestDiffTargetEmptyRefIsHEAD(t *testing.T) {
+// When the first candidate ref doesn't resolve (e.g. origin/main with no
+// remote), diffTarget must skip it and merge-base against the next resolvable
+// ref — never degrading to HEAD, which would hide committed branch work.
+func TestDiffTargetSkipsUnresolvableRef(t *testing.T) {
+	sr := &scriptRunner{
+		unresolvable: map[string]bool{"origin/main^{commit}": true},
+		outputs:      map[string]string{"merge-base": "def456\n"},
+	}
+	c := &Client{Runner: sr}
+	if got := c.diffTarget("/wt", "origin/main", "main"); got != "def456" {
+		t.Fatalf("diffTarget = %q, want merge-base def456 via local main", got)
+	}
+}
+
+func TestDiffTargetNoRefsIsHEAD(t *testing.T) {
 	c := &Client{Runner: &scriptRunner{}}
-	if got := c.diffTarget("/wt", ""); got != "HEAD" {
-		t.Fatalf("diffTarget(empty) = %q, want HEAD", got)
+	if got := c.diffTarget("/wt"); got != "HEAD" {
+		t.Fatalf("diffTarget(none) = %q, want HEAD", got)
 	}
 }

@@ -134,38 +134,46 @@ func (c *Client) RemoveWorktree(repoDir, worktreePath string) error {
 	return err
 }
 
-// diffTarget resolves the git revision to diff a worktree against. When ref
-// is a branch (e.g. "origin/main"), it returns the merge-base of ref and
-// HEAD so the diff shows only what this worktree added since it branched off,
-// not unrelated commits that landed on the base afterwards. When ref is empty
-// (plain projects with no base branch) or can't be resolved, it falls back to
-// "HEAD", i.e. uncommitted working-tree changes only.
-func (c *Client) diffTarget(worktree, ref string) string {
-	if ref == "" {
-		return "HEAD"
+// diffTarget resolves the git revision to diff a worktree against, given an
+// ordered list of candidate base refs (e.g. "origin/main", "main"). It uses
+// the first candidate that resolves to a commit, returning the merge-base of
+// that ref and HEAD — so the diff shows everything this branch added since it
+// forked (committed, staged, and unstaged tracked changes), and not unrelated
+// commits that landed on the base afterwards.
+//
+// Falling straight to HEAD when the base can't be found is deliberately
+// avoided: `git diff HEAD` shows only uncommitted changes and would silently
+// hide all of the branch's committed work. HEAD is used only as a last resort
+// when no candidate resolves at all (e.g. plain projects with no base branch).
+func (c *Client) diffTarget(worktree string, refs ...string) string {
+	for _, ref := range refs {
+		if ref == "" {
+			continue
+		}
+		if _, err := c.Runner.Run(worktree, "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err != nil {
+			continue // ref doesn't resolve in this worktree; try the next
+		}
+		if out, err := c.Runner.Run(worktree, "merge-base", ref, "HEAD"); err == nil {
+			if base := strings.TrimSpace(out); base != "" {
+				return base
+			}
+		}
+		return ref // resolved but no common ancestor with HEAD — diff vs the ref itself
 	}
-	out, err := c.Runner.Run(worktree, "merge-base", ref, "HEAD")
-	if err != nil {
-		return "HEAD"
-	}
-	base := strings.TrimSpace(out)
-	if base == "" {
-		return "HEAD"
-	}
-	return base
+	return "HEAD"
 }
 
 // DiffAgainst returns the unified diff of the worktree — committed, staged,
-// and unstaged tracked changes — since it diverged from ref (see diffTarget).
-// Untracked files are not included.
-func (c *Client) DiffAgainst(worktree, ref string) (string, error) {
-	return c.Runner.Run(worktree, "diff", c.diffTarget(worktree, ref))
+// and unstaged tracked changes — since it diverged from the first resolvable
+// base ref (see diffTarget). Untracked files are not included.
+func (c *Client) DiffAgainst(worktree string, refs ...string) (string, error) {
+	return c.Runner.Run(worktree, "diff", c.diffTarget(worktree, refs...))
 }
 
 // DiffStatAgainst returns a files/additions/deletions summary of the same
 // range DiffAgainst reports, parsed from `git diff --numstat`.
-func (c *Client) DiffStatAgainst(worktree, ref string) (DiffStat, error) {
-	out, err := c.Runner.Run(worktree, "diff", "--numstat", c.diffTarget(worktree, ref))
+func (c *Client) DiffStatAgainst(worktree string, refs ...string) (DiffStat, error) {
+	out, err := c.Runner.Run(worktree, "diff", "--numstat", c.diffTarget(worktree, refs...))
 	if err != nil {
 		return DiffStat{}, err
 	}

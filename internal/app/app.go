@@ -286,19 +286,19 @@ func (a *App) OpenSession(id string) (string, error) {
 	return hint, nil
 }
 
-// diffRef resolves the branch a session's worktree should be diffed against.
-// For git projects it's the project base branch (preferring origin/ when a
-// remote exists, mirroring worktree creation); for plain projects there's no
-// base, so an empty ref makes gitwt fall back to uncommitted changes only.
-func (a *App) diffRef(s session.Session) string {
+// diffBaseRefs returns the ordered base-branch candidates a session's
+// worktree should be diffed against: the remote-tracking ref first (so the
+// diff is against the shared upstream base), then the local branch as a
+// fallback for repos without a remote or an unfetched tracking ref. gitwt
+// picks the first that resolves and diffs against its merge-base with HEAD,
+// so committed branch work — not just uncommitted edits — always shows.
+// Plain projects have no base, so this returns nil (gitwt falls back to HEAD).
+func (a *App) diffBaseRefs(s session.Session) []string {
 	proj, ok := a.Cfg.Projects[s.Project]
 	if !ok || proj.IsPlain() || proj.BaseBranch == "" {
-		return ""
+		return nil
 	}
-	if a.Git.HasRemote(proj.Repo, "origin") {
-		return "origin/" + proj.BaseBranch
-	}
-	return proj.BaseBranch
+	return []string{"origin/" + proj.BaseBranch, proj.BaseBranch}
 }
 
 // Diff returns the unified diff of a session's worktree against its base.
@@ -307,7 +307,7 @@ func (a *App) Diff(id string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("unknown session %q", id)
 	}
-	return a.Git.DiffAgainst(s.WorktreePath, a.diffRef(s))
+	return a.Git.DiffAgainst(s.WorktreePath, a.diffBaseRefs(s)...)
 }
 
 // DiffStat returns a files/additions/deletions summary for a session's
@@ -317,7 +317,7 @@ func (a *App) DiffStat(id string) (session.DiffStat, error) {
 	if !ok {
 		return session.DiffStat{}, fmt.Errorf("unknown session %q", id)
 	}
-	d, err := a.Git.DiffStatAgainst(s.WorktreePath, a.diffRef(s))
+	d, err := a.Git.DiffStatAgainst(s.WorktreePath, a.diffBaseRefs(s)...)
 	if err != nil {
 		return session.DiffStat{}, err
 	}
