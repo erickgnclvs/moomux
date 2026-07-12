@@ -119,27 +119,13 @@ func (m *Model) renderHeader() string {
 // split to jitter across renders, which could leave stale content on screen
 // or push the hints row out of view.
 func (m *Model) renderFooter() string {
-	// Keep this to the handful of everyday actions; the full command reference
-	// lives behind ?:help so the footer stops being a wall of text to scan.
-	hints := "?:help  n:new  enter:open  x:park  d:delete  tab:project  q:quit"
-	right := "P:+project  D:-project"
+	// The footer advertises a single entry point — the full command reference
+	// lives behind ?:help. Centered so a lone hint reads as deliberate rather
+	// than a truncated row.
 	// subtract 2 for the footer's horizontal padding (Padding(0,1) = 1 each side)
 	inner := m.width - 2
-	hintsW := inner - lipgloss.Width(right)
-	if hintsW < 0 {
-		hintsW = 0
-	}
-	// Emphasize ?:help in accent when the full row fits; when it has to be
-	// truncated, fall back to plain text so truncateToWidth (which cuts at the
-	// rune level) can't slice through an ANSI escape sequence.
-	hintsText := truncateToWidth(hints, hintsW)
-	if hintsText == hints {
-		hintsText = helpKeyStyle.Foreground(colAccent).Render("?:help") + strings.TrimPrefix(hints, "?:help")
-	}
-	hintRow := lipgloss.JoinHorizontal(lipgloss.Bottom,
-		lipgloss.NewStyle().Width(hintsW).Render(hintsText),
-		lipgloss.NewStyle().Width(lipgloss.Width(right)).Align(lipgloss.Right).Render(right),
-	)
+	hint := helpKeyStyle.Foreground(colAccent).Render("?") + helpDescStyle.Render(" help")
+	hintRow := lipgloss.NewStyle().Width(inner).Align(lipgloss.Center).Render(hint)
 
 	messageLine := ""
 	if m.flash != "" {
