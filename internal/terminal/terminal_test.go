@@ -45,6 +45,20 @@ func TestDetectReturnsWindowOpenerForKitty(t *testing.T) {
 	}
 }
 
+func TestDetectReturnsWindowOpenerForGhostty(t *testing.T) {
+	t.Setenv("TERM_PROGRAM", "ghostty")
+	t.Setenv("KITTY_WINDOW_ID", "")
+	t.Setenv("WEZTERM_PANE", "")
+	got := Detect()
+	wo, ok := got.(*windowOpener)
+	if !ok {
+		t.Fatalf("expected *windowOpener, got %T", got)
+	}
+	if wo.binary != "ghostty" {
+		t.Fatalf("expected ghostty binary, got %s", wo.binary)
+	}
+}
+
 func TestDetectReturnsWindowOpenerForWezTerm(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "")
 	t.Setenv("__CFBundleIdentifier", "")
@@ -70,6 +84,7 @@ func TestDetectReturnsFallbackForUnknown(t *testing.T) {
 	t.Setenv("KONSOLE_VERSION", "")
 	t.Setenv("XTERM_VERSION", "")
 	t.Setenv("VTE_VERSION", "")
+	t.Setenv("GHOSTTY_RESOURCES_DIR", "")
 	got := Detect()
 	if _, ok := got.(*fallbackOpener); !ok {
 		t.Fatalf("expected *fallbackOpener, got %T", got)

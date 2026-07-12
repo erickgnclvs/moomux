@@ -28,6 +28,22 @@ func kittyArgs(title, tmuxSession string) []string {
 	return args
 }
 
+// ghosttyArgs invokes the ghostty binary directly. Ghostty has no CLI flag
+// to open a tab in an existing window
+// (https://github.com/ghostty-org/ghostty/issues/12136), and routing
+// through `open -a`/`open -na` proved unreliable in practice (either
+// silently dropped the launch args on an already-running instance, or forced
+// a new window anyway) — this always opens a new window, which is the
+// tradeoff until Ghostty ships a native new-tab CLI flag.
+func ghosttyArgs(title, tmuxSession string) []string {
+	args := []string{}
+	if title != "" {
+		args = append(args, "--title="+title)
+	}
+	args = append(args, "-e", "tmux", "attach", "-t", tmuxSession)
+	return args
+}
+
 func weztermArgs(title, tmuxSession string) []string {
 	args := []string{"start"}
 	if title != "" {

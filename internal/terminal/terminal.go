@@ -24,6 +24,8 @@ func Detect() TerminalOpener {
 		return &windowOpener{binary: "cmux", args: cmuxArgs}
 	case os.Getenv("KITTY_WINDOW_ID") != "":
 		return &windowOpener{binary: "kitty", args: kittyArgs}
+	case os.Getenv("TERM_PROGRAM") == "ghostty" || os.Getenv("GHOSTTY_RESOURCES_DIR") != "":
+		return &windowOpener{binary: "ghostty", args: ghosttyArgs}
 	case os.Getenv("WEZTERM_PANE") != "":
 		return &windowOpener{binary: "wezterm", args: weztermArgs}
 	case os.Getenv("TERM") == "alacritty":

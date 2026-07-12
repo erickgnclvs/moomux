@@ -32,6 +32,23 @@ func TestWindowOpenerKittyArgs(t *testing.T) {
 	assertContains(t, fe.args, "moomux-foo")
 }
 
+func TestWindowOpenerGhosttyArgs(t *testing.T) {
+	fe := &fakeExec{}
+	w := &windowOpener{binary: "ghostty", args: ghosttyArgs, exec: fe.Command}
+	if _, err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
+		t.Fatal(err)
+	}
+	if fe.binary != "ghostty" {
+		t.Fatalf("wrong binary: %s", fe.binary)
+	}
+	assertContains(t, fe.args, "--title=feat/bar")
+	assertContains(t, fe.args, "-e")
+	assertContains(t, fe.args, "tmux")
+	assertContains(t, fe.args, "attach")
+	assertContains(t, fe.args, "-t")
+	assertContains(t, fe.args, "moomux-foo")
+}
+
 func TestWindowOpenerWezTermArgs(t *testing.T) {
 	fe := &fakeExec{}
 	w := &windowOpener{binary: "wezterm", args: weztermArgs, exec: fe.Command}
