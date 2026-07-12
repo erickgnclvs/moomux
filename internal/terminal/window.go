@@ -28,6 +28,15 @@ func kittyArgs(title, tmuxSession string) []string {
 	return args
 }
 
+func ghosttyArgs(title, tmuxSession string) []string {
+	args := []string{}
+	if title != "" {
+		args = append(args, "--title="+title)
+	}
+	args = append(args, "-e", "tmux", "attach", "-t", tmuxSession)
+	return args
+}
+
 func weztermArgs(title, tmuxSession string) []string {
 	args := []string{"start"}
 	if title != "" {
