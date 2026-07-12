@@ -38,6 +38,11 @@ func (m *Model) View() string {
 		return "starting…"
 	}
 
+	// The diff view takes the whole screen rather than overlaying the list.
+	if m.mode == ModeDiff {
+		return lipgloss.NewStyle().Padding(0, 1).Render(m.renderDiff())
+	}
+
 	header := m.renderHeader()
 	footer := m.renderFooter()
 
@@ -121,7 +126,7 @@ func (m *Model) renderFooter() string {
 	if m.showArchived {
 		archiveHint = "a:restore"
 	}
-	hints := "n:new  enter:open  x:park  d:delete  " + archiveHint + "  A:archived  t:tag  shift+↑/↓:move  tab:project  r:refresh  q:quit"
+	hints := "n:new  enter:open  x:park  d:delete  v:diff  " + archiveHint + "  A:archived  t:tag  shift+↑/↓:move  tab:project  r:refresh  q:quit"
 	right := "P:+project  D:-project"
 	// subtract 2 for the footer's horizontal padding (Padding(0,1) = 1 each side)
 	inner := m.width - 2

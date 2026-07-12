@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -31,6 +32,12 @@ type Backend interface {
 	// list without touching its tmux session or worktree.
 	SetSessionArchived(id string, archived bool) (session.Session, error)
 	MoveSession(id string, delta int) error
+	// Diff returns the unified diff of a session's worktree against its base
+	// branch (committed + working-tree changes to tracked files).
+	Diff(id string) (string, error)
+	// DiffStat returns a compact files/±lines summary of the same range Diff
+	// reports, cheap enough to refresh on the status tick.
+	DiffStat(id string) (session.DiffStat, error)
 	// TmuxAliveAll returns id→alive for every stored session using a single
 	// tmux list-sessions call instead of N has-session calls.
 	TmuxAliveAll() map[string]bool
@@ -52,6 +59,7 @@ const (
 	ModeConfirmDeleteProject
 	ModeProjectInitChoice
 	ModeTagForm
+	ModeDiff
 )
 
 var agentChoices = []string{"claude", "codex", "opencode"}
@@ -127,6 +135,17 @@ type Model struct {
 	width, height int
 
 	linkHits []resolvedLinkHit
+
+	// diffStats caches the per-session change summary shown in the detail
+	// pane, keyed by session ID. Refreshed off the event loop for the
+	// selected session; stale entries are simply overwritten.
+	diffStats map[string]session.DiffStat
+	// diff-view (ModeDiff) state: the scrollable viewport, a title line for
+	// the session being viewed, and any load error to show instead of a diff.
+	diffVP      viewport.Model
+	diffTitle   string
+	diffErr     string
+	diffLoading bool
 }
 
 // resolvedLinkHit is a linkHit translated into absolute terminal
@@ -195,6 +214,7 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 		states:      map[string]watcher.State{},
 		tmuxAlive:   map[string]bool{},
 		prompts:     map[string]string{},
+		diffStats:   map[string]session.DiffStat{},
 		statusCh:    statusCh,
 		cancelPoll:  cancel,
 		nameInput:   ti,
@@ -255,6 +275,22 @@ func refreshStatusCmd(m *Model) tea.Cmd {
 		}
 
 		return StatusRefreshedMsg{TmuxAlive: tmuxAlive, Prompts: prompts}
+	}
+}
+
+// diffStatCmd returns a tea.Cmd that computes the change summary for the
+// currently selected session off the event-loop goroutine. It's a no-op
+// (returns nil) when there's no selection. Results arrive as a DiffStatMsg
+// that Update caches into m.diffStats.
+func (m *Model) diffStatCmd() tea.Cmd {
+	if len(m.sessions) == 0 || m.cursor >= len(m.sessions) {
+		return nil
+	}
+	id := m.sessions[m.cursor].ID
+	backend := m.backend
+	return func() tea.Msg {
+		stat, err := backend.DiffStat(id)
+		return DiffStatMsg{ID: id, Stat: stat, Err: err}
 	}
 }
 
@@ -322,7 +358,7 @@ func (m *Model) refreshSessions() {
 }
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(listenStatus(m.statusCh), tickFlash())
+	return tea.Batch(listenStatus(m.statusCh), tickFlash(), m.diffStatCmd())
 }
 
 func listenStatus(ch <-chan watcher.Snapshot) tea.Cmd {

@@ -75,3 +75,21 @@ type ProjectRemovedMsg struct {
 	Name string
 	Err  error
 }
+
+// DiffStatMsg carries the async result of a per-session change-summary scan
+// (backend.DiffStat), merged into m.diffStats for display in the detail pane.
+type DiffStatMsg struct {
+	ID   string
+	Stat session.DiffStat
+	Err  error
+}
+
+// DiffLoadedMsg carries the async result of loading a full unified diff for
+// the diff view (ModeDiff). Content is the raw `git diff` output; Err is set
+// if the load failed.
+type DiffLoadedMsg struct {
+	ID      string
+	Title   string
+	Content string
+	Err     error
+}

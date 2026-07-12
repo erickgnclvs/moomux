@@ -39,6 +39,10 @@ func (f *fakeBackend) MoveSession(id string, delta int) error {
 	f.moveSessionCalls = append(f.moveSessionCalls, moveSessionCall{id: id, delta: delta})
 	return f.moveSessionErr
 }
+func (f *fakeBackend) Diff(id string) (string, error) { return "", nil }
+func (f *fakeBackend) DiffStat(id string) (session.DiffStat, error) {
+	return session.DiffStat{}, nil
+}
 func (f *fakeBackend) TmuxAliveAll() map[string]bool                         { return map[string]bool{} }
 func (f *fakeBackend) Sessions() []session.Session                           { return f.sessions }
 func (f *fakeBackend) Projects() []string                                    { return nil }

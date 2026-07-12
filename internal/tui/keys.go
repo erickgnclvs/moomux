@@ -22,6 +22,7 @@ type KeyMap struct {
 	NewProject   key.Binding
 	DelProject   key.Binding
 	Tag          key.Binding
+	Diff         key.Binding
 	Enter        key.Binding
 	Left         key.Binding
 	Right        key.Binding
@@ -51,6 +52,7 @@ func DefaultKeyMap() KeyMap {
 		NewProject:   key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "add project")),
 		DelProject:   key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "remove project")),
 		Tag:          key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tag")),
+		Diff:         key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "diff")),
 		Enter:        key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "submit")),
 		Left:         key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "left")),
 		Right:        key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "right")),

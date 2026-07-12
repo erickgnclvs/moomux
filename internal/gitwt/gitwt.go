@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -131,6 +132,76 @@ func (c *Client) RemoveWorktree(repoDir, worktreePath string) error {
 		return nil
 	}
 	return err
+}
+
+// diffTarget resolves the git revision to diff a worktree against. When ref
+// is a branch (e.g. "origin/main"), it returns the merge-base of ref and
+// HEAD so the diff shows only what this worktree added since it branched off,
+// not unrelated commits that landed on the base afterwards. When ref is empty
+// (plain projects with no base branch) or can't be resolved, it falls back to
+// "HEAD", i.e. uncommitted working-tree changes only.
+func (c *Client) diffTarget(worktree, ref string) string {
+	if ref == "" {
+		return "HEAD"
+	}
+	out, err := c.Runner.Run(worktree, "merge-base", ref, "HEAD")
+	if err != nil {
+		return "HEAD"
+	}
+	base := strings.TrimSpace(out)
+	if base == "" {
+		return "HEAD"
+	}
+	return base
+}
+
+// DiffAgainst returns the unified diff of the worktree — committed, staged,
+// and unstaged tracked changes — since it diverged from ref (see diffTarget).
+// Untracked files are not included.
+func (c *Client) DiffAgainst(worktree, ref string) (string, error) {
+	return c.Runner.Run(worktree, "diff", c.diffTarget(worktree, ref))
+}
+
+// DiffStatAgainst returns a files/additions/deletions summary of the same
+// range DiffAgainst reports, parsed from `git diff --numstat`.
+func (c *Client) DiffStatAgainst(worktree, ref string) (DiffStat, error) {
+	out, err := c.Runner.Run(worktree, "diff", "--numstat", c.diffTarget(worktree, ref))
+	if err != nil {
+		return DiffStat{}, err
+	}
+	return parseNumstat(out), nil
+}
+
+// DiffStat mirrors session.DiffStat but lives here to avoid gitwt importing
+// the session package; app translates between the two.
+type DiffStat struct {
+	Files     int
+	Additions int
+	Deletions int
+}
+
+// parseNumstat sums `git diff --numstat` output. Each non-empty line is
+// "<added>\t<deleted>\t<path>"; binary files report "-\t-\t<path>", which
+// contributes to the file count but not the line totals.
+func parseNumstat(out string) DiffStat {
+	var d DiffStat
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.SplitN(line, "\t", 3)
+		if len(fields) < 3 {
+			continue
+		}
+		d.Files++
+		if n, err := strconv.Atoi(fields[0]); err == nil {
+			d.Additions += n
+		}
+		if n, err := strconv.Atoi(fields[1]); err == nil {
+			d.Deletions += n
+		}
+	}
+	return d
 }
 
 // DeleteBranch force-deletes a local branch, e.g. after its worktree has been

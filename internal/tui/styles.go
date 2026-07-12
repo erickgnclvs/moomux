@@ -45,4 +45,13 @@ var (
 			Padding(1, 2)
 
 	dangerStyle = lipgloss.NewStyle().Foreground(colDanger).Bold(true)
+
+	// diff-view line styling
+	diffAddStyle  = lipgloss.NewStyle().Foreground(colWorking)
+	diffDelStyle  = lipgloss.NewStyle().Foreground(colDanger)
+	diffHunkStyle = lipgloss.NewStyle().Foreground(colAccent)
+	diffMetaStyle = lipgloss.NewStyle().Foreground(colMute).Bold(true)
+	// detail-pane diff stat: green +adds, red -dels
+	statAddStyle = lipgloss.NewStyle().Foreground(colWorking)
+	statDelStyle = lipgloss.NewStyle().Foreground(colDanger)
 )

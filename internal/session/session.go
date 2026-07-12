@@ -30,6 +30,20 @@ type Session struct {
 	NewBranch    bool      `json:"new_branch,omitempty"` // true if moomux created Branch fresh (vs. checking out an existing one); safe to delete on session delete
 }
 
+// DiffStat summarizes the changes in a session's worktree since it diverged
+// from its base branch: how many files changed and the total added/deleted
+// line counts. A zero value means "no changes" (a clean worktree).
+type DiffStat struct {
+	Files     int
+	Additions int
+	Deletions int
+}
+
+// Clean reports whether the diff stat represents no changes at all.
+func (d DiffStat) Clean() bool {
+	return d.Files == 0 && d.Additions == 0 && d.Deletions == 0
+}
+
 // AgentName returns the effective agent name, defaulting to "claude" for legacy sessions.
 func (s Session) AgentName() string {
 	if s.Agent == "" {

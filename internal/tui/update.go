@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/erickgnclvs/moomux/internal/browser"
@@ -18,6 +19,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.diffVP.Width = m.diffWidth()
+		m.diffVP.Height = m.diffHeight()
 		return m, nil
 
 	case StatusTickMsg:
@@ -33,7 +36,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.flashTime = time.Now()
 			}
 		}
-		return m, tea.Batch(listenStatus(m.statusCh), refreshStatusCmd(m))
+		return m, tea.Batch(listenStatus(m.statusCh), refreshStatusCmd(m), m.diffStatCmd())
 
 	case StatusRefreshedMsg:
 		m.tmuxAlive = msg.TmuxAlive
@@ -185,6 +188,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setFlash("info", "opened "+msg.URL)
 		return m, nil
 
+	case DiffStatMsg:
+		if msg.Err == nil {
+			m.diffStats[msg.ID] = msg.Stat
+		}
+		return m, nil
+
+	case DiffLoadedMsg:
+		m.diffLoading = false
+		m.diffTitle = msg.Title
+		if msg.Err != nil {
+			m.diffErr = msg.Err.Error()
+			m.diffVP.SetContent("")
+			return m, nil
+		}
+		m.diffErr = ""
+		m.diffVP.SetContent(colorizeDiff(msg.Content))
+		m.diffVP.GotoTop()
+		return m, nil
+
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 			if url := m.linkAt(msg.X, msg.Y); url != "" {
@@ -212,6 +234,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateProjectInitChoice(msg)
 		case ModeTagForm:
 			return m.updateTagForm(msg)
+		case ModeDiff:
+			return m.updateDiff(msg)
 		default:
 			return m.updateList(msg)
 		}
@@ -227,10 +251,12 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Up):
 		if len(m.sessions) > 0 {
 			m.cursor = (m.cursor - 1 + len(m.sessions)) % len(m.sessions)
+			return m, m.diffStatCmd()
 		}
 	case key.Matches(msg, m.keys.Down):
 		if len(m.sessions) > 0 {
 			m.cursor = (m.cursor + 1) % len(m.sessions)
+			return m, m.diffStatCmd()
 		}
 	case key.Matches(msg, m.keys.MoveUp):
 		if len(m.sessions) > 0 && m.cursor > 0 {
@@ -257,16 +283,18 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.activeProj = (m.activeProj + 1) % len(m.projects)
 			m.cursor = 0
 			m.refreshSessions()
+			return m, m.diffStatCmd()
 		}
 	case key.Matches(msg, m.keys.ShiftTab):
 		if len(m.projects) > 0 {
 			m.activeProj = (m.activeProj - 1 + len(m.projects)) % len(m.projects)
 			m.cursor = 0
 			m.refreshSessions()
+			return m, m.diffStatCmd()
 		}
 	case key.Matches(msg, m.keys.Refresh):
 		m.refreshSessions()
-		return m, refreshStatusCmd(m)
+		return m, tea.Batch(refreshStatusCmd(m), m.diffStatCmd())
 	case key.Matches(msg, m.keys.Kill):
 		if len(m.sessions) > 0 {
 			id := m.sessions[m.cursor].ID
@@ -321,6 +349,11 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showArchived = !m.showArchived
 		m.cursor = 0
 		m.refreshSessions()
+		return m, m.diffStatCmd()
+	case key.Matches(msg, m.keys.Diff):
+		if len(m.sessions) > 0 {
+			return m.openDiff()
+		}
 	case key.Matches(msg, m.keys.Tag):
 		if len(m.sessions) > 0 {
 			s := m.sessions[m.cursor]
@@ -597,6 +630,37 @@ func (m *Model) updateConfirmDeleteProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 		m.mode = ModeList
 	}
 	return m, nil
+}
+
+// openDiff enters the full-screen diff view for the selected session and
+// kicks off an async load of its unified diff. The viewport is (re)sized to
+// the current terminal so scrolling maths are correct before content arrives.
+func (m *Model) openDiff() (tea.Model, tea.Cmd) {
+	s := m.sessions[m.cursor]
+	m.mode = ModeDiff
+	m.diffLoading = true
+	m.diffErr = ""
+	m.diffTitle = s.Name
+	m.diffVP = viewport.New(m.diffWidth(), m.diffHeight())
+	m.diffVP.SetContent("")
+	id := s.ID
+	name := s.Name
+	backend := m.backend
+	return m, func() tea.Msg {
+		content, err := backend.Diff(id)
+		return DiffLoadedMsg{ID: id, Title: name, Content: content, Err: err}
+	}
+}
+
+func (m *Model) updateDiff(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.Cancel), msg.String() == "q", key.Matches(msg, m.keys.Diff):
+		m.mode = ModeList
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.diffVP, cmd = m.diffVP.Update(msg)
+	return m, cmd
 }
 
 func (m *Model) flashError(err error) (tea.Model, tea.Cmd) {

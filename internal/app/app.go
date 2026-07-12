@@ -286,6 +286,44 @@ func (a *App) OpenSession(id string) (string, error) {
 	return hint, nil
 }
 
+// diffRef resolves the branch a session's worktree should be diffed against.
+// For git projects it's the project base branch (preferring origin/ when a
+// remote exists, mirroring worktree creation); for plain projects there's no
+// base, so an empty ref makes gitwt fall back to uncommitted changes only.
+func (a *App) diffRef(s session.Session) string {
+	proj, ok := a.Cfg.Projects[s.Project]
+	if !ok || proj.IsPlain() || proj.BaseBranch == "" {
+		return ""
+	}
+	if a.Git.HasRemote(proj.Repo, "origin") {
+		return "origin/" + proj.BaseBranch
+	}
+	return proj.BaseBranch
+}
+
+// Diff returns the unified diff of a session's worktree against its base.
+func (a *App) Diff(id string) (string, error) {
+	s, ok := a.Store.Get(id)
+	if !ok {
+		return "", fmt.Errorf("unknown session %q", id)
+	}
+	return a.Git.DiffAgainst(s.WorktreePath, a.diffRef(s))
+}
+
+// DiffStat returns a files/additions/deletions summary for a session's
+// worktree against its base.
+func (a *App) DiffStat(id string) (session.DiffStat, error) {
+	s, ok := a.Store.Get(id)
+	if !ok {
+		return session.DiffStat{}, fmt.Errorf("unknown session %q", id)
+	}
+	d, err := a.Git.DiffStatAgainst(s.WorktreePath, a.diffRef(s))
+	if err != nil {
+		return session.DiffStat{}, err
+	}
+	return session.DiffStat{Files: d.Files, Additions: d.Additions, Deletions: d.Deletions}, nil
+}
+
 // TmuxAliveAll returns id→alive for every stored session using a single
 // tmux list-sessions call instead of one has-session subprocess per session.
 func (a *App) TmuxAliveAll() map[string]bool {

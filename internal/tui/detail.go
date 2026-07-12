@@ -44,6 +44,9 @@ func (m *Model) renderDetail(width, height int) string {
 	b.WriteString(row("worktree", truncate(s.WorktreePath, valueWidth)))
 	b.WriteString(row("tmux", s.TmuxSession))
 	b.WriteString(row("created", humanizeAge(time.Since(s.CreatedAt))))
+	if stat, ok := m.diffStats[s.ID]; ok {
+		b.WriteString(row("diff", formatDiffStat(stat)))
+	}
 	if s.Ticket != "" {
 		b.WriteString(row("ticket", truncate(s.Ticket, valueWidth)))
 	}

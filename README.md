@@ -103,4 +103,6 @@ go build -o moomux . && ./moomux
 moomux
 ```
 
-Keys: `n` new · `enter` open · `x` kill · `d` delete · `a` archive/restore · `A` toggle archived view · `t` tag · `shift+↑`/`shift+↓` reorder · `tab` switch project · `q` quit
+Keys: `n` new · `enter` open · `x` kill · `d` delete · `v` diff · `a` archive/restore · `A` toggle archived view · `t` tag · `shift+↑`/`shift+↓` reorder · `tab` switch project · `q` quit
+
+Press `v` on a session to view its diff — the changes in that worktree against the project's base branch (committed plus working-tree edits to tracked files), in a scrollable, syntax-colored pager. The detail pane also shows a live `diff` summary (files changed and `+`/`−` line counts) for the selected session.
