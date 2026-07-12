@@ -52,6 +52,7 @@ const (
 	ModeConfirmDeleteProject
 	ModeProjectInitChoice
 	ModeTagForm
+	ModeHelp
 )
 
 var agentChoices = []string{"claude", "codex", "opencode"}

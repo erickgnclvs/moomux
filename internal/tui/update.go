@@ -212,6 +212,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateProjectInitChoice(msg)
 		case ModeTagForm:
 			return m.updateTagForm(msg)
+		case ModeHelp:
+			return m.updateHelp(msg)
 		default:
 			return m.updateList(msg)
 		}
@@ -224,6 +226,9 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Quit):
 		m.cancelPoll()
 		return m, tea.Quit
+	case key.Matches(msg, m.keys.Help):
+		m.mode = ModeHelp
+		return m, nil
 	case key.Matches(msg, m.keys.Up):
 		if len(m.sessions) > 0 {
 			m.cursor = (m.cursor - 1 + len(m.sessions)) % len(m.sessions)
@@ -348,6 +353,20 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return SessionOpenedMsg{ID: id, Hint: hint}
 			}
 		}
+	}
+	return m, nil
+}
+
+// updateHelp handles keys while the help overlay is open. Any of ?, esc, or q
+// dismisses it; ctrl+c still quits the app outright.
+func (m *Model) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "ctrl+c" {
+		m.cancelPoll()
+		return m, tea.Quit
+	}
+	switch {
+	case key.Matches(msg, m.keys.Help), key.Matches(msg, m.keys.Cancel), key.Matches(msg, m.keys.Quit):
+		m.mode = ModeList
 	}
 	return m, nil
 }

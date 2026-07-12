@@ -103,4 +103,6 @@ go build -o moomux . && ./moomux
 moomux
 ```
 
-Keys: `n` new · `enter` open · `x` kill · `d` delete · `a` archive/restore · `A` toggle archived view · `t` tag · `shift+↑`/`shift+↓` reorder · `tab` switch project · `q` quit
+Keys: `?` help (full command list) · `n` new · `enter` open · `x` kill · `d` delete · `a` archive/restore · `A` toggle archived view · `t` tag · `shift+↑`/`shift+↓` reorder · `tab` switch project · `q` quit
+
+Press `?` at any time on the list screen to open a command palette with every keybinding grouped by category, so you don't have to memorize the footer.

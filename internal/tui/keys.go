@@ -28,6 +28,7 @@ type KeyMap struct {
 	No           key.Binding
 	FormUp       key.Binding
 	FormDown     key.Binding
+	Help         key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -58,5 +59,6 @@ func DefaultKeyMap() KeyMap {
 		// Arrow-only (no j/k) for forms with text inputs, so typing "j"/"k" isn't hijacked as navigation.
 		FormUp:   key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "up")),
 		FormDown: key.NewBinding(key.WithKeys("down"), key.WithHelp("↓", "down")),
+		Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	}
 }
