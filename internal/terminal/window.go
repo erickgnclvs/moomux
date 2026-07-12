@@ -83,3 +83,15 @@ func xtermArgs(title, tmuxSession string) []string {
 func tilixArgs(title, tmuxSession string) []string {
 	return []string{"-e", "tmux", "attach", "-t", tmuxSession}
 }
+
+// cmuxArgs opens a new cmux workspace and sends the tmux attach command to
+// it, mirroring how the other multiplexer-aware terminals (kitty, wezterm)
+// launch straight into the session.
+func cmuxArgs(title, tmuxSession string) []string {
+	args := []string{"new-workspace", "--focus", "true"}
+	if title != "" {
+		args = append(args, "--name", title)
+	}
+	args = append(args, "--command", "tmux attach -t "+tmuxSession)
+	return args
+}

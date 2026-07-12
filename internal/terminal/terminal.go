@@ -18,6 +18,8 @@ func Detect() TerminalOpener {
 	switch {
 	case os.Getenv("TERM_PROGRAM") == "iTerm.app":
 		return newITermClient()
+	case os.Getenv("CMUX_SURFACE_ID") != "":
+		return &windowOpener{binary: "cmux", args: cmuxArgs}
 	case os.Getenv("KITTY_WINDOW_ID") != "":
 		return &windowOpener{binary: "kitty", args: kittyArgs}
 	case os.Getenv("WEZTERM_PANE") != "":
