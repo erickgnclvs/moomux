@@ -43,10 +43,11 @@ type fakeBackend struct {
 func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string) (session.Session, string, error) {
 	return session.Session{}, "", nil
 }
-func (f *fakeBackend) OpenSession(id string) (string, error)  { return "", nil }
-func (f *fakeBackend) DeleteSession(id string) error          { return nil }
-func (f *fakeBackend) KillTmux(id string) error               { return nil }
-func (f *fakeBackend) MoveSession(id string, delta int) error { return nil }
+func (f *fakeBackend) OpenSession(id string) (string, error)    { return "", nil }
+func (f *fakeBackend) DeleteSession(id string) error            { return nil }
+func (f *fakeBackend) KillTmux(id string) error                 { return nil }
+func (f *fakeBackend) MoveSession(id string, delta int) error   { return nil }
+func (f *fakeBackend) MoveProject(name string, delta int) error { return nil }
 func (f *fakeBackend) SetSessionTags(id, ticket, pr string) (session.Session, error) {
 	return session.Session{}, nil
 }

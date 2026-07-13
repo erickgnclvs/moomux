@@ -16,10 +16,18 @@ type fakeBackend struct {
 
 	moveSessionCalls []moveSessionCall
 	moveSessionErr   error
+
+	moveProjectCalls []moveProjectCall
+	moveProjectErr   error
 }
 
 type moveSessionCall struct {
 	id    string
+	delta int
+}
+
+type moveProjectCall struct {
+	name  string
 	delta int
 }
 
@@ -38,6 +46,10 @@ func (f *fakeBackend) SetSessionArchived(id string, archived bool) (session.Sess
 func (f *fakeBackend) MoveSession(id string, delta int) error {
 	f.moveSessionCalls = append(f.moveSessionCalls, moveSessionCall{id: id, delta: delta})
 	return f.moveSessionErr
+}
+func (f *fakeBackend) MoveProject(name string, delta int) error {
+	f.moveProjectCalls = append(f.moveProjectCalls, moveProjectCall{name: name, delta: delta})
+	return f.moveProjectErr
 }
 func (f *fakeBackend) TmuxAliveAll() map[string]bool                         { return map[string]bool{} }
 func (f *fakeBackend) Sessions() []session.Session                           { return f.sessions }

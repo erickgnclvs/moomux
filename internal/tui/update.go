@@ -168,6 +168,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case ProjectMovedMsg:
+		if msg.Err != nil {
+			m.setError(msg.Err)
+			return m, nil
+		}
+		m.refreshProjects()
+		for i, n := range m.projects {
+			if n == msg.Name {
+				m.activeProj = i
+				break
+			}
+		}
+		return m, nil
+
 	case ProjectRemovedMsg:
 		if msg.Err != nil {
 			m.mode = ModeList
@@ -255,6 +269,26 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return SessionMovedMsg{ID: id, Err: err}
 				}
 				return SessionMovedMsg{ID: id}
+			}
+		}
+	case key.Matches(msg, m.keys.MoveProjLeft):
+		if len(m.projects) > 0 && m.activeProj > 0 {
+			name := m.projects[m.activeProj]
+			return m, func() tea.Msg {
+				if err := m.backend.MoveProject(name, -1); err != nil {
+					return ProjectMovedMsg{Name: name, Err: err}
+				}
+				return ProjectMovedMsg{Name: name}
+			}
+		}
+	case key.Matches(msg, m.keys.MoveProjRight):
+		if len(m.projects) > 0 && m.activeProj < len(m.projects)-1 {
+			name := m.projects[m.activeProj]
+			return m, func() tea.Msg {
+				if err := m.backend.MoveProject(name, 1); err != nil {
+					return ProjectMovedMsg{Name: name, Err: err}
+				}
+				return ProjectMovedMsg{Name: name}
 			}
 		}
 	case key.Matches(msg, m.keys.Tab):
