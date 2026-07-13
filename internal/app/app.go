@@ -111,6 +111,15 @@ func deriveNameFromBranch(branch string) string {
 	return out
 }
 
+// tmuxSafeName replaces characters tmux's -t target parser treats as
+// session/window/pane separators, so names like "jackson-2.22.1" don't break
+// lookups (has-session, attach, kill) on every call after creation.
+var tmuxUnsafeChars = strings.NewReplacer(".", "-", ":", "-")
+
+func tmuxSafeName(name string) string {
+	return tmuxUnsafeChars.Replace(name)
+}
+
 // uniqueNameFromBranch derives a session name from branch and, if it already
 // collides with an existing session in project, appends -2, -3, ... until free.
 func (a *App) uniqueNameFromBranch(project, branch string) string {
@@ -142,7 +151,7 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string)
 		agent = proj.AgentName()
 	}
 	var wt string
-	tmuxName := "moomux-" + name
+	tmuxName := "moomux-" + tmuxSafeName(name)
 	branch := ""
 
 	if proj.IsPlain() {
