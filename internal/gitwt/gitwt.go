@@ -165,19 +165,75 @@ func (c *Client) diffTarget(worktree string, refs ...string) string {
 
 // DiffAgainst returns the unified diff of the worktree — committed, staged,
 // and unstaged tracked changes — since it diverged from the first resolvable
-// base ref (see diffTarget). Untracked files are not included.
+// base ref (see diffTarget), followed by a synthetic "new file" diff for each
+// untracked (but not .gitignore'd) file, so brand-new files an agent created
+// but hasn't committed still show up.
 func (c *Client) DiffAgainst(worktree string, refs ...string) (string, error) {
-	return c.Runner.Run(worktree, "diff", c.diffTarget(worktree, refs...))
+	tracked, err := c.Runner.Run(worktree, "diff", c.diffTarget(worktree, refs...))
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	b.WriteString(tracked)
+	for _, f := range c.untracked(worktree) {
+		if d := c.untrackedDiff(worktree, f); d != "" {
+			b.WriteString(d)
+		}
+	}
+	return b.String(), nil
 }
 
 // DiffStatAgainst returns a files/additions/deletions summary of the same
-// range DiffAgainst reports, parsed from `git diff --numstat`.
+// range DiffAgainst reports — tracked changes plus untracked files.
 func (c *Client) DiffStatAgainst(worktree string, refs ...string) (DiffStat, error) {
 	out, err := c.Runner.Run(worktree, "diff", "--numstat", c.diffTarget(worktree, refs...))
 	if err != nil {
 		return DiffStat{}, err
 	}
-	return parseNumstat(out), nil
+	d := parseNumstat(out)
+	for _, f := range c.untracked(worktree) {
+		// --no-index exits non-zero when it finds a difference (always, here),
+		// so the error is expected; parseNumstat ignores any non-numstat noise.
+		nOut, _ := c.Runner.Run(worktree, "diff", "--no-index", "--numstat", "--", devNull, f)
+		u := parseNumstat(nOut)
+		d.Files += u.Files
+		d.Additions += u.Additions
+		d.Deletions += u.Deletions
+	}
+	return d, nil
+}
+
+// devNull is the empty side of an untracked-file diff. moomux is a
+// tmux-oriented tool (macOS/Linux only), so /dev/null is always available.
+const devNull = "/dev/null"
+
+// untracked returns worktree-relative paths of files git isn't tracking yet,
+// honoring .gitignore via --exclude-standard (so ignored build/dependency
+// dirs don't swamp the diff). Returns nil on error or when there are none.
+func (c *Client) untracked(worktree string) []string {
+	out, err := c.Runner.Run(worktree, "ls-files", "--others", "--exclude-standard")
+	if err != nil {
+		return nil
+	}
+	var files []string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			files = append(files, line)
+		}
+	}
+	return files
+}
+
+// untrackedDiff renders one untracked file as an all-additions "new file"
+// diff via `git diff --no-index`. Its non-zero exit (differences found) is
+// expected and ignored; only output that actually looks like a diff is
+// returned, so a real git error never leaks into the rendered patch.
+func (c *Client) untrackedDiff(worktree, path string) string {
+	out, _ := c.Runner.Run(worktree, "diff", "--no-index", "--", devNull, path)
+	if strings.HasPrefix(out, "diff --git") {
+		return out
+	}
+	return ""
 }
 
 // DiffStat mirrors session.DiffStat but lives here to avoid gitwt importing

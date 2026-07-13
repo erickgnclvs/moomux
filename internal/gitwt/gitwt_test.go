@@ -126,11 +126,35 @@ func TestDiffStatAgainstUsesMergeBase(t *testing.T) {
 	if want := (DiffStat{Files: 1, Additions: 2, Deletions: 1}); got != want {
 		t.Fatalf("stat = %+v, want %+v", got, want)
 	}
-	// last call must diff against the resolved merge-base commit, not the branch.
-	last := sr.calls[len(sr.calls)-1]
+	// the tracked-diff call must target the resolved merge-base commit, not the branch.
 	want := []string{"@/wt", "diff", "--numstat", "abc123"}
-	if !reflect.DeepEqual(last, want) {
-		t.Fatalf("diff call = %v, want %v", last, want)
+	found := false
+	for _, call := range sr.calls {
+		if reflect.DeepEqual(call, want) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no diff call against merge-base; calls = %v", sr.calls)
+	}
+}
+
+func TestDiffStatAgainstIncludesUntracked(t *testing.T) {
+	sr := &scriptRunner{outputs: map[string]string{
+		"merge-base": "abc123\n",
+		"ls-files":   "new.txt\n",
+		// tracked numstat and the --no-index untracked numstat both use args[0]=="diff";
+		// return the same 3/0 shape so the two are summed (tracked + untracked).
+		"diff": "3\t0\tnew.txt\n",
+	}}
+	c := &Client{Runner: sr}
+	got, err := c.DiffStatAgainst("/wt", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// tracked (3/0) + untracked (3/0) = 2 files, 6 additions.
+	if want := (DiffStat{Files: 2, Additions: 6, Deletions: 0}); got != want {
+		t.Fatalf("stat = %+v, want %+v", got, want)
 	}
 }
 
