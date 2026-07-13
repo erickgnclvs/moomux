@@ -19,6 +19,17 @@ func newTestModel(be *fakeBackend) *Model {
 	return m
 }
 
+func newMultiProjectTestModel(be *fakeBackend) *Model {
+	cfg := &config.Config{Projects: map[string]config.Project{
+		"alpha": {Repo: "/tmp/alpha"},
+		"beta":  {Repo: "/tmp/beta"},
+	}}
+	statusCh := make(chan watcher.Snapshot)
+	m := New(cfg, be, statusCh, func() {})
+	m.width, m.height = 80, 24
+	return m
+}
+
 // drainCmd runs a tea.Cmd synchronously and feeds its resulting message back
 // into Update, mirroring what the Bubble Tea runtime does for the async
 // MoveSession dispatch.
@@ -91,6 +102,57 @@ func TestShiftDownAtBottomIsNoOp(t *testing.T) {
 	m.Update(tea.KeyMsg{Type: tea.KeyShiftDown})
 	if len(be.moveSessionCalls) != 0 {
 		t.Fatalf("expected no MoveSession call at bottom of list, got %d", len(be.moveSessionCalls))
+	}
+}
+
+func TestShiftLeftMovesProjectLeftAndFollowsCursor(t *testing.T) {
+	be := &fakeBackend{}
+	m := newMultiProjectTestModel(be)
+	m.activeProj = 1 // on "beta"
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyShiftLeft})
+	if cmd == nil {
+		t.Fatalf("expected a command to dispatch MoveProject")
+	}
+	resultMsg := cmd()
+	if len(be.moveProjectCalls) != 1 {
+		t.Fatalf("expected 1 MoveProject call, got %d", len(be.moveProjectCalls))
+	}
+	if got := be.moveProjectCalls[0]; got.name != "beta" || got.delta != -1 {
+		t.Fatalf("MoveProject called with %+v, want {beta -1}", got)
+	}
+
+	// Backend reorders "beta" to the front; simulate the persisted order.
+	m.cfg.Order = []string{"beta", "alpha"}
+	m.Update(resultMsg)
+
+	if m.projects[0] != "beta" {
+		t.Fatalf("expected beta first after reorder, got %s", m.projects[0])
+	}
+	if m.activeProj != 0 {
+		t.Fatalf("expected activeProj to follow moved project to 0, got %d", m.activeProj)
+	}
+}
+
+func TestShiftLeftAtFrontIsNoOp(t *testing.T) {
+	be := &fakeBackend{}
+	m := newMultiProjectTestModel(be)
+	m.activeProj = 0 // already at front
+
+	m.Update(tea.KeyMsg{Type: tea.KeyShiftLeft})
+	if len(be.moveProjectCalls) != 0 {
+		t.Fatalf("expected no MoveProject call at front of list, got %d", len(be.moveProjectCalls))
+	}
+}
+
+func TestShiftRightAtEndIsNoOp(t *testing.T) {
+	be := &fakeBackend{}
+	m := newMultiProjectTestModel(be)
+	m.activeProj = 1 // already at end
+
+	m.Update(tea.KeyMsg{Type: tea.KeyShiftRight})
+	if len(be.moveProjectCalls) != 0 {
+		t.Fatalf("expected no MoveProject call at end of list, got %d", len(be.moveProjectCalls))
 	}
 }
 

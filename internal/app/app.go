@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -56,13 +55,35 @@ func (a *App) nextOpenCodePort() int {
 	return port
 }
 
-func (a *App) Projects() []string {
-	out := make([]string, 0, len(a.Cfg.Projects))
-	for k := range a.Cfg.Projects {
-		out = append(out, k)
+func (a *App) Projects() []string { return a.Cfg.OrderedProjectNames() }
+
+// MoveProject shifts the project with the given name by delta positions (-1
+// left, +1 right) in the manual project order and persists it. It's a no-op
+// if the move would go out of bounds.
+func (a *App) MoveProject(name string, delta int) error {
+	order := a.Projects()
+	idx := -1
+	for i, n := range order {
+		if n == name {
+			idx = i
+			break
+		}
 	}
-	sort.Strings(out)
-	return out
+	if idx < 0 {
+		return fmt.Errorf("unknown project %q", name)
+	}
+	j := idx + delta
+	if j < 0 || j >= len(order) {
+		return nil
+	}
+	order[idx], order[j] = order[j], order[idx]
+	prev := a.Cfg.Order
+	a.Cfg.Order = order
+	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
+		a.Cfg.Order = prev
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
 }
 
 func (a *App) Sessions() []session.Session { return a.Store.All() }

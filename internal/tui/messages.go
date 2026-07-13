@@ -75,3 +75,11 @@ type ProjectRemovedMsg struct {
 	Name string
 	Err  error
 }
+
+// ProjectMovedMsg is the result of an async reorder (MoveProject) call.
+// Update() re-syncs m.projects and re-anchors activeProj on Name once this
+// arrives; Err is set if the persisted reorder failed.
+type ProjectMovedMsg struct {
+	Name string
+	Err  error
+}

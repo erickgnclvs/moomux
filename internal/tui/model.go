@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"os"
-	"sort"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -31,6 +30,7 @@ type Backend interface {
 	// list without touching its tmux session or worktree.
 	SetSessionArchived(id string, archived bool) (session.Session, error)
 	MoveSession(id string, delta int) error
+	MoveProject(name string, delta int) error
 	// TmuxAliveAll returns id→alive for every stored session using a single
 	// tmux list-sessions call instead of N has-session calls.
 	TmuxAliveAll() map[string]bool
@@ -202,10 +202,7 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 		branchInput: bi,
 		ticketInput: tki,
 	}
-	for name := range cfg.Projects {
-		m.projects = append(m.projects, name)
-	}
-	sort.Strings(m.projects)
+	m.projects = cfg.OrderedProjectNames()
 	m.refreshSessions()
 	m.refreshTmuxAlive()
 	m.refreshPrompts()
@@ -269,11 +266,7 @@ func (m *Model) effectiveState(s session.Session) watcher.State {
 }
 
 func (m *Model) refreshProjects() {
-	m.projects = m.projects[:0]
-	for name := range m.cfg.Projects {
-		m.projects = append(m.projects, name)
-	}
-	sort.Strings(m.projects)
+	m.projects = m.cfg.OrderedProjectNames()
 	if m.activeProj >= len(m.projects) {
 		m.activeProj = 0
 	}

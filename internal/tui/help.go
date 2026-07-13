@@ -50,6 +50,7 @@ func (m *Model) helpGroups() []helpGroup {
 				{"shift+↑ / ↓", "reorder session"},
 				{"tab", "next project"},
 				{"shift+tab", "prev project"},
+				{"shift+← / →", "reorder project"},
 				{"r", "refresh"},
 			},
 		},

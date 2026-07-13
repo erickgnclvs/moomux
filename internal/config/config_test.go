@@ -113,6 +113,36 @@ func TestProjectAgentNameReturnsSetValue(t *testing.T) {
 	}
 }
 
+func TestOrderedProjectNamesUsesOrderThenAlphabetical(t *testing.T) {
+	cfg := &Config{
+		Projects: map[string]Project{
+			"a": {}, "b": {}, "c": {},
+		},
+		Order: []string{"c", "a"},
+	}
+	got := cfg.OrderedProjectNames()
+	want := []string{"c", "a", "b"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestOrderedProjectNamesDropsStaleEntries(t *testing.T) {
+	cfg := &Config{
+		Projects: map[string]Project{"a": {}},
+		Order:    []string{"removed", "a"},
+	}
+	got := cfg.OrderedProjectNames()
+	if len(got) != 1 || got[0] != "a" {
+		t.Fatalf("got %v, want [a]", got)
+	}
+}
+
 func TestProjectAgentRoundtrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "out.toml")

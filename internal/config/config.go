@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -21,6 +22,29 @@ type Project struct {
 
 func (p Project) IsPlain() bool { return p.Kind == "plain" }
 
+// OrderedProjectNames returns configured project names in the user's manual
+// order (c.Order), followed by any names not yet in that order (new
+// projects, or configs from before manual ordering existed) sorted
+// alphabetically.
+func (c *Config) OrderedProjectNames() []string {
+	seen := make(map[string]bool, len(c.Projects))
+	out := make([]string, 0, len(c.Projects))
+	for _, name := range c.Order {
+		if _, ok := c.Projects[name]; ok && !seen[name] {
+			out = append(out, name)
+			seen[name] = true
+		}
+	}
+	rest := make([]string, 0, len(c.Projects)-len(out))
+	for name := range c.Projects {
+		if !seen[name] {
+			rest = append(rest, name)
+		}
+	}
+	sort.Strings(rest)
+	return append(out, rest...)
+}
+
 // AgentName returns the effective agent name, defaulting to "claude".
 func (p Project) AgentName() string {
 	if p.Agent == "" {
@@ -31,6 +55,10 @@ func (p Project) AgentName() string {
 
 type Config struct {
 	Projects map[string]Project `toml:"projects"`
+	// Order is the user's manual project ordering (front-to-back). Names not
+	// listed here (new projects, or configs written before this existed)
+	// sort alphabetically after the ordered ones.
+	Order []string `toml:"order,omitempty"`
 }
 
 func Load(path string) (*Config, error) {
