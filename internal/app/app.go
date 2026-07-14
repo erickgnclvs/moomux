@@ -88,13 +88,10 @@ func (a *App) MoveProject(name string, delta int) error {
 
 func (a *App) Sessions() []session.Session { return a.Store.All() }
 
-// deriveNameFromBranch turns a branch name like "feature/login-page" into a
-// filesystem/tmux-safe session name like "login-page".
-func deriveNameFromBranch(branch string) string {
-	name := branch
-	if i := strings.LastIndex(name, "/"); i >= 0 {
-		name = name[i+1:]
-	}
+// sanitizeName collapses anything that isn't alphanumeric/-/_ to "-", so the
+// result is safe as a git branch name, filesystem path component, and tmux
+// session name all at once.
+func sanitizeName(name string) string {
 	var b strings.Builder
 	for _, r := range name {
 		switch {
@@ -111,13 +108,14 @@ func deriveNameFromBranch(branch string) string {
 	return out
 }
 
-// tmuxSafeName replaces characters tmux's -t target parser treats as
-// session/window/pane separators, so names like "jackson-2.22.1" don't break
-// lookups (has-session, attach, kill) on every call after creation.
-var tmuxUnsafeChars = strings.NewReplacer(".", "-", ":", "-")
-
-func tmuxSafeName(name string) string {
-	return tmuxUnsafeChars.Replace(name)
+// deriveNameFromBranch turns a branch name like "feature/login-page" into a
+// filesystem/tmux-safe session name like "login-page".
+func deriveNameFromBranch(branch string) string {
+	name := branch
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	return sanitizeName(name)
 }
 
 // uniqueNameFromBranch derives a session name from branch and, if it already
@@ -146,12 +144,14 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string)
 			return session.Session{}, "", fmt.Errorf("session name required")
 		}
 		name = a.uniqueNameFromBranch(project, existingBranch)
+	} else {
+		name = sanitizeName(name)
 	}
 	if agent == "" {
 		agent = proj.AgentName()
 	}
 	var wt string
-	tmuxName := "moomux-" + tmuxSafeName(name)
+	tmuxName := "moomux-" + name
 	branch := ""
 
 	if proj.IsPlain() {
