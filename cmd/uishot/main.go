@@ -34,6 +34,10 @@ var screens = map[string][]string{
 	"confirm-delete-project": {"D"},
 	"archived":               {"A"},
 	"help":                   {"?"},
+	// no-projects starts from a config with zero projects, which
+	// auto-opens the add-project form (tui.New's zero-projects branch);
+	// esc backs out to the empty list to show its empty-state hint.
+	"no-projects": {"esc"},
 }
 
 type fakeBackend struct {
@@ -114,7 +118,12 @@ func main() {
 	}
 
 	cfg := &config.Config{Projects: map[string]config.Project{"demo": {Repo: "/tmp/demo"}}}
-	be := &fakeBackend{sessions: sampleSessions()}
+	sessions := sampleSessions()
+	if *screen == "no-projects" {
+		cfg = &config.Config{Projects: map[string]config.Project{}}
+		sessions = nil
+	}
+	be := &fakeBackend{sessions: sessions}
 	statusCh := make(chan watcher.Snapshot)
 	m := tui.New(cfg, be, statusCh, func() {})
 
