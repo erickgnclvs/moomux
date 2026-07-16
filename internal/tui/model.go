@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -272,6 +273,10 @@ func (m *Model) refreshProjects() {
 	}
 }
 
+// newProjectForm builds the add-project form, pre-filling name/repo from the
+// current working directory when it looks usable — the common case is
+// running moomux from inside the repo you want to add, and most users don't
+// want to type or remember its absolute path.
 func newProjectForm() projectForm {
 	mk := func(placeholder string, width int) textinput.Model {
 		ti := textinput.New()
@@ -287,6 +292,10 @@ func newProjectForm() projectForm {
 			mk("base branch (default: main)", 24),
 			mk("branch prefix (optional)", 24),
 		},
+	}
+	if cwd, err := os.Getwd(); err == nil && cwd != "/" {
+		pf.inputs[0].SetValue(filepath.Base(cwd))
+		pf.inputs[1].SetValue(cwd)
 	}
 	pf.inputs[0].Focus()
 	return pf

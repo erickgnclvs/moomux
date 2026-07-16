@@ -111,10 +111,20 @@ func (m *Model) renderHelp() string {
 		}
 	}
 
+	tableWidth := colWidth * 2
+	if len(groups) == 1 {
+		tableWidth = colWidth
+	}
+
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("moomux commands"))
 	b.WriteString("\n\n")
 	b.WriteString(lipgloss.JoinVertical(lipgloss.Left, rows...))
+	b.WriteString("\n\n")
+	b.WriteString(hintStyle.Width(tableWidth).Render(
+		"tip: add mouse/passthrough settings to ~/.tmux.conf for the best experience — see the README's \"Recommended tmux config\"",
+	))
+	b.WriteString("\n\n")
 	b.WriteString(muteStyle.Render("?/esc to close"))
 	return b.String()
 }

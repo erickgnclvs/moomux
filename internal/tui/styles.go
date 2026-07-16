@@ -46,6 +46,10 @@ var (
 
 	dangerStyle = lipgloss.NewStyle().Foreground(colDanger).Bold(true)
 
+	// hintStyle is the contextual, per-field explainer shown in forms —
+	// italic to read as a transient tip rather than a persistent label.
+	hintStyle = lipgloss.NewStyle().Foreground(colMute).Italic(true)
+
 	// help overlay
 	helpGroupStyle = lipgloss.NewStyle().Bold(true).Foreground(colAccent)
 	helpKeyStyle   = lipgloss.NewStyle().Bold(true).Foreground(colFg)
