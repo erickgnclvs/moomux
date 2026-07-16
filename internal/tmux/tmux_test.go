@@ -39,7 +39,7 @@ func TestNewSession(t *testing.T) {
 		{"set-option", "-t", "moomux-foo", "set-titles-string", "#{window_name}"},
 		{"set-option", "-t", "moomux-foo", "mouse", "on"},
 		{"list-panes", "-t", "moomux-foo", "-F", "#{pane_id}"},
-		{"split-window", "-h", "-t", "moomux-foo", "-c", "/tmp/wt", "-p", "33"},
+		{"split-window", "-h", "-t", "moomux-foo", "-c", "/tmp/wt", "-l", "33%"},
 		{"select-pane", "-t", "%3"},
 		{"send-keys", "-t", "%3", "claude", "Enter"},
 	}
@@ -58,7 +58,7 @@ func TestNewSessionNoWindowName(t *testing.T) {
 		{"new-session", "-d", "-s", "moomux-foo", "-c", "/tmp/wt"},
 		{"set-option", "-t", "moomux-foo", "mouse", "on"},
 		{"list-panes", "-t", "moomux-foo", "-F", "#{pane_id}"},
-		{"split-window", "-h", "-t", "moomux-foo", "-c", "/tmp/wt", "-p", "33"},
+		{"split-window", "-h", "-t", "moomux-foo", "-c", "/tmp/wt", "-l", "33%"},
 		{"select-pane", "-t", "%3"},
 		{"send-keys", "-t", "%3", "claude", "Enter"},
 	}
@@ -80,7 +80,7 @@ func TestNewSessionNoCmd(t *testing.T) {
 		{"set-option", "-t", "moomux-foo", "set-titles-string", "#{window_name}"},
 		{"set-option", "-t", "moomux-foo", "mouse", "on"},
 		{"list-panes", "-t", "moomux-foo", "-F", "#{pane_id}"},
-		{"split-window", "-h", "-t", "moomux-foo", "-c", "/tmp/wt", "-p", "33"},
+		{"split-window", "-h", "-t", "moomux-foo", "-c", "/tmp/wt", "-l", "33%"},
 		{"select-pane", "-t", "%3"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {

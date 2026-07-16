@@ -1,4 +1,4 @@
-.PHONY: build test install run clean check-deps
+.PHONY: build test test-e2e install run clean check-deps
 
 BIN := moomux
 PREFIX ?= $(HOME)/.local
@@ -27,6 +27,11 @@ build:
 
 test:
 	go test ./... -race -count=1
+
+# Exercises the real App against real tmux/git binaries: creates actual
+# worktrees and tmux sessions under a temp dir, then tears them down.
+test-e2e: check-deps
+	go test -tags e2e ./e2e/... -count=1
 
 install: check-deps build
 	mkdir -p $(PREFIX)/bin

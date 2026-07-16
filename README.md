@@ -84,6 +84,7 @@ git clone https://github.com/erickgnclvs/moomux && cd moomux
 
 make build    # compile ./moomux
 make test     # go test ./... -race -count=1
+make test-e2e # go test -tags e2e ./e2e/... — real tmux sessions + git worktrees under a temp dir
 make install  # build + copy to $PREFIX/bin (default ~/.local/bin)
 make run      # build + run
 make clean    # remove the built binary
