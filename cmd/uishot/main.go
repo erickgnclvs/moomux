@@ -12,19 +12,24 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/erickgnclvs/moomux/internal/config"
+	"github.com/erickgnclvs/moomux/internal/gitwt"
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/tui"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
-// screens maps a scenario name to the key sequence (sent as individual
-// tea.KeyMsg) that drives a freshly created Model from the list screen into
-// that scenario. "list" needs no keys.
+// screens maps a scenario name to the key sequence that drives a freshly
+// created Model from the list screen into that scenario. "list" needs no
+// keys. Each entry is sent as a tea.KeyMsg: the named keys below map to
+// their special tea.KeyType, anything else is typed as literal runes (so a
+// whole word like "demo/Documents/foo" types into the focused input in one
+// step).
 var screens = map[string][]string{
 	"list":                   {},
 	"new-session":            {"n"},
@@ -34,10 +39,63 @@ var screens = map[string][]string{
 	"confirm-delete-project": {"D"},
 	"archived":               {"A"},
 	"help":                   {"?"},
+	// Submits the new-project form with a path under ~/Documents that isn't
+	// a git repo, landing on the "skip git" choice screen with its macOS
+	// Files-and-Folders warning (see internal/tui/tcc.go). "$HOME" is
+	// expanded to the real home dir at runtime so the warning actually
+	// triggers regardless of machine. "ctrl+u" clears each field's cwd
+	// prefill (see newProjectForm) before typing over it.
+	"project-init-choice": {"P", "ctrl+u", "demo2", "tab", "ctrl+u", "$HOME/Documents/projects", "enter"},
 	// no-projects starts from a config with zero projects, which
 	// auto-opens the add-project form (tui.New's zero-projects branch);
 	// esc backs out to the empty list to show its empty-state hint.
 	"no-projects": {"esc"},
+}
+
+var namedKeys = map[string]tea.KeyType{
+	"tab":       tea.KeyTab,
+	"shift+tab": tea.KeyShiftTab,
+	"enter":     tea.KeyEnter,
+	"esc":       tea.KeyEsc,
+	"up":        tea.KeyUp,
+	"down":      tea.KeyDown,
+	"left":      tea.KeyLeft,
+	"right":     tea.KeyRight,
+	"ctrl+u":    tea.KeyCtrlU,
+}
+
+func keyMsgFor(s string) tea.KeyMsg {
+	if kt, ok := namedKeys[s]; ok {
+		return tea.KeyMsg{Type: kt}
+	}
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+}
+
+// drive sends msg through Update, then synchronously runs any returned
+// tea.Cmd and feeds its resulting message back in — needed for scenarios
+// like project-init-choice where the form submission dispatches an async
+// backend call (AddProject) whose result message drives the mode switch.
+func drive(m *tui.Model, msg tea.Msg) {
+	_, cmd := m.Update(msg)
+	runCmd(m, cmd)
+}
+
+func runCmd(m *tui.Model, cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	msg := cmd()
+	if msg == nil {
+		return
+	}
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, c := range batch {
+			runCmd(m, c)
+		}
+		return
+	}
+	_, next := m.Update(msg)
+	runCmd(m, next)
 }
 
 type fakeBackend struct {
@@ -61,7 +119,7 @@ func (f *fakeBackend) SetSessionArchived(id string, archived bool) (session.Sess
 func (f *fakeBackend) TmuxAliveAll() map[string]bool                         { return map[string]bool{} }
 func (f *fakeBackend) Sessions() []session.Session                           { return f.sessions }
 func (f *fakeBackend) Projects() []string                                    { return nil }
-func (f *fakeBackend) AddProject(name string, p config.Project) error        { return nil }
+func (f *fakeBackend) AddProject(name string, p config.Project) error        { return gitwt.ErrNotGitRepo }
 func (f *fakeBackend) InitProjectAndAdd(name string, p config.Project) error { return nil }
 func (f *fakeBackend) AddPlainProject(name string, p config.Project) error   { return nil }
 func (f *fakeBackend) RemoveProject(name string) error                       { return nil }
@@ -127,9 +185,11 @@ func main() {
 	statusCh := make(chan watcher.Snapshot)
 	m := tui.New(cfg, be, statusCh, func() {})
 
+	home, _ := os.UserHomeDir()
+
 	m.Update(tea.WindowSizeMsg{Width: *width, Height: *height})
 	for _, k := range keys {
-		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)})
+		drive(m, keyMsgFor(strings.ReplaceAll(k, "$HOME", home)))
 	}
 
 	fmt.Print(m.View())
