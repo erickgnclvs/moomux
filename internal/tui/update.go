@@ -318,7 +318,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case key.Matches(msg, m.keys.New):
 		if len(m.projects) == 0 {
-			return m.flashError(fmt.Errorf("no projects configured — edit ~/.config/moomux/config.toml"))
+			return m.flashError(fmt.Errorf("no projects configured — press P to add one"))
 		}
 		m.mode = ModeNewForm
 		m.nameInput.SetValue("")

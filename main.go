@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -31,10 +33,35 @@ func main() {
 		fmt.Printf("moomux %s (%s) built %s\n", version, commit, date)
 		return
 	}
+	if err := checkDeps(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "moomux:", err)
 		os.Exit(1)
 	}
+}
+
+// checkDeps verifies the external binaries moomux shells out to are on
+// $PATH. `make install`/`make run` check tmux/git via check-deps, but
+// Homebrew and `go install` users bypass the Makefile entirely, so we check
+// again here and fail with an actionable message instead of a raw exec error
+// the first time a tmux/git call happens.
+func checkDeps() error {
+	var missing []string
+	for _, bin := range []string{"tmux", "git"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			missing = append(missing, bin)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"moomux: missing required dependencies: %s\n\nInstall with:\n  macOS:  brew install %s\n  Ubuntu: sudo apt install %s\n  Fedora: sudo dnf install %s",
+		strings.Join(missing, ", "), strings.Join(missing, " "), strings.Join(missing, " "), strings.Join(missing, " "),
+	)
 }
 
 func run() error {

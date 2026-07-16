@@ -7,6 +7,15 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// newFormFieldHints gives a one-line explanation for whichever field of the
+// new-session form is currently focused, so the jargon (worktree, base
+// branch) doesn't have to be memorized up front.
+var newFormFieldHints = []string{
+	0: "shown in the session list and used for the worktree folder name — leave blank to derive one from the branch",
+	1: "an existing branch to resume, or a new one to branch off the project's base branch",
+	2: "optional — shown as a clickable ticket icon next to the session",
+}
+
 func (m *Model) renderNewForm() string {
 	var b strings.Builder
 	proj := ""
@@ -26,9 +35,9 @@ func (m *Model) renderNewForm() string {
 	b.WriteString("\n\n")
 	b.WriteString(m.ticketInput.View())
 	b.WriteString("\n\n")
+	b.WriteString(hintStyle.Render(newFormFieldHints[m.newFormFocus]))
+	b.WriteString("\n\n")
 	b.WriteString(muteStyle.Render("tab to switch field   ←→ to pick agent   enter to create   esc to cancel"))
-	b.WriteString("\n")
-	b.WriteString(muteStyle.Render("(leave name blank to derive it from the branch)"))
 	return b.String()
 }
 
@@ -45,6 +54,18 @@ func (m *Model) renderNewFormAgentSelector() string {
 		}
 	}
 	return b.String()
+}
+
+// projFormFieldHints gives a one-line explanation for whichever field of the
+// add-project form is currently focused (index projFormInputCount is the
+// agent selector), so terms like "base branch" or "branch prefix" don't need
+// to be looked up elsewhere.
+var projFormFieldHints = []string{
+	0: "internal label for this project — shown in the tabs at the top",
+	1: "path to the project's git repo — prefilled from the current directory; edit it, or point elsewhere",
+	2: "the branch new session worktrees branch off of (usually main or master)",
+	3: "prepended to every new session's branch name, e.g. \"alice/\" → alice/feature-x — leave blank to skip",
+	4: "coding agent launched by default for new sessions in this project",
 }
 
 func (m *Model) renderNewProject() string {
@@ -64,6 +85,8 @@ func (m *Model) renderNewProject() string {
 		b.WriteString(dangerStyle.Render(m.projForm.err))
 		b.WriteString("\n\n")
 	}
+	b.WriteString(hintStyle.Render(projFormFieldHints[m.projForm.focus]))
+	b.WriteString("\n\n")
 	b.WriteString(muteStyle.Render("tab/↑↓ to move   ←→ to pick agent   enter to save   esc to cancel"))
 	return b.String()
 }

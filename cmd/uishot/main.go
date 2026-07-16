@@ -43,8 +43,13 @@ var screens = map[string][]string{
 	// a git repo, landing on the "skip git" choice screen with its macOS
 	// Files-and-Folders warning (see internal/tui/tcc.go). "$HOME" is
 	// expanded to the real home dir at runtime so the warning actually
-	// triggers regardless of machine.
-	"project-init-choice": {"P", "demo2", "tab", "$HOME/Documents/projects", "enter"},
+	// triggers regardless of machine. "ctrl+u" clears each field's cwd
+	// prefill (see newProjectForm) before typing over it.
+	"project-init-choice": {"P", "ctrl+u", "demo2", "tab", "ctrl+u", "$HOME/Documents/projects", "enter"},
+	// no-projects starts from a config with zero projects, which
+	// auto-opens the add-project form (tui.New's zero-projects branch);
+	// esc backs out to the empty list to show its empty-state hint.
+	"no-projects": {"esc"},
 }
 
 var namedKeys = map[string]tea.KeyType{
@@ -56,6 +61,7 @@ var namedKeys = map[string]tea.KeyType{
 	"down":      tea.KeyDown,
 	"left":      tea.KeyLeft,
 	"right":     tea.KeyRight,
+	"ctrl+u":    tea.KeyCtrlU,
 }
 
 func keyMsgFor(s string) tea.KeyMsg {
@@ -170,7 +176,12 @@ func main() {
 	}
 
 	cfg := &config.Config{Projects: map[string]config.Project{"demo": {Repo: "/tmp/demo"}}}
-	be := &fakeBackend{sessions: sampleSessions()}
+	sessions := sampleSessions()
+	if *screen == "no-projects" {
+		cfg = &config.Config{Projects: map[string]config.Project{}}
+		sessions = nil
+	}
+	be := &fakeBackend{sessions: sessions}
 	statusCh := make(chan watcher.Snapshot)
 	m := tui.New(cfg, be, statusCh, func() {})
 
