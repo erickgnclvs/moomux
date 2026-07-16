@@ -1,0 +1,39 @@
+name: Deploy
+
+# Runs after the Test workflow finishes on main (i.e. right after a PR
+# merges and the post-merge test run goes green). Computes the next semver
+# tag from conventional-commit messages since the last tag and pushes it —
+# pushing a v* tag is what release.yml's own trigger is waiting for, so this
+# is the only thing this workflow needs to do; goreleaser + homebrew publish
+# happen over there.
+on:
+  workflow_run:
+    workflows: ["Test"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute next version
+        id: version
+        run: echo "next=$(./scripts/next_version.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Tag and push
+        if: steps.version.outputs.next != ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.next }}" -m "${{ steps.version.outputs.next }}"
+          git push origin "${{ steps.version.outputs.next }}"

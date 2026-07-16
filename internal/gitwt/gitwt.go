@@ -37,7 +37,10 @@ func Init(path, defaultBranch string) error {
 	}
 	steps := [][]string{
 		{"init", "-b", defaultBranch},
-		{"commit", "--allow-empty", "-m", "initial commit"},
+		// -c user.* scopes the identity to just this commit instead of
+		// requiring the caller to have a global git identity configured
+		// (a fresh machine/container/CI runner commonly doesn't).
+		{"-c", "user.name=moomux", "-c", "user.email=moomux@localhost", "commit", "--allow-empty", "-m", "initial commit"},
 	}
 	for _, args := range steps {
 		cmd := exec.Command("git", append([]string{"-C", path}, args...)...)
