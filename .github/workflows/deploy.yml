@@ -2,10 +2,15 @@ name: Deploy
 
 # Runs after the Test workflow finishes on main (i.e. right after a PR
 # merges and the post-merge test run goes green). Computes the next semver
-# tag from conventional-commit messages since the last tag and pushes it —
-# pushing a v* tag is what release.yml's own trigger is waiting for, so this
-# is the only thing this workflow needs to do; goreleaser + homebrew publish
+# tag from conventional-commit messages since the last tag, pushes it, and
+# explicitly dispatches Release for it — goreleaser + homebrew publish
 # happen over there.
+#
+# The dispatch is explicit rather than relying on Release's own `push:
+# tags` trigger because this job pushes using the default GITHUB_TOKEN, and
+# GitHub deliberately doesn't cascade further workflow runs off of pushes
+# authenticated that way (anti-recursion rule) — so the tag push alone
+# would never start Release.
 on:
   workflow_run:
     workflows: ["Test"]
@@ -14,6 +19,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   tag:
@@ -37,3 +43,9 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "${{ steps.version.outputs.next }}" -m "${{ steps.version.outputs.next }}"
           git push origin "${{ steps.version.outputs.next }}"
+
+      - name: Trigger release
+        if: steps.version.outputs.next != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run release.yml --ref main -f tag="${{ steps.version.outputs.next }}"
