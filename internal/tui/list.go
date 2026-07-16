@@ -26,7 +26,9 @@ func (m *Model) renderList(width, height int) (string, []linkHit) {
 	var b strings.Builder
 	title := "SESSIONS"
 	empty := "  no sessions — press n to create"
-	if m.showArchived {
+	if len(m.projects) == 0 {
+		empty = "  no projects yet — press P to add one"
+	} else if m.showArchived {
 		title = "ARCHIVED"
 		empty = "  no archived sessions"
 	}
