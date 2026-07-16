@@ -18,9 +18,19 @@ type Project struct {
 	BranchPrefix string `toml:"branch_prefix,omitempty"`
 	BaseBranch   string `toml:"base_branch,omitempty"`
 	Agent        string `toml:"agent,omitempty"` // "claude" (default), "codex", "opencode"
+	// NoWorktree, when true on a "git" project, keeps every session in Repo
+	// itself instead of giving each one its own worktree/branch — the same
+	// single-folder behavior as a "plain" project, but for a real git repo.
+	NoWorktree bool `toml:"no_worktree,omitempty"`
 }
 
 func (p Project) IsPlain() bool { return p.Kind == "plain" }
+
+// UsesWorktree reports whether sessions for this project should each get
+// their own git worktree. False for plain projects and for git projects
+// that opted out via NoWorktree — both cases run every session directly in
+// p.Repo.
+func (p Project) UsesWorktree() bool { return !p.IsPlain() && !p.NoWorktree }
 
 // OrderedProjectNames returns configured project names in the user's manual
 // order (c.Order), followed by any names not yet in that order (new
