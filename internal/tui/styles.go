@@ -45,6 +45,7 @@ var (
 			Padding(1, 2)
 
 	dangerStyle = lipgloss.NewStyle().Foreground(colDanger).Bold(true)
+	warnStyle   = lipgloss.NewStyle().Foreground(colWaiting).Bold(true)
 
 	// help overlay
 	helpGroupStyle = lipgloss.NewStyle().Bold(true).Foreground(colAccent)
