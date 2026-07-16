@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-isatty"
 
 	"github.com/erickgnclvs/moomux/internal/app"
 	"github.com/erickgnclvs/moomux/internal/config"
@@ -17,6 +19,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/terminal"
 	"github.com/erickgnclvs/moomux/internal/tmux"
+	"github.com/erickgnclvs/moomux/internal/tmuxconf"
 	"github.com/erickgnclvs/moomux/internal/tui"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
@@ -64,6 +67,50 @@ func checkDeps() error {
 	)
 }
 
+// promptTmuxSetup offers, on first run only, to append moomux's recommended
+// settings (mouse support, passthrough, scrollback, 1-indexed panes — see
+// README.md) to ~/.tmux.conf. It always marks cfg.TmuxSetupAsked so this
+// never runs again regardless of the answer, and saves that immediately so a
+// crash or Ctrl-C right after can't reopen the prompt on every launch.
+// Skipped entirely on a non-interactive stdin (e.g. CI, piped input), which
+// is treated the same as declining.
+func promptTmuxSetup(cfg *config.Config, cfgPath string) {
+	path := tmuxconf.Path()
+	cfg.TmuxSetupAsked = true
+
+	if tmuxconf.AlreadyApplied(path) {
+		_ = config.Save(cfgPath, cfg)
+		return
+	}
+	if !isatty.IsTerminal(os.Stdin.Fd()) {
+		_ = config.Save(cfgPath, cfg)
+		return
+	}
+
+	fmt.Printf("moomux launches plain tmux sessions, so mouse support, clickable/scrollable\n")
+	fmt.Printf("panes, and a larger scrollback come from your own tmux config. Add this to\n%s?\n", path)
+	fmt.Print(tmuxconf.Snippet)
+	fmt.Print("Add it now? [y/N] ")
+
+	answer := ""
+	if line, err := bufio.NewReader(os.Stdin).ReadString('\n'); err == nil {
+		answer = strings.ToLower(strings.TrimSpace(line))
+	}
+
+	if answer == "y" || answer == "yes" {
+		if err := tmuxconf.Apply(path); err != nil {
+			fmt.Fprintln(os.Stderr, "moomux: could not update", path+":", err)
+		} else {
+			fmt.Println("Added — reload an open tmux session with: tmux source-file", path)
+		}
+	} else {
+		fmt.Println("Skipped. Add it later from README.md's \"Recommended tmux config\" section.")
+	}
+	fmt.Println()
+
+	_ = config.Save(cfgPath, cfg)
+}
+
 func run() error {
 	cfgPath := config.DefaultPath()
 	cfg, err := config.Load(cfgPath)
@@ -74,6 +121,10 @@ func run() error {
 	store := &session.Store{Path: session.DefaultPath()}
 	if err := store.Load(); err != nil {
 		return fmt.Errorf("load sessions: %w", err)
+	}
+
+	if !cfg.TmuxSetupAsked {
+		promptTmuxSetup(cfg, cfgPath)
 	}
 
 	home, _ := os.UserHomeDir()

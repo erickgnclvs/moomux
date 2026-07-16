@@ -36,7 +36,7 @@ These are plain tmux, not a moomux feature — see `man tmux` for the full list.
 
 ## Recommended tmux config
 
-moomux launches plain tmux sessions, so tmux settings come from your own config. Add this to `~/.tmux.conf`:
+moomux launches plain tmux sessions, so tmux settings come from your own config. The first time you run `moomux`, it offers to add the block below to `~/.tmux.conf` for you (only asked once — say no and it won't ask again). To add it yourself instead:
 
 ```tmux
 # Essential for Claude to avoid output breaking and desktop notification issues

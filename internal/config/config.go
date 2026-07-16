@@ -69,6 +69,10 @@ type Config struct {
 	// listed here (new projects, or configs written before this existed)
 	// sort alphabetically after the ordered ones.
 	Order []string `toml:"order,omitempty"`
+	// TmuxSetupAsked marks that the user has already been asked whether to
+	// add moomux's recommended ~/.tmux.conf settings, so the prompt only
+	// ever runs once regardless of their answer.
+	TmuxSetupAsked bool `toml:"tmux_setup_asked,omitempty"`
 }
 
 func Load(path string) (*Config, error) {
