@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - "v*"
+  # Deploy pushes release tags using the default GITHUB_TOKEN, and pushes
+  # authenticated that way don't trigger other workflows (a deliberate
+  # GitHub anti-recursion rule) — so the `push: tags` trigger above never
+  # fires for automated tags. Deploy calls this dispatch instead.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and release (e.g. v1.2.3)"
+        required: true
 
 permissions:
   contents: write
@@ -15,6 +24,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: actions/setup-go@v5
         with:
