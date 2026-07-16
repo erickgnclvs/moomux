@@ -154,15 +154,15 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string)
 	tmuxName := "moomux-" + name
 	branch := ""
 
-	if proj.IsPlain() {
-		wt = proj.Repo
-	} else {
+	if proj.UsesWorktree() {
 		wt = filepath.Join(a.WorktreeRoot, project, name)
+	} else {
+		wt = proj.Repo
 	}
 
 	slog.Info("create session", "project", project, "name", name, "agent", agent, "worktree", wt, "branch", existingBranch)
 
-	if !proj.IsPlain() {
+	if proj.UsesWorktree() {
 		fetchTarget := proj.BaseBranch
 		if existingBranch != "" {
 			branch = existingBranch
@@ -212,7 +212,7 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string)
 		Project:      project,
 		Name:         name,
 		Branch:       branch,
-		NewBranch:    !proj.IsPlain() && existingBranch == "",
+		NewBranch:    proj.UsesWorktree() && existingBranch == "",
 		WorktreePath: wt,
 		TmuxSession:  tmuxName,
 		CreatedAt:    time.Now().UTC(),
@@ -456,7 +456,7 @@ func (a *App) DeleteSession(id string) error {
 		}
 	}
 	if proj, ok := a.Cfg.Projects[s.Project]; ok {
-		if !proj.IsPlain() {
+		if proj.UsesWorktree() {
 			if err := a.Git.RemoveWorktree(proj.Repo, s.WorktreePath); err != nil {
 				return fmt.Errorf("remove worktree: %w", err)
 			}

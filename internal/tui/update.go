@@ -519,7 +519,7 @@ func cycleFormFocus(inputs []textinput.Model, focus *int, total int, forward boo
 }
 
 func (m *Model) updateNewProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	const totalFields = projFormInputCount + 1 // +1 for agent selector
+	const totalFields = projFormInputCount + 2 // +1 agent selector, +1 worktree toggle
 	switch {
 	case key.Matches(msg, m.keys.Cancel):
 		m.mode = ModeList
@@ -531,13 +531,21 @@ func (m *Model) updateNewProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cycleFormFocus(m.projForm.inputs, &m.projForm.focus, totalFields, false)
 		return m, nil
 	case key.Matches(msg, m.keys.Left):
-		if m.projForm.focus == projFormInputCount {
+		switch m.projForm.focus {
+		case projFormInputCount:
 			m.projForm.agentIdx = (m.projForm.agentIdx - 1 + len(agentChoices)) % len(agentChoices)
+			return m, nil
+		case projFormInputCount + 1:
+			m.projForm.noWorktree = !m.projForm.noWorktree
 			return m, nil
 		}
 	case key.Matches(msg, m.keys.Right):
-		if m.projForm.focus == projFormInputCount {
+		switch m.projForm.focus {
+		case projFormInputCount:
 			m.projForm.agentIdx = (m.projForm.agentIdx + 1) % len(agentChoices)
+			return m, nil
+		case projFormInputCount + 1:
+			m.projForm.noWorktree = !m.projForm.noWorktree
 			return m, nil
 		}
 	case key.Matches(msg, m.keys.Enter):
@@ -549,7 +557,7 @@ func (m *Model) updateNewProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			base = "main"
 		}
 		agent := agentChoices[m.projForm.agentIdx]
-		p := config.Project{Repo: repo, BaseBranch: base, BranchPrefix: prefix, Agent: agent}
+		p := config.Project{Repo: repo, BaseBranch: base, BranchPrefix: prefix, Agent: agent, NoWorktree: m.projForm.noWorktree}
 		return m, func() tea.Msg {
 			err := m.backend.AddProject(name, p)
 			return ProjectAddedMsg{Kind: "add", Name: name, Project: p, Err: err}

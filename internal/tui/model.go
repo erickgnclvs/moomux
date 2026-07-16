@@ -61,10 +61,11 @@ var agentChoices = []string{"claude", "codex", "opencode"}
 const projFormInputCount = 4 // text inputs; focus==4 is the agent selector
 
 type projectForm struct {
-	inputs   []textinput.Model
-	focus    int
-	agentIdx int // index into agentChoices
-	err      string
+	inputs     []textinput.Model
+	focus      int
+	agentIdx   int // index into agentChoices
+	noWorktree bool
+	err        string
 }
 
 type pendingProject struct {

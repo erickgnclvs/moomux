@@ -66,6 +66,7 @@ var projFormFieldHints = []string{
 	2: "the branch new session worktrees branch off of (usually main or master)",
 	3: "prepended to every new session's branch name, e.g. \"alice/\" → alice/feature-x — leave blank to skip",
 	4: "coding agent launched by default for new sessions in this project",
+	5: "off: every session runs directly in the repo folder instead of its own worktree/branch",
 }
 
 func (m *Model) renderNewProject() string {
@@ -80,6 +81,9 @@ func (m *Model) renderNewProject() string {
 	}
 	b.WriteString(muteStyle.Render(fmt.Sprintf("%-15s", "agent:")))
 	b.WriteString(m.renderAgentSelector())
+	b.WriteString("\n")
+	b.WriteString(muteStyle.Render(fmt.Sprintf("%-15s", "worktrees:")))
+	b.WriteString(m.renderWorktreeToggle())
 	b.WriteString("\n\n")
 	if m.projForm.err != "" {
 		b.WriteString(dangerStyle.Render(m.projForm.err))
@@ -87,8 +91,21 @@ func (m *Model) renderNewProject() string {
 	}
 	b.WriteString(hintStyle.Render(projFormFieldHints[m.projForm.focus]))
 	b.WriteString("\n\n")
-	b.WriteString(muteStyle.Render("tab/↑↓ to move   ←→ to pick agent   enter to save   esc to cancel"))
+	b.WriteString(muteStyle.Render("tab/↑↓ to move   ←→ to pick agent/toggle   enter to save   esc to cancel"))
 	return b.String()
+}
+
+func (m *Model) renderWorktreeToggle() string {
+	focused := m.projForm.focus == projFormInputCount+1
+	choice := "on"
+	if m.projForm.noWorktree {
+		choice = "off"
+	}
+	label := "[" + choice + "]"
+	if focused {
+		return titleStyle.Render(label)
+	}
+	return lipgloss.NewStyle().Bold(true).Render(label)
 }
 
 func (m *Model) renderAgentSelector() string {
