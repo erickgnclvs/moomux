@@ -410,9 +410,9 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Cancel):
 		m.mode = ModeList
 		return m, nil
-	case key.Matches(msg, m.keys.Tab), key.Matches(msg, m.keys.ShiftTab):
+	case key.Matches(msg, m.keys.Tab), key.Matches(msg, m.keys.ShiftTab), key.Matches(msg, m.keys.FormDown), key.Matches(msg, m.keys.FormUp):
 		m.newFormBlurAll()
-		if key.Matches(msg, m.keys.ShiftTab) {
+		if key.Matches(msg, m.keys.ShiftTab) || key.Matches(msg, m.keys.FormUp) {
 			m.newFormFocus = (m.newFormFocus - 1 + 3) % 3
 		} else {
 			m.newFormFocus = (m.newFormFocus + 1) % 3
