@@ -166,6 +166,18 @@ func TestDetectReturnsWindowOpenerForGnomeTerminal(t *testing.T) {
 	}
 }
 
+func TestDetectReturnsWindowOpenerForWindowsTerminal(t *testing.T) {
+	t.Setenv("WT_SESSION", "1")
+	got := Detect()
+	wo, ok := got.(*windowOpener)
+	if !ok {
+		t.Fatalf("expected *windowOpener, got %T", got)
+	}
+	if wo.binary != "wt.exe" {
+		t.Fatalf("expected wt.exe binary, got %s", wo.binary)
+	}
+}
+
 func TestDetectReturnsWindowOpenerForAppleTerminal(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
 	t.Setenv("__CFBundleIdentifier", "")

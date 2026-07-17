@@ -32,6 +32,24 @@ func TestWindowOpenerKittyArgs(t *testing.T) {
 	assertContains(t, fe.args, "moomux-foo")
 }
 
+func TestWindowOpenerWindowsTerminalArgs(t *testing.T) {
+	fe := &fakeExec{}
+	w := &windowOpener{binary: "wt.exe", args: windowsTerminalArgs, exec: fe.Command}
+	if _, err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
+		t.Fatal(err)
+	}
+	if fe.binary != "wt.exe" {
+		t.Fatalf("wrong binary: %s", fe.binary)
+	}
+	assertContains(t, fe.args, "new-tab")
+	assertContains(t, fe.args, "--title")
+	assertContains(t, fe.args, "feat/bar")
+	assertContains(t, fe.args, "tmux")
+	assertContains(t, fe.args, "attach")
+	assertContains(t, fe.args, "-t")
+	assertContains(t, fe.args, "moomux-foo")
+}
+
 func TestWindowOpenerGhosttyArgs(t *testing.T) {
 	fe := &fakeExec{}
 	w := &windowOpener{binary: "ghostty", args: ghosttyArgs, exec: fe.Command}

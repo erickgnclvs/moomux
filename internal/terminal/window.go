@@ -69,6 +69,15 @@ func terminalAppArgs(title, tmuxSession string) []string {
 	return []string{"-a", "Terminal"}
 }
 
+func windowsTerminalArgs(title, tmuxSession string) []string {
+	args := []string{"new-tab"}
+	if title != "" {
+		args = append(args, "--title", title)
+	}
+	args = append(args, "--", "tmux", "attach", "-t", tmuxSession)
+	return args
+}
+
 func gnomeTerminalArgs(title, tmuxSession string) []string {
 	args := []string{}
 	if title != "" {
