@@ -40,6 +40,8 @@ func Detect() TerminalOpener {
 		return &windowOpener{binary: "xterm", args: xtermArgs}
 	case os.Getenv("VTE_VERSION") != "":
 		return &windowOpener{binary: "gnome-terminal", args: gnomeTerminalArgs}
+	case os.Getenv("WT_SESSION") != "":
+		return &windowOpener{binary: "wt.exe", args: windowsTerminalArgs}
 	default:
 		return &fallbackOpener{}
 	}

@@ -77,7 +77,7 @@ git clone https://github.com/erickgnclvs/moomux && cd moomux && make install
 
 Requires `tmux`, `git`, and `claude` on `$PATH`.
 
-**Windows**: tmux has no native Windows build. Run moomux inside [WSL](https://learn.microsoft.com/windows/wsl/install) — the Linux binary above works as-is; no known terminal emulator will be detected, so moomux prints a `tmux attach -t <session>` hint instead of auto-opening a tab.
+**Windows**: tmux has no native Windows build. Run moomux inside [WSL](https://learn.microsoft.com/windows/wsl/install) — the Linux binary above works as-is. In Windows Terminal, moomux opens a new tab and attaches automatically; in any other terminal it prints a `tmux attach -t <session>` hint instead.
 
 ## Build
 
