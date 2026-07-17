@@ -339,12 +339,21 @@ func TestCreateSessionErrors(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 
-	// terminal open fails
+	// terminal open fails: the worktree and tmux session already exist by
+	// this point, so CreateSession degrades to a manual-attach hint instead
+	// of failing and stranding them outside the store.
 	noBranch(git, "termfail")
 	tm.out["list-panes -t moomux-termfail -F #{pane_id}"] = "%0\n"
 	term.err = errors.New("no terminal")
-	if _, _, err := a.CreateSession("demo", "termfail", "", "", ""); err == nil || !strings.Contains(err.Error(), "terminal open") {
+	s, hint, err := a.CreateSession("demo", "termfail", "", "", "")
+	if err != nil {
 		t.Fatalf("err = %v", err)
+	}
+	if s.TmuxSession != "moomux-termfail" {
+		t.Fatalf("session = %+v", s)
+	}
+	if !strings.Contains(hint, "tmux attach -t moomux-termfail") {
+		t.Fatalf("hint = %q", hint)
 	}
 }
 
