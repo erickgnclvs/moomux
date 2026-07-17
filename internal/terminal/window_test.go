@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"errors"
 	"testing"
 )
 
@@ -67,18 +68,94 @@ func TestWindowOpenerGhosttyArgs(t *testing.T) {
 	assertContains(t, fe.args, "moomux-foo")
 }
 
-func TestWindowOpenerWezTermArgs(t *testing.T) {
-	fe := &fakeExec{}
-	w := &windowOpener{binary: "wezterm", args: weztermArgs, exec: fe.Command}
-	if _, err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
+func TestWezTermArgsSpawnTab(t *testing.T) {
+	args := weztermArgs("feat/bar", "moomux-foo")
+	assertContains(t, args, "cli")
+	assertContains(t, args, "spawn")
+	assertContains(t, args, "--")
+	assertContains(t, args, "tmux")
+	assertContains(t, args, "moomux-foo")
+}
+
+func TestWezTermStartArgsFallback(t *testing.T) {
+	args := weztermStartArgs("feat/bar", "moomux-foo")
+	assertContains(t, args, "start")
+	assertContains(t, args, "--")
+	assertContains(t, args, "tmux")
+	assertContains(t, args, "moomux-foo")
+}
+
+func TestKittyTabArgs(t *testing.T) {
+	args := kittyTabArgs("feat/bar", "moomux-foo")
+	assertContains(t, args, "@")
+	assertContains(t, args, "launch")
+	assertContains(t, args, "--type=tab")
+	assertContains(t, args, "--tab-title=feat/bar")
+	assertContains(t, args, "tmux")
+	assertContains(t, args, "attach")
+	assertContains(t, args, "-t")
+	assertContains(t, args, "moomux-foo")
+}
+
+func TestAlacrittyMsgArgs(t *testing.T) {
+	args := alacrittyMsgArgs("feat/bar", "moomux-foo")
+	assertContains(t, args, "msg")
+	assertContains(t, args, "create-window")
+	assertContains(t, args, "-T")
+	assertContains(t, args, "feat/bar")
+	assertContains(t, args, "-e")
+	assertContains(t, args, "tmux")
+	assertContains(t, args, "moomux-foo")
+}
+
+func TestFootArgs(t *testing.T) {
+	args := footArgs("feat/bar", "moomux-foo")
+	assertContains(t, args, "--title=feat/bar")
+	assertContains(t, args, "tmux")
+	assertContains(t, args, "attach")
+	assertContains(t, args, "-t")
+	assertContains(t, args, "moomux-foo")
+}
+
+func TestRemoteOpenerUsesRemoteWhenItSucceeds(t *testing.T) {
+	remote := &fakeExec{}
+	fallback := &fakeExec{}
+	r := &remoteOpener{
+		binary:   "kitten",
+		args:     kittyTabArgs,
+		fallback: &windowOpener{binary: "kitty", args: kittyArgs, exec: fallback.Command},
+		run:      func(b string, a ...string) error { remote.binary, remote.args = b, a; return nil },
+	}
+	hint, err := r.OpenSession("moomux-foo", "feat/bar")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if fe.binary != "wezterm" {
-		t.Fatalf("wrong binary: %s", fe.binary)
+	if hint != "" {
+		t.Fatalf("unexpected hint: %q", hint)
 	}
-	assertContains(t, fe.args, "start")
-	assertContains(t, fe.args, "--")
-	assertContains(t, fe.args, "tmux")
+	if remote.binary != "kitten" {
+		t.Fatalf("remote not invoked, got binary %q", remote.binary)
+	}
+	if fallback.binary != "" {
+		t.Fatalf("fallback should not run on remote success, ran %q", fallback.binary)
+	}
+}
+
+func TestRemoteOpenerFallsBackOnError(t *testing.T) {
+	fallback := &fakeExec{}
+	r := &remoteOpener{
+		binary:   "kitten",
+		args:     kittyTabArgs,
+		fallback: &windowOpener{binary: "kitty", args: kittyArgs, exec: fallback.Command},
+		run:      func(string, ...string) error { return errors.New("remote control disabled") },
+	}
+	if _, err := r.OpenSession("moomux-foo", "feat/bar"); err != nil {
+		t.Fatal(err)
+	}
+	if fallback.binary != "kitty" {
+		t.Fatalf("expected fallback to kitty, got %q", fallback.binary)
+	}
+	assertContains(t, fallback.args, "moomux-foo")
 }
 
 func TestWindowOpenerAlacrittyArgs(t *testing.T) {
@@ -100,6 +177,7 @@ func TestWindowOpenerGnomeTerminalArgs(t *testing.T) {
 	if fe.binary != "gnome-terminal" {
 		t.Fatalf("wrong binary: %s", fe.binary)
 	}
+	assertContains(t, fe.args, "--tab")
 	assertContains(t, fe.args, "--title")
 	assertContains(t, fe.args, "feat/bar")
 	assertContains(t, fe.args, "--")
@@ -118,6 +196,7 @@ func TestWindowOpenerKonsoleArgs(t *testing.T) {
 	if fe.binary != "konsole" {
 		t.Fatalf("wrong binary: %s", fe.binary)
 	}
+	assertContains(t, fe.args, "--new-tab")
 	assertContains(t, fe.args, "--title")
 	assertContains(t, fe.args, "feat/bar")
 	assertContains(t, fe.args, "-e")

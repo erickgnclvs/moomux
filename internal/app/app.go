@@ -202,8 +202,11 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string)
 	slog.Info("tmux session created", "name", tmuxName)
 	hint, err := a.Terminal.OpenSession(tmuxName, name)
 	if err != nil {
+		// The worktree and tmux session already exist at this point;
+		// failing would strand them outside the store. Degrade to a
+		// manual-attach hint instead.
 		slog.Error("terminal open failed", "tmux_session", tmuxName, "name", name, "err", err)
-		return session.Session{}, "", fmt.Errorf("terminal open: %w", err)
+		hint = fmt.Sprintf("couldn't open a terminal (%v) — attach yourself: tmux attach -t %s", err, tmuxName)
 	}
 	slog.Info("terminal opened", "tmux_session", tmuxName)
 
@@ -309,8 +312,9 @@ func (a *App) OpenSession(id string) (string, error) {
 	a.Tmux.ConfigureTitleTracking(s.TmuxSession, s.Name)
 	hint, err := a.Terminal.OpenSession(s.TmuxSession, s.Name)
 	if err != nil {
+		// The tmux session is up regardless; give the user a way in.
 		slog.Error("Terminal.OpenSession failed", "id", id, "tmux_session", s.TmuxSession, "name", s.Name, "err", err)
-		return "", err
+		hint = fmt.Sprintf("couldn't open a terminal (%v) — attach yourself: tmux attach -t %s", err, s.TmuxSession)
 	}
 	slog.Info("session opened", "id", id)
 	return hint, nil
