@@ -7,6 +7,22 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// formHintWidth and formHintLines keep every form's hint row a fixed size —
+// wrapped to this width and padded to this many lines — so switching fields
+// (and thus hint text) never resizes the overlay box.
+const (
+	formHintWidth = 72
+	formHintLines = 2
+)
+
+func renderFormHint(text string) string {
+	rendered := hintStyle.Width(formHintWidth).Render(text)
+	for lipgloss.Height(rendered) < formHintLines {
+		rendered += "\n"
+	}
+	return rendered
+}
+
 // newFormFieldHints gives a one-line explanation for whichever field of the
 // new-session form is currently focused, so the jargon (worktree, base
 // branch) doesn't have to be memorized up front.
@@ -35,9 +51,9 @@ func (m *Model) renderNewForm() string {
 	b.WriteString("\n\n")
 	b.WriteString(m.ticketInput.View())
 	b.WriteString("\n\n")
-	b.WriteString(hintStyle.Render(newFormFieldHints[m.newFormFocus]))
+	b.WriteString(renderFormHint(newFormFieldHints[m.newFormFocus]))
 	b.WriteString("\n\n")
-	b.WriteString(muteStyle.Render("tab to switch field   ←→ to pick agent   enter to create   esc to cancel"))
+	b.WriteString(muteStyle.Render("tab/↑↓ to switch field   ←→ to pick agent   enter to create   esc to cancel"))
 	return b.String()
 }
 
@@ -89,7 +105,7 @@ func (m *Model) renderNewProject() string {
 		b.WriteString(dangerStyle.Render(m.projForm.err))
 		b.WriteString("\n\n")
 	}
-	b.WriteString(hintStyle.Render(projFormFieldHints[m.projForm.focus]))
+	b.WriteString(renderFormHint(projFormFieldHints[m.projForm.focus]))
 	b.WriteString("\n\n")
 	b.WriteString(muteStyle.Render("tab/↑↓ to move   ←→ to pick agent/toggle   enter to save   esc to cancel"))
 	return b.String()
@@ -147,7 +163,12 @@ func (m *Model) renderProjectInitChoice() string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("Path is not a git repository"))
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("path: %s\n\n", m.pending.p.Repo))
+	b.WriteString(fmt.Sprintf("path: %s\n", m.pending.p.Repo))
+	if w := tccWarning(m.pending.p.Repo); w != "" {
+		b.WriteString(warnStyle.Width(64).Render(w))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 	b.WriteString("How should moomux set this up?\n\n")
 	b.WriteString("  i  ")
 	b.WriteString(muteStyle.Render("init a new git repo here (mkdir + git init + empty commit)"))

@@ -77,6 +77,10 @@ git clone https://github.com/erickgnclvs/moomux && cd moomux && make install
 
 Requires `tmux`, `git`, and `claude` on `$PATH`.
 
+**Linux**: moomux detects the terminal it's running in from environment variables. It opens each session as a **new tab** in GNOME Terminal, Konsole, WezTerm, and kitty (kitty needs `allow_remote_control yes` + `listen_on unix:/tmp/kitty` in `kitty.conf`; without it you get a new window), and as a **new window** in Ghostty, Alacritty, foot, Tilix, and xterm. Other VTE-based terminals (Ptyxis, GNOME Console, Xfce Terminal, ...) open via `gnome-terminal` when it's installed. In anything else — including over SSH — moomux shows a `tmux attach -t <session>` hint instead of failing.
+
+**Windows**: tmux has no native Windows build. Run moomux inside [WSL](https://learn.microsoft.com/windows/wsl/install) — the Linux binary above works as-is. In Windows Terminal, moomux opens a new tab and attaches automatically; in any other terminal it prints a `tmux attach -t <session>` hint instead.
+
 ## Build
 
 ```bash
@@ -84,6 +88,7 @@ git clone https://github.com/erickgnclvs/moomux && cd moomux
 
 make build    # compile ./moomux
 make test     # go test ./... -race -count=1
+make test-e2e # go test -tags e2e ./e2e/... — real tmux sessions + git worktrees under a temp dir
 make install  # build + copy to $PREFIX/bin (default ~/.local/bin)
 make run      # build + run
 make clean    # remove the built binary

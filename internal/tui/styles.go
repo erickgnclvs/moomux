@@ -45,6 +45,7 @@ var (
 			Padding(1, 2)
 
 	dangerStyle = lipgloss.NewStyle().Foreground(colDanger).Bold(true)
+	warnStyle   = lipgloss.NewStyle().Foreground(colWaiting).Bold(true)
 
 	// hintStyle is the contextual, per-field explainer shown in forms —
 	// italic to read as a transient tip rather than a persistent label.

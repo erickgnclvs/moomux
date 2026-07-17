@@ -93,8 +93,12 @@ func (c *Client) NewSession(name, cwd, cmd, windowName string) error {
 	}
 	leftPane = strings.TrimSpace(leftPane)
 	// Split the window horizontally (side by side): the new pane takes 33% of
-	// the width, leaving the original (left) pane at roughly 2/3.
-	if _, err := c.Runner.Run("split-window", "-h", "-t", name, "-c", cwd, "-p", "33"); err != nil {
+	// the width, leaving the original (left) pane at roughly 2/3. Uses -l
+	// with a percentage rather than the older -p: -p sizes relative to an
+	// attached client's last-known size, which doesn't exist yet for a
+	// brand-new detached session (new-session -d) and fails with "size
+	// missing"; -l sizes off the window's own current dimensions instead.
+	if _, err := c.Runner.Run("split-window", "-h", "-t", name, "-c", cwd, "-l", "33%"); err != nil {
 		return err
 	}
 	// split-window moves focus to the new (right) pane; return focus to the

@@ -19,6 +19,46 @@ type fakeBackend struct {
 
 	moveProjectCalls []moveProjectCall
 	moveProjectErr   error
+
+	createCalls []createCall
+	createErr   error
+	createHint  string
+
+	deleteCalls []string
+	deleteErr   error
+
+	openCalls []string
+	openErr   error
+	openHint  string
+
+	killCalls []string
+
+	tagCalls []tagCall
+	tagErr   error
+
+	archiveCalls []archiveCall
+	archiveErr   error
+
+	addProjectCalls  []projectCall
+	addProjectErr    error
+	initProjectCalls []projectCall
+	initProjectErr   error
+	plainCalls       []projectCall
+	plainErr         error
+
+	removeProjectCalls []string
+	removeProjectErr   error
+}
+
+type createCall struct{ project, name, agent, branch, ticket string }
+type tagCall struct{ id, ticket, pr string }
+type archiveCall struct {
+	id       string
+	archived bool
+}
+type projectCall struct {
+	name string
+	p    config.Project
 }
 
 type moveSessionCall struct {
@@ -32,16 +72,55 @@ type moveProjectCall struct {
 }
 
 func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string) (session.Session, string, error) {
-	return session.Session{}, "", nil
+	f.createCalls = append(f.createCalls, createCall{project, name, agent, existingBranch, ticket})
+	if f.createErr != nil {
+		return session.Session{}, "", f.createErr
+	}
+	label := name
+	if label == "" {
+		label = existingBranch
+	}
+	s := session.Session{ID: session.MakeID(project, label), Project: project, Name: label, Agent: agent, Ticket: ticket}
+	f.sessions = append(f.sessions, s)
+	return s, f.createHint, nil
 }
-func (f *fakeBackend) OpenSession(id string) (string, error) { return "", nil }
-func (f *fakeBackend) DeleteSession(id string) error         { return nil }
-func (f *fakeBackend) KillTmux(id string) error              { return nil }
+func (f *fakeBackend) OpenSession(id string) (string, error) {
+	f.openCalls = append(f.openCalls, id)
+	return f.openHint, f.openErr
+}
+func (f *fakeBackend) DeleteSession(id string) error {
+	f.deleteCalls = append(f.deleteCalls, id)
+	return f.deleteErr
+}
+func (f *fakeBackend) KillTmux(id string) error {
+	f.killCalls = append(f.killCalls, id)
+	return nil
+}
 func (f *fakeBackend) SetSessionTags(id, ticket, pr string) (session.Session, error) {
-	return session.Session{}, nil
+	f.tagCalls = append(f.tagCalls, tagCall{id, ticket, pr})
+	if f.tagErr != nil {
+		return session.Session{}, f.tagErr
+	}
+	for i, s := range f.sessions {
+		if s.ID == id {
+			f.sessions[i].Ticket, f.sessions[i].PR = ticket, pr
+			return f.sessions[i], nil
+		}
+	}
+	return session.Session{ID: id, Ticket: ticket, PR: pr}, nil
 }
 func (f *fakeBackend) SetSessionArchived(id string, archived bool) (session.Session, error) {
-	return session.Session{}, nil
+	f.archiveCalls = append(f.archiveCalls, archiveCall{id, archived})
+	if f.archiveErr != nil {
+		return session.Session{}, f.archiveErr
+	}
+	for i, s := range f.sessions {
+		if s.ID == id {
+			f.sessions[i].Archived = archived
+			return f.sessions[i], nil
+		}
+	}
+	return session.Session{ID: id, Archived: archived}, nil
 }
 func (f *fakeBackend) MoveSession(id string, delta int) error {
 	f.moveSessionCalls = append(f.moveSessionCalls, moveSessionCall{id: id, delta: delta})
@@ -51,13 +130,25 @@ func (f *fakeBackend) MoveProject(name string, delta int) error {
 	f.moveProjectCalls = append(f.moveProjectCalls, moveProjectCall{name: name, delta: delta})
 	return f.moveProjectErr
 }
-func (f *fakeBackend) TmuxAliveAll() map[string]bool                         { return map[string]bool{} }
-func (f *fakeBackend) Sessions() []session.Session                           { return f.sessions }
-func (f *fakeBackend) Projects() []string                                    { return nil }
-func (f *fakeBackend) AddProject(name string, p config.Project) error        { return nil }
-func (f *fakeBackend) InitProjectAndAdd(name string, p config.Project) error { return nil }
-func (f *fakeBackend) AddPlainProject(name string, p config.Project) error   { return nil }
-func (f *fakeBackend) RemoveProject(name string) error                       { return nil }
+func (f *fakeBackend) TmuxAliveAll() map[string]bool { return map[string]bool{} }
+func (f *fakeBackend) Sessions() []session.Session   { return f.sessions }
+func (f *fakeBackend) Projects() []string            { return nil }
+func (f *fakeBackend) AddProject(name string, p config.Project) error {
+	f.addProjectCalls = append(f.addProjectCalls, projectCall{name, p})
+	return f.addProjectErr
+}
+func (f *fakeBackend) InitProjectAndAdd(name string, p config.Project) error {
+	f.initProjectCalls = append(f.initProjectCalls, projectCall{name, p})
+	return f.initProjectErr
+}
+func (f *fakeBackend) AddPlainProject(name string, p config.Project) error {
+	f.plainCalls = append(f.plainCalls, projectCall{name, p})
+	return f.plainErr
+}
+func (f *fakeBackend) RemoveProject(name string) error {
+	f.removeProjectCalls = append(f.removeProjectCalls, name)
+	return f.removeProjectErr
+}
 
 // TestLinkHitsResolveClicks renders a full frame and asserts that clicking
 // on the printed ticket/PR icon glyphs resolves to the session's URLs, and
