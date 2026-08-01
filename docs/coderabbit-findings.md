@@ -4,8 +4,10 @@ Generated from `coderabbit review --agent --base-commit 810bee4` (full repo vs. 
 54 findings total: 1 critical, 34 major, 19 minor. Of those, 31 are in real code and itemized below
 (18 major, 13 minor); the remaining 23 — including the 1 critical — are inside
 `docs/superpowers/plans/*.md` and `docs/superpowers/specs/*.md`, reviewing example code in
-future-design docs, not live code. They're tracked at the bottom for reference only, not queued for
-fixes or broken out by severity there.
+future-design docs, not live code, and are tracked at the bottom for reference only rather than
+broken out by severity. Four of those informational findings turned out to also describe real,
+still-open defects in the current implementation under a different description — those are fixed
+and itemized in that section too.
 
 ## Majors — real code (fixing one per commit)
 
@@ -52,4 +54,20 @@ All 18 fixed, each in its own commit with a regression test.
 Findings in `docs/superpowers/plans/2026-05-19-curral-implementation.md`,
 `docs/superpowers/plans/2026-05-21-multi-agent-support.md`,
 `docs/superpowers/plans/2026-05-19-cross-terminal-support.md`, and matching specs describe future
-design, not current behavior. Worth revisiting if/when that work is implemented; not queued here.
+design, not current behavior. Worth revisiting if/when that work is implemented; not queued here —
+except the four below, which turned out to describe defects the real implementation still has,
+just under a different description than any of the majors/minors above.
+
+- [x] `internal/tmux/tmux.go:69-79` (ex "Distinguish missing sessions from other tmux failures") —
+  `HasSession` treated every exit-1 tmux failure as "session absent", swallowing permission/protocol
+  errors too; now only "can't find session"/"error connecting to" (no server yet) count as absent.
+- [x] `internal/app/app.go:270-283` (ex "Clean up partial resources when session creation fails") —
+  a `Tmux.NewSession` failure after `git worktree add` succeeded left the worktree orphaned; now
+  removed on that failure path. (The later `Store.Put` failure is deliberately left as-is — the
+  live tmux session it left behind is a usable resource via the manual-attach hint, not an orphan.)
+- [x] `internal/terminal/terminalapp.go` (ex "Implement a real Terminal.app opener") —
+  Terminal.app opened via `open -a Terminal` with no way to pass a startup command, so it never
+  auto-attached; now uses AppleScript's `do script`, same mechanism as the iTerm2 opener.
+- [x] `internal/app/app.go:71-91` (ex "Make OpenCode port allocation actually unique") —
+  `nextOpenCodePort` only reasoned about ports recorded in the session store, never checking whether
+  the OS actually had the candidate port free; now binds-and-releases to confirm before returning it.
