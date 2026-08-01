@@ -14,13 +14,17 @@ type fakeRunner struct {
 	calls  [][]string
 	out    map[string]string
 	failOn map[string]bool
+	// failOut supplies the combined-output text for a failOn call, so tests
+	// can simulate real tmux stderr text (e.g. "can't find session: x" vs.
+	// an unrelated failure like permission-denied).
+	failOut map[string]string
 }
 
 func (f *fakeRunner) Run(args ...string) (string, error) {
 	key := strings.Join(args, " ")
 	f.calls = append(f.calls, append([]string(nil), args...))
 	if f.failOn[key] {
-		return "", exitErr{code: 1}
+		return f.failOut[key], exitErr{code: 1}
 	}
 	return f.out[key], nil
 }
@@ -172,11 +176,43 @@ func TestHasSessionPresent(t *testing.T) {
 }
 
 func TestHasSessionAbsent(t *testing.T) {
-	fr := &fakeRunner{failOn: map[string]bool{"has-session -t =moomux-foo": true}}
+	fr := &fakeRunner{
+		failOn:  map[string]bool{"has-session -t =moomux-foo": true},
+		failOut: map[string]string{"has-session -t =moomux-foo": "can't find session: moomux-foo\n"},
+	}
 	c := &Client{Runner: fr}
 	ok, err := c.HasSession("moomux-foo")
 	if err != nil || ok {
 		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+}
+
+func TestHasSessionNoServerYet(t *testing.T) {
+	fr := &fakeRunner{
+		failOn:  map[string]bool{"has-session -t =moomux-foo": true},
+		failOut: map[string]string{"has-session -t =moomux-foo": "error connecting to /tmp/tmux-501/default (No such file or directory)\n"},
+	}
+	c := &Client{Runner: fr}
+	ok, err := c.HasSession("moomux-foo")
+	if err != nil || ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+}
+
+// TestHasSessionOtherFailurePropagates guards against treating every
+// exit-1 tmux failure as "session absent": a permission/protocol error that
+// isn't actually "no such session" must surface as an error, or callers
+// (e.g. OpenSession's stale-cwd recreate check) mistake a broken tmux
+// server for a session that simply doesn't exist yet.
+func TestHasSessionOtherFailurePropagates(t *testing.T) {
+	fr := &fakeRunner{
+		failOn:  map[string]bool{"has-session -t =moomux-foo": true},
+		failOut: map[string]string{"has-session -t =moomux-foo": "protocols do not match\n"},
+	}
+	c := &Client{Runner: fr}
+	ok, err := c.HasSession("moomux-foo")
+	if err == nil {
+		t.Fatalf("expected error to propagate, got ok=%v err=%v", ok, err)
 	}
 }
 

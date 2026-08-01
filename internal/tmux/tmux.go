@@ -68,12 +68,17 @@ func exactWindow(name string) string { return "=" + name + ":" }
 
 // HasSession reports whether tmux session `name` exists.
 func (c *Client) HasSession(name string) (bool, error) {
-	_, err := c.Runner.Run("has-session", "-t", Exact(name))
+	out, err := c.Runner.Run("has-session", "-t", Exact(name))
 	if err == nil {
 		return true, nil
 	}
 	var exitErr interface{ ExitCode() int }
-	if errors.As(err, &exitErr) {
+	// tmux exits 1 both for "no such session" (or no server running yet,
+	// the normal cold-start case) and for unrelated failures (socket
+	// permission denied, protocol mismatch, ...). Only the former two are a
+	// real "false" — anything else must surface as an error, or callers
+	// mistake a broken tmux for an absent session.
+	if errors.As(err, &exitErr) && (strings.Contains(out, "can't find session") || strings.Contains(out, "error connecting to")) {
 		return false, nil
 	}
 	return false, err

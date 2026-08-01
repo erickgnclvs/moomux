@@ -48,7 +48,12 @@ func (f *fakeTmuxRunner) Run(args ...string) (string, error) {
 	key := strings.Join(args, " ")
 	f.calls = append(f.calls, append([]string(nil), args...))
 	if f.failOn[key] {
-		return "", exitErr{}
+		// Output text matters for has-session: HasSession only treats
+		// "can't find session"/"error connecting to" as a real absence, not
+		// every exit-1 failure. Every failOn in this file simulates a
+		// not-yet-created session, so this text keeps that behavior; it's a
+		// no-op for other commands, which don't inspect the output text.
+		return "can't find session: " + key, exitErr{}
 	}
 	return f.out[key], nil
 }
