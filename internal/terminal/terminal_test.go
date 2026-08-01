@@ -293,19 +293,15 @@ func TestDetectReturnsWindowOpenerForWindowsTerminal(t *testing.T) {
 	}
 }
 
-func TestDetectReturnsWindowOpenerForAppleTerminal(t *testing.T) {
+func TestDetectReturnsTerminalAppClientForAppleTerminal(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
 	t.Setenv("__CFBundleIdentifier", "")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("WEZTERM_PANE", "")
 	t.Setenv("TERM", "")
 	got := Detect()
-	wo, ok := got.(*windowOpener)
-	if !ok {
-		t.Fatalf("expected *windowOpener, got %T", got)
-	}
-	if wo.binary != "open" {
-		t.Fatalf("expected open binary, got %s", wo.binary)
+	if _, ok := got.(*terminalAppClient); !ok {
+		t.Fatalf("expected *terminalAppClient, got %T", got)
 	}
 }
 

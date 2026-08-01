@@ -59,7 +59,7 @@ type terminalMatch struct {
 
 var terminalMatches = []terminalMatch{
 	{[]string{"iTerm2"}, func() TerminalOpener { return newITermClient() }},
-	{[]string{"Terminal"}, func() TerminalOpener { return &windowOpener{binary: "open", args: terminalAppArgs, manualAttach: true} }},
+	{[]string{"Terminal"}, func() TerminalOpener { return newTerminalAppClient() }},
 	{[]string{"kitty"}, func() TerminalOpener { return &windowOpener{binary: "kitty", args: kittyArgs} }},
 	{[]string{"ghostty"}, func() TerminalOpener { return &windowOpener{binary: "ghostty", args: ghosttyArgs} }},
 	{[]string{"wezterm-gui", "wezterm"}, func() TerminalOpener { return &windowOpener{binary: "wezterm", args: weztermStartArgs} }},

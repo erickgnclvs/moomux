@@ -33,18 +33,6 @@ func TestWindowOpenerKittyArgs(t *testing.T) {
 	assertContains(t, fe.args, "=moomux-foo")
 }
 
-func TestWindowOpenerTerminalAppReturnsManualAttachHint(t *testing.T) {
-	fe := &fakeExec{}
-	w := &windowOpener{binary: "open", args: terminalAppArgs, exec: fe.Command, manualAttach: true}
-	hint, err := w.OpenSession("moomux-foo", "feat/bar")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if hint == "" {
-		t.Fatal("expected a non-empty manual-attach hint, got none")
-	}
-}
-
 func TestWindowOpenerWindowsTerminalArgs(t *testing.T) {
 	fe := &fakeExec{}
 	w := &windowOpener{binary: "wt.exe", args: windowsTerminalArgs, exec: fe.Command}

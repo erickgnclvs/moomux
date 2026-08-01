@@ -27,9 +27,8 @@ func TestDetectFromProcessTreeFindsITerm(t *testing.T) {
 func TestDetectFromProcessTreeFindsAppleTerminal(t *testing.T) {
 	withAttachedClient(t, []string{"zsh", "login", "Terminal"})
 	got := detectFromProcessTree()
-	wo, ok := got.(*windowOpener)
-	if !ok || wo.binary != "open" {
-		t.Fatalf("expected windowOpener{open}, got %#v", got)
+	if _, ok := got.(*terminalAppClient); !ok {
+		t.Fatalf("expected *terminalAppClient, got %#v", got)
 	}
 }
 

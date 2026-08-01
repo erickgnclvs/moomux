@@ -13,23 +13,14 @@ type windowOpener struct {
 	binary string
 	args   argBuilder
 	exec   func(binary string, args ...string) error
-	// manualAttach is set for openers whose args builder (e.g.
-	// terminalAppArgs) can't pass a startup command, so the new window
-	// won't auto-attach — OpenSession returns a hint telling the user to
-	// attach manually instead of silently leaving them at a bare shell.
-	manualAttach bool
 }
 
 func (w *windowOpener) OpenSession(tmuxSession, title string) (string, error) {
 	// "=" pins tmux's -t to an exact session-name match; a bare name falls
 	// back to prefix matching and can attach to the wrong session.
 	args := w.args(title, "="+tmuxSession)
-	hint := ""
-	if w.manualAttach {
-		hint = "opened Terminal.app — attach manually: tmux attach -t " + tmuxSession
-	}
 	if w.exec != nil {
-		return hint, w.exec(w.binary, args...)
+		return "", w.exec(w.binary, args...)
 	}
 	cmd := exec.Command(w.binary, args...)
 	// When moomux itself runs inside tmux (auto_tmux), the spawned
@@ -52,7 +43,7 @@ func (w *windowOpener) OpenSession(tmuxSession, title string) (string, error) {
 	// Reap the child once it exits; without this every opened window/tab
 	// leaves a zombie for the lifetime of the long-running TUI process.
 	go func() { _ = cmd.Wait() }()
-	return hint, nil
+	return "", nil
 }
 
 // envWithoutTmux returns env minus the TMUX/TMUX_PANE variables.
@@ -137,13 +128,6 @@ func alacrittyArgs(title, tmuxSession string) []string {
 	}
 	args = append(args, "-e", "tmux", "attach", "-t", tmuxSession)
 	return args
-}
-
-// terminalAppArgs opens Terminal.app via `open`. It cannot pass a startup
-// command through this mechanism, so the new window will not auto-attach to
-// the tmux session. Users will need to run the attach command manually.
-func terminalAppArgs(title, tmuxSession string) []string {
-	return []string{"-a", "Terminal"}
 }
 
 func windowsTerminalArgs(title, tmuxSession string) []string {
