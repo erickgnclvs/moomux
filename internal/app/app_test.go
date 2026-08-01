@@ -470,11 +470,24 @@ func TestCreateSessionErrors(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 
-	// tmux new-session fails
+	// tmux new-session fails: the worktree git just created is useless
+	// without a session to run it in, so CreateSession must clean it up
+	// rather than leaving an orphaned checkout behind.
 	noBranch(git, "tmuxfail")
-	tm.failOn["new-session -d -s "+TmuxSessionName("demo:tmuxfail", "tmuxfail")+" -c "+filepath.Join(a.WorktreeRoot, "demo", "tmuxfail")+" -n tmuxfail"] = true
+	tmuxfailWt := filepath.Join(a.WorktreeRoot, "demo", "tmuxfail")
+	tm.failOn["new-session -d -s "+TmuxSessionName("demo:tmuxfail", "tmuxfail")+" -c "+tmuxfailWt+" -n tmuxfail"] = true
 	if _, _, err := a.CreateSession("demo", "tmuxfail", "", "", ""); err == nil || !strings.Contains(err.Error(), "tmux new-session") {
 		t.Fatalf("err = %v", err)
+	}
+	wantRemove := "@/repo worktree remove " + tmuxfailWt + " --force"
+	found := false
+	for _, c := range git.calls {
+		if strings.Join(c, " ") == wantRemove {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no worktree cleanup after tmux failure; calls = %v", git.calls)
 	}
 
 	// terminal open fails: the worktree and tmux session already exist by

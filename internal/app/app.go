@@ -270,6 +270,16 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string)
 
 	if err := a.Tmux.NewSession(tmuxName, wt, cmd, name); err != nil {
 		slog.Error("tmux new-session failed", "name", tmuxName, "cwd", wt, "err", err)
+		// The worktree we just added is useless without a session to run it
+		// in — unlike the Terminal/Store.Put failures below, where a live
+		// tmux session already makes the worktree independently usable via
+		// manual attach, nothing here is salvageable, so clean it up rather
+		// than leaving an orphaned checkout behind.
+		if proj.UsesWorktree() {
+			if rerr := a.Git.RemoveWorktree(proj.Repo, wt); rerr != nil {
+				slog.Error("cleanup: remove worktree after tmux failure", "path", wt, "err", rerr)
+			}
+		}
 		return session.Session{}, "", fmt.Errorf("tmux new-session: %w", err)
 	}
 	slog.Info("tmux session created", "name", tmuxName)
