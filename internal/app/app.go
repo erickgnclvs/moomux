@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,7 +76,21 @@ func (a *App) nextOpenCodePort() int {
 			port = s.AgentPort + 1
 		}
 	}
-	return port
+	// The store only knows about ports moomux itself handed out before;
+	// something else (a manually started opencode, a leftover process from
+	// a deleted session) can already be bound to the next candidate, so
+	// confirm it's actually free before returning it. Binding then
+	// immediately releasing is a check-then-use race in theory, but this is
+	// a single-user local dev tool — an unrelated process grabbing the same
+	// port in that instant is not worth locking for.
+	for {
+		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+		if err == nil {
+			_ = ln.Close()
+			return port
+		}
+		port++
+	}
 }
 
 func (a *App) Projects() []string { return a.Cfg.OrderedProjectNames() }

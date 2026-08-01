@@ -2,6 +2,8 @@ package app
 
 import (
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -211,6 +213,36 @@ func TestNextOpenCodePort(t *testing.T) {
 	_ = a.Store.Put(session.Session{ID: "demo:z", Project: "demo", Name: "z", Agent: "codex", AgentPort: 4102})
 	if got := a.nextOpenCodePort(); got != 4103 {
 		t.Fatalf("retained port: got %d, want 4103", got)
+	}
+}
+
+// TestNextOpenCodePortSkipsPortInUse guards against handing out a port that
+// something outside the session store already has bound — a manually
+// started opencode process, or a leftover from a deleted session — which
+// the store-only bookkeeping in nextOpenCodePort can't see on its own.
+func TestNextOpenCodePortSkipsPortInUse(t *testing.T) {
+	a, _, _, _ := newTestApp(t, gitProject("/repo"))
+
+	probe, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Skip("no free port available to probe with")
+	}
+	freePort := probe.Addr().(*net.TCPAddr).Port
+	if err := probe.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Force nextOpenCodePort's next candidate to be freePort, then occupy it
+	// for real so the fix has something to detect and skip past.
+	_ = a.Store.Put(session.Session{ID: "demo:x", Project: "demo", Name: "x", Agent: "opencode", AgentPort: freePort - 1})
+	occupied, err := net.Listen("tcp", fmt.Sprintf(":%d", freePort))
+	if err != nil {
+		t.Skip("could not occupy the probed port")
+	}
+	defer occupied.Close()
+
+	if got := a.nextOpenCodePort(); got == freePort {
+		t.Fatalf("returned a port already in use: %d", got)
 	}
 }
 
