@@ -299,6 +299,8 @@ func TestDetectReturnsTerminalAppClientForAppleTerminal(t *testing.T) {
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("WEZTERM_PANE", "")
 	t.Setenv("TERM", "")
+	t.Setenv("GHOSTTY_RESOURCES_DIR", "")
+	t.Setenv("ALACRITTY_WINDOW_ID", "")
 	got := Detect()
 	if _, ok := got.(*terminalAppClient); !ok {
 		t.Fatalf("expected *terminalAppClient, got %T", got)
