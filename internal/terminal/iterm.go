@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"strings"
 )
 
 type scriptRunner interface {
@@ -46,11 +47,23 @@ tell application "iTerm2"
 			write text "tmux attach -t '%s'"
 		end tell
 	end tell
-end tell`, setName, escapeAppleScript("="+tmuxSession))
+end tell`, setName, escapeAppleScript(escapeShellSingleQuotes("="+tmuxSession)))
 	slog.Debug("iterm: running applescript", "tmux_session", tmuxSession, "title", title, "set_name", setName != "", "script", script)
 	out, err := c.runner.Run(script)
 	slog.Debug("iterm: applescript result", "out", out, "err", err)
 	return "", err
+}
+
+// escapeShellSingleQuotes applies the standard close-quote/escaped-quote/
+// reopen-quote trick so a value can be safely interpolated inside a POSIX
+// single-quoted shell string. Must run before escapeAppleScript, since the
+// backslash it introduces then needs doubling for the AppleScript string
+// container — tmuxSession is currently always moomux-<name>-<hash> (never
+// attacker input, per sanitizeName), but write text/do script hand this
+// straight to a shell, so an embedded "'" would otherwise break out of the
+// quoted attach target.
+func escapeShellSingleQuotes(s string) string {
+	return strings.ReplaceAll(s, "'", `'\''`)
 }
 
 func escapeAppleScript(s string) string {

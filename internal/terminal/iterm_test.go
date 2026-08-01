@@ -57,6 +57,25 @@ func TestITermOpenSessionOmitsTitleWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestITermOpenSessionEscapesSingleQuoteInTmuxSession(t *testing.T) {
+	// tmuxSession is currently always moomux-<name>-<hash> (never
+	// attacker-controlled, per sanitizeName), but write text hands this
+	// straight to a shell inside a single-quoted string — an embedded "'"
+	// would otherwise close that string early and let anything after it run
+	// as a separate shell command.
+	fr := &fakeRunner{}
+	c := &itermClient{runner: fr}
+	if _, err := c.OpenSession("moomux-foo'; touch pwned; echo '", "bar"); err != nil {
+		t.Fatal(err)
+	}
+	// Expect the standard close/escape/reopen trick, doubled for AppleScript's
+	// own backslash escaping: '\\'' in the source decodes to '\'' at runtime,
+	// once per embedded single quote in the input (two, here).
+	if got := strings.Count(fr.script, `'\\''`); got != 2 {
+		t.Fatalf("expected 2 escaped single quotes, got %d: %s", got, fr.script)
+	}
+}
+
 func TestITermEscapesAppleScript(t *testing.T) {
 	fr := &fakeRunner{}
 	c := &itermClient{runner: fr}

@@ -36,6 +36,20 @@ func TestTerminalAppOpenSessionOmitsTitleWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestTerminalAppOpenSessionEscapesSingleQuoteInTmuxSession(t *testing.T) {
+	// Same concern as iterm.go: do script hands this straight to a shell
+	// inside a single-quoted string, so an embedded "'" must not be able to
+	// close that string early.
+	fr := &fakeRunner{}
+	c := &terminalAppClient{runner: fr}
+	if _, err := c.OpenSession("moomux-foo'; touch pwned; echo '", "bar"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(fr.script, `'\\''`); got != 2 {
+		t.Fatalf("expected 2 escaped single quotes, got %d: %s", got, fr.script)
+	}
+}
+
 func TestTerminalAppEscapesAppleScript(t *testing.T) {
 	fr := &fakeRunner{}
 	c := &terminalAppClient{runner: fr}

@@ -27,7 +27,7 @@ func (c *terminalAppClient) OpenSession(tmuxSession, title string) (string, erro
 tell application "Terminal"
 	activate
 	set win to do script "tmux attach -t '%s'"%s
-end tell`, escapeAppleScript("="+tmuxSession), setTitle)
+end tell`, escapeAppleScript(escapeShellSingleQuotes("="+tmuxSession)), setTitle)
 	_, err := c.runner.Run(script)
 	return "", err
 }
