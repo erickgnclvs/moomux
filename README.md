@@ -175,6 +175,10 @@ Keys: `?` help (full command list) · `n` new · `enter` open · `x` park · `d`
 
 Press `?` at any time on the list screen to open a command palette with every keybinding grouped by category, so you don't have to memorize the footer.
 
+### Tab titles
+
+moomux drives each session's terminal tab title through its tmux window name: it enables tmux's `set-titles`/`set-titles-string` so the terminal continuously mirrors `#{window_name}`, and prefixes that name with a status glyph (`●` working, `⚠` needs input, `✓` done) as the session's state changes. Renaming the tmux window directly (`Ctrl-B ,`) sticks — status updates only swap the glyph and leave the rest of the name alone. Renaming the tab from the terminal's own UI (e.g. iTerm2's "Edit Tab Title") does not stick: tmux has no visibility into that rename and keeps re-pushing its own window name over it, independent of session status.
+
 ### Parking a session from inside Claude or Codex
 
 Every Claude Code or Codex session moomux opens gets a personal `/kill` command installed automatically (`~/.claude/commands/kill.md`, or `~/.codex/prompts/kill.md`) — say `/kill` in the chat itself and it parks that session (stops its tmux session, closes its terminal tab) without switching back to the moomux list. Despite the name it's the same as pressing `x`, not `d`: the worktree, branch, and moomux list entry are kept, so the session can be reopened later.
