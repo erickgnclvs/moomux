@@ -25,7 +25,8 @@ type linkHit struct {
 
 // rowHit records a session row's line within the rendered list (local
 // coordinates, like linkHit), so a mouse click landing anywhere on the row —
-// not just on a ticket/PR icon — can select and open that session.
+// not just on a ticket/PR icon — can select that session (or, in
+// ModeMultiView, pick that row's project as the focused panel).
 type rowHit struct {
 	sessionID string
 	line      int

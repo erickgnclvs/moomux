@@ -455,11 +455,12 @@ func TestLinkClickOverSSHCopiesInsteadOfOpening(t *testing.T) {
 	}
 }
 
-// TestSessionRowClickSelectsAndOpens asserts that a left click anywhere on a
-// session's row (not just its ticket/PR icons) both moves the cursor to that
-// session and opens it — mobile clients tapping a row have no keyboard
-// cursor to line up with first, so the tap needs to do both in one motion.
-func TestSessionRowClickSelectsAndOpens(t *testing.T) {
+// TestSessionRowClickSelectsWithoutOpening asserts that a left click
+// anywhere on a session's row (not just its ticket/PR icons) moves the
+// cursor to that session but does NOT open/attach it — a stray click used to
+// launch a tmux attach unexpectedly, which is disruptive enough that
+// tap-to-open was removed in favor of tap-to-select only.
+func TestSessionRowClickSelectsWithoutOpening(t *testing.T) {
 	cfg := &config.Config{Projects: map[string]config.Project{"demo": {Repo: "/tmp/demo"}}}
 	be := &fakeBackend{
 		sessions: []session.Session{
@@ -471,7 +472,8 @@ func TestSessionRowClickSelectsAndOpens(t *testing.T) {
 	statusCh := make(chan watcher.Snapshot)
 	m := New(cfg, be, statusCh, func() {})
 	m.width, m.height = 80, 24
-	m.View() // populate m.rowHits
+	m.mode = ModeList // exercising the plain-list click path, not multi-view's
+	m.View()          // populate m.rowHits
 
 	var hit resolvedRowHit
 	for _, h := range m.rowHits {
@@ -488,8 +490,8 @@ func TestSessionRowClickSelectsAndOpens(t *testing.T) {
 	if m.cursor != 1 {
 		t.Errorf("cursor = %d, want 1 (demo:two)", m.cursor)
 	}
-	if len(be.openCalls) != 1 || be.openCalls[0] != "demo:two" {
-		t.Errorf("openCalls = %v, want [demo:two]", be.openCalls)
+	if len(be.openCalls) != 0 {
+		t.Errorf("openCalls = %v, want none (row click no longer opens)", be.openCalls)
 	}
 }
 
