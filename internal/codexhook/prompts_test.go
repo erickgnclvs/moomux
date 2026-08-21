@@ -3,6 +3,7 @@ package codexhook
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -155,5 +156,67 @@ func TestEnsureSpawnPromptIsIdempotent(t *testing.T) {
 	}
 	if changed {
 		t.Fatal("second install should be a no-op")
+	}
+}
+
+func TestEnsureCommandsInstallCurrentSkillsAndLegacyPrompts(t *testing.T) {
+	home := t.TempDir()
+	tests := []struct {
+		name    string
+		install func(string) (bool, error)
+	}{
+		{"kill", EnsureKillCommand},
+		{"tag", EnsureTagCommand},
+		{"spawn", EnsureSpawnCommand},
+		{"reseed", EnsureReseedCommand},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			changed, err := tt.install(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !changed {
+				t.Fatal("expected changed=true on first install")
+			}
+
+			skillPath := filepath.Join(home, ".agents", "skills", tt.name, "SKILL.md")
+			data, err := os.ReadFile(skillPath)
+			if err != nil {
+				t.Fatalf("expected current Codex skill at %s: %v", skillPath, err)
+			}
+			if !strings.Contains(string(data), "name: "+tt.name+"\n") {
+				t.Fatalf("skill has wrong or missing name frontmatter: %s", data)
+			}
+			if !strings.Contains(string(data), "description: ") {
+				t.Fatalf("skill is missing description frontmatter: %s", data)
+			}
+			if tt.name == "spawn" && strings.Contains(string(data), "$ARGUMENTS") {
+				t.Fatalf("spawn skill must use invocation input, not the legacy $ARGUMENTS placeholder: %s", data)
+			}
+			if !strings.Contains(string(data), "require_escalated") {
+				t.Fatalf("%s skill must escape the sandbox for moomux's shared state: %s", tt.name, data)
+			}
+			if !strings.Contains(string(data), "moomux "+tt.name) && tt.name != "kill" {
+				t.Fatalf("%s skill must invoke the corresponding moomux command: %s", tt.name, data)
+			}
+			if tt.name == "kill" && !strings.Contains(string(data), "moomux park") {
+				t.Fatalf("kill skill must invoke moomux park: %s", data)
+			}
+
+			promptPath := filepath.Join(home, ".codex", "prompts", tt.name+".md")
+			if _, err := os.Stat(promptPath); err != nil {
+				t.Fatalf("expected legacy Codex prompt at %s: %v", promptPath, err)
+			}
+
+			changed, err = tt.install(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if changed {
+				t.Fatal("second install should be a no-op")
+			}
+		})
 	}
 }

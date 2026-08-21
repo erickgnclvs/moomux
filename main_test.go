@@ -85,6 +85,28 @@ func TestCurrentSessionPrefersTmuxOverStaleCwd(t *testing.T) {
 	}
 }
 
+// TestParkHelperCommandIsDetached reproduces the Codex /kill failure where
+// closing the iTerm tab killed `moomux park` before it reached tmux. The
+// helper must have its own session so it survives closing the invoking tab.
+func TestParkHelperCommandIsDetached(t *testing.T) {
+	cmd := newParkHelperCommand("/tmp/moomux", "demo:a")
+	if cmd.Path != "/tmp/moomux" {
+		t.Fatalf("helper path = %q, want /tmp/moomux", cmd.Path)
+	}
+	wantArgs := []string{"/tmp/moomux", "__park-detached", "demo:a"}
+	if len(cmd.Args) != len(wantArgs) {
+		t.Fatalf("helper args = %q, want %q", cmd.Args, wantArgs)
+	}
+	for i := range wantArgs {
+		if cmd.Args[i] != wantArgs[i] {
+			t.Fatalf("helper args = %q, want %q", cmd.Args, wantArgs)
+		}
+	}
+	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setsid {
+		t.Fatal("park helper must start in a detached process session")
+	}
+}
+
 // TestOrNone covers the formatting `moomux tag` (called with neither flag
 // set) relies on to report an untagged field as "none" rather than a blank,
 // easy-to-miss line.

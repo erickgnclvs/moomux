@@ -102,6 +102,7 @@ var screens = map[string][]string{
 	"delete-project-blocked": {"D"},
 	"archived":               {"A"},
 	"help":                   {"?"},
+	"help-bottom":            {"?"},
 	// needs-input has no keys of its own; renderScreen feeds it a
 	// StatusTickMsg marking the first sample session watcher.NeedsInput.
 	"needs-input": {},
@@ -155,6 +156,7 @@ var namedKeys = map[string]tea.KeyType{
 	"down":      tea.KeyDown,
 	"left":      tea.KeyLeft,
 	"right":     tea.KeyRight,
+	"pgdown":    tea.KeyPgDown,
 	"ctrl+u":    tea.KeyCtrlU,
 	"ctrl+j":    tea.KeyCtrlJ,
 }
@@ -512,6 +514,15 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 			continue
 		}
 		drive(m, msg)
+	}
+	if screenName == "help-bottom" {
+		// The overlay viewport gets its content and height on the first View.
+		// Initialize it before paging down so narrow screenshots can inspect
+		// the command tips at the bottom rather than only the list's first rows.
+		m.View()
+		for range 5 {
+			drive(m, keyMsgFor("pgdown"))
+		}
 	}
 
 	return m.View(), nil

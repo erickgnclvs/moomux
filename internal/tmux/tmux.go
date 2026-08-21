@@ -4,6 +4,7 @@ package tmux
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -68,15 +69,20 @@ func exactWindow(name string) string { return "=" + name + ":" }
 
 // HasSession reports whether tmux session `name` exists.
 func (c *Client) HasSession(name string) (bool, error) {
-	_, err := c.Runner.Run("has-session", "-t", Exact(name))
+	out, err := c.Runner.Run("has-session", "-t", Exact(name))
 	if err == nil {
 		return true, nil
 	}
 	var exitErr interface{ ExitCode() int }
-	if errors.As(err, &exitErr) {
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		return false, err
+	}
+	diagnostic := strings.TrimSpace(out)
+	lower := strings.ToLower(diagnostic)
+	if diagnostic == "" || strings.Contains(lower, "can't find session") || strings.Contains(lower, "no server running") {
 		return false, nil
 	}
-	return false, err
+	return false, fmt.Errorf("%s: %w", diagnostic, err)
 }
 
 // LiveSessions returns the set of currently running tmux session names via a
