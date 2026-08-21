@@ -39,6 +39,7 @@ type KeyMap struct {
 	ProjectPicker  key.Binding
 	Settings       key.Binding
 	Search         key.Binding
+	Update         key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -107,5 +108,8 @@ func DefaultKeyMap() KeyMap {
 		// straight into a text field, so it searches every project's
 		// sessions at once rather than needing its own scoping key.
 		Search: key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "find session")),
+		// Only does anything once UpdateVersion is set (a newer release was
+		// found) — see updateList's Update case.
+		Update: key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "update & relaunch")),
 	}
 }

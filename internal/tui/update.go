@@ -37,6 +37,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case UpdateCheckTickMsg:
 		return m, tea.Batch(checkUpdateCmd(m.Version), tickUpdateCheck())
 
+	case UpdateAppliedMsg:
+		m.updating = false
+		if msg.Err != nil {
+			return m.flashError(msg.Err)
+		}
+		// main() checks Relaunch once p.Run() returns and execs the
+		// freshly-installed binary; can't exec here directly since bubbletea
+		// still owns the terminal (raw mode, alt screen) at this point.
+		m.Relaunch = true
+		return m, tea.Quit
+
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.resizeFormInputs()
@@ -704,6 +715,17 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.sessions) > 0 {
 			return m, m.openSessionCmd(m.sessions[m.cursor].ID)
 		}
+	case key.Matches(msg, m.keys.Update):
+		if m.UpdateVersion == "" {
+			m.setFlash("info", "already up to date")
+			return m, nil
+		}
+		if m.updating {
+			return m, nil
+		}
+		m.updating = true
+		m.setFlash("info", "updating to v"+m.UpdateVersion+"…")
+		return m, runUpdateCmd()
 	}
 	return m, nil
 }

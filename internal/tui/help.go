@@ -86,6 +86,7 @@ func (m *Model) helpGroups() []helpGroup {
 				{"q", "quit"},
 				{"r", "refresh"},
 				{"s", "settings (theme, sort mode, auto-tmux, auto-submit)"},
+				{"u", "update & relaunch (when a new version is available)"},
 			},
 		},
 	}

@@ -636,7 +636,7 @@ func (m *Model) versionCandidates() []string {
 		return []string{"v" + m.Version}
 	}
 	return []string{
-		"v" + m.Version + " → v" + m.UpdateVersion + " (brew update && brew upgrade moomux)",
+		"v" + m.Version + " → v" + m.UpdateVersion + " (u to update)",
 		"v" + m.Version + " → v" + m.UpdateVersion,
 		"v" + m.Version,
 	}

@@ -521,7 +521,7 @@ func TestFooterUpdateNoticeFallsBackAsWidthShrinks(t *testing.T) {
 	m.Version = "0.5.3"
 	m.UpdateVersion = "0.5.4"
 
-	full := "v0.5.3 → v0.5.4 (brew update && brew upgrade moomux)"
+	full := "v0.5.3 → v0.5.4 (u to update)"
 	short := "v0.5.3 → v0.5.4"
 	plain := "v0.5.3"
 
@@ -530,8 +530,8 @@ func TestFooterUpdateNoticeFallsBackAsWidthShrinks(t *testing.T) {
 		t.Fatalf("wide footer = %q, want it to contain %q", got, full)
 	}
 	// Too narrow for the instruction, wide enough for the arrow form.
-	if got := m.hintRowWithVersion("? help", lipgloss.Width("? help")+lipgloss.Width(short)+1); !strings.Contains(got, short) || strings.Contains(got, "brew") {
-		t.Fatalf("medium footer = %q, want it to contain %q but not the brew command", got, short)
+	if got := m.hintRowWithVersion("? help", lipgloss.Width("? help")+lipgloss.Width(short)+1); !strings.Contains(got, short) || strings.Contains(got, "u to update") {
+		t.Fatalf("medium footer = %q, want it to contain %q but not the update hint", got, short)
 	}
 	// Too narrow for the arrow form, wide enough for the plain version.
 	if got := m.hintRowWithVersion("? help", lipgloss.Width("? help")+lipgloss.Width(plain)+1); !strings.Contains(got, plain) || strings.Contains(got, "→") {

@@ -2010,3 +2010,69 @@ func TestSessionMovedErrorFlashes(t *testing.T) {
 		t.Fatalf("flash = %q", m.flash)
 	}
 }
+
+// TestUpdateKeyOnlyShellsOutWhenNewerVersionKnown covers the "u" hotkey's
+// guard logic without ever actually running `brew upgrade` — that shell-out
+// itself is exercised by runUpdateCmd's own caller, main(), not a unit test.
+func TestUpdateKeyOnlyShellsOutWhenNewerVersionKnown(t *testing.T) {
+	be := &fakeBackend{}
+	m := newTestModel(be)
+
+	// No newer version known: no shell-out, just an info flash.
+	_, cmd := m.Update(keyRune("u"))
+	if cmd != nil {
+		t.Fatalf("expected no cmd with no update available")
+	}
+	if !strings.Contains(m.flash, "up to date") {
+		t.Fatalf("flash = %q, want an up-to-date notice", m.flash)
+	}
+
+	// A newer version is known: pressing u fires the shell-out and marks
+	// updating so a second press doesn't fire it again concurrently.
+	m.UpdateVersion = "9.9.9"
+	_, cmd = m.Update(keyRune("u"))
+	if cmd == nil {
+		t.Fatalf("expected a cmd once a newer version is known")
+	}
+	if !m.updating {
+		t.Fatalf("expected updating=true while the shell-out is in flight")
+	}
+	if _, cmd = m.Update(keyRune("u")); cmd != nil {
+		t.Fatalf("expected no second cmd while already updating")
+	}
+}
+
+func TestUpdateAppliedMsgHandling(t *testing.T) {
+	be := &fakeBackend{}
+	m := newTestModel(be)
+	m.UpdateVersion = "9.9.9"
+
+	// Failure: flashes the error, clears updating, does not request relaunch.
+	m.updating = true
+	if _, cmd := m.Update(UpdateAppliedMsg{Err: errors.New("brew: command not found")}); cmd != nil {
+		t.Fatalf("expected no cmd on failure")
+	}
+	if m.updating {
+		t.Fatalf("expected updating to clear on failure")
+	}
+	if m.Relaunch {
+		t.Fatalf("expected Relaunch to stay false on failure")
+	}
+	if !strings.Contains(m.flash, "brew: command not found") {
+		t.Fatalf("flash = %q, want the brew error surfaced", m.flash)
+	}
+
+	// Success: clears updating, sets Relaunch, quits so main() can exec the
+	// freshly-installed binary.
+	m.updating = true
+	_, cmd := m.Update(UpdateAppliedMsg{})
+	if m.updating {
+		t.Fatalf("expected updating to clear on success")
+	}
+	if !m.Relaunch {
+		t.Fatalf("expected Relaunch=true on success")
+	}
+	if cmd == nil {
+		t.Fatalf("expected success to return tea.Quit")
+	}
+}
