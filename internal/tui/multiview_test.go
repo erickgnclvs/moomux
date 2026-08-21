@@ -212,6 +212,46 @@ func TestMultiViewTicketIconClickCopiesOverSSH(t *testing.T) {
 	}
 }
 
+// TestMultiViewRowClickPicksProjectWithoutOpening asserts that clicking a
+// session row inside a non-focused panel switches multiFocus to that row's
+// own project (the multi-view equivalent of "click a project to pick it")
+// and selects the row within that panel, but does not open/attach the
+// session — see TestSessionRowClickSelectsWithoutOpening for the single-
+// project-view counterpart.
+func TestMultiViewRowClickPicksProjectWithoutOpening(t *testing.T) {
+	be := &fakeBackend{sessions: []session.Session{
+		{ID: "a1", Project: "alpha", Name: "a1"},
+		{ID: "b1", Project: "beta", Name: "b1"},
+		{ID: "b2", Project: "beta", Name: "b2"},
+	}}
+	m := newMultiProjectTestModel(be)
+	m.mode = ModeMultiView
+	m.multiFocus = 0 // alpha
+	m.View()         // populate m.rowHits
+
+	var hit resolvedRowHit
+	for _, h := range m.rowHits {
+		if h.sessionID == "b2" {
+			hit = h
+		}
+	}
+	if hit.sessionID == "" {
+		t.Fatalf("no row hit found for b2, hits: %+v", m.rowHits)
+	}
+
+	run(m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: hit.x0, Y: hit.y})
+
+	if m.multiFocus != 1 {
+		t.Errorf("multiFocus = %d, want 1 (beta, b2's project)", m.multiFocus)
+	}
+	if got := m.multiCursorFor("beta"); got != 1 {
+		t.Errorf("beta cursor = %d, want 1 (b2)", got)
+	}
+	if len(be.openCalls) != 0 {
+		t.Errorf("openCalls = %v, want none (row click no longer opens)", be.openCalls)
+	}
+}
+
 func TestMultiViewTabWrapsFocusAmongVisiblePanels(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{
 		{ID: "a1", Project: "alpha", Name: "a1"},

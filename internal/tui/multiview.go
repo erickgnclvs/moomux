@@ -188,29 +188,47 @@ func (m *Model) updateMultiView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // advanceMultiFocus moves multi-view's focus by delta among eligible
-// projects (wrapping). If that lands on a different project than
-// m.multiPinned, the pin is cleared — Tab/Shift-Tab means "move to a
-// different real project," and a pinned empty one only exists to be looked
-// at once (see updateProjectPicker's Open case), not to stay in rotation.
-//
-// The target is tracked by name, not index: clearing the pin can shrink the
-// eligible list out from under whatever index a naive delta-move would have
-// landed on (every project after the removed pin shifts left by one), so
-// the post-clear index is looked up by name instead of reused.
+// projects (wrapping) — see focusMultiProject for how the target is applied.
 func (m *Model) advanceMultiFocus(delta int) {
 	projs := m.multiViewEligibleProjects()
 	n := len(projs)
 	if n == 0 {
 		return
 	}
-	target := projs[(m.multiFocus+delta+n)%n]
-	if target != m.multiPinned {
+	m.focusMultiProject(projs[(m.multiFocus+delta+n)%n])
+}
+
+// focusMultiProject points m.multiFocus at the named project (a click on its
+// panel, or a Tab/Shift-Tab/arrow step landing on it). If that's a different
+// project than m.multiPinned, the pin is cleared — moving focus means "to a
+// different real project," and a pinned empty one only exists to be looked
+// at once (see updateProjectPicker's Open case), not to stay in rotation.
+//
+// The target is tracked by name, not index: clearing the pin can shrink the
+// eligible list out from under whatever index the caller computed (every
+// project after the removed pin shifts left by one), so the post-clear index
+// is looked up by name instead of reused.
+func (m *Model) focusMultiProject(name string) {
+	if name != m.multiPinned {
 		m.multiPinned = ""
 	}
-	if idx := indexOfProject(m.multiViewEligibleProjects(), target); idx >= 0 {
+	if idx := indexOfProject(m.multiViewEligibleProjects(), name); idx >= 0 {
 		m.multiFocus = idx
 	}
 	m.ensureMultiFocusVisible()
+}
+
+// projectForSession returns the project owning session id, scanning the
+// backend's full session list rather than m.sessions — a mouse hit's session
+// ID isn't scoped to whichever project happens to be "entered" via
+// enterSingleProjectContext at click time.
+func (m *Model) projectForSession(id string) (string, bool) {
+	for _, s := range m.backend.Sessions() {
+		if s.ID == id {
+			return s.Project, true
+		}
+	}
+	return "", false
 }
 
 // delegateToList runs msg through updateList as if the focused panel's

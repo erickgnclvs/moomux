@@ -755,9 +755,16 @@ func (m *Model) switchProject(delta int) {
 // renderMultiView's enterSingleProjectContext resyncs m.cursor from that
 // state on every render, so without this a click/wheel-scroll would just get
 // silently overwritten on the next frame. Ticket/PR icon clicks (via
-// m.linkAt) and row taps (via m.sessionRowAt) work identically in all three
-// cases — copy-vs-open over SSH (m.isRemote) isn't mode-specific, so mobile
-// clients see the same behavior whether one panel or several are visible.
+// m.linkAt) work identically in all three cases — copy-vs-open over SSH
+// (m.isRemote) isn't mode-specific, so mobile clients see the same behavior
+// whether one panel or several are visible.
+//
+// A tap on a session row itself no longer opens/attaches it — a stray click
+// used to launch a tmux attach unexpectedly, which is disruptive enough that
+// it's not worth the tap-to-open convenience. In ModeList it just moves the
+// cursor there; in ModeMultiView it does the multi-panel equivalent: pick
+// that row's project (m.multiFocus) the same way Tab would, so a click
+// anywhere in a panel is how you pick which project to act on.
 func (m *Model) handleListMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	var proj string
 	var hasFocus bool
@@ -803,14 +810,22 @@ func (m *Model) handleListMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				return LinkOpenedMsg{URL: url}
 			}
 		}
-		// Not a ticket/PR icon — a tap on the row itself selects and
-		// opens that session in one motion, since mobile clients (mosh
-		// over Moshi, etc.) have no keyboard focus to move a cursor with
-		// first.
+		// Not a ticket/PR icon — a tap on the row selects it (and, in
+		// ModeMultiView, picks that row's project as the focused panel).
 		if id, ok := m.sessionRowAt(msg.X, msg.Y); ok {
-			m.focusSession(id)
-			sync()
-			return m, m.openSessionCmd(id)
+			if m.mode == ModeMultiView {
+				if p, ok := m.projectForSession(id); ok {
+					m.focusMultiProject(p)
+					for i, s := range m.multiViewSessionsFor(p) {
+						if s.ID == id {
+							m.multiCursors[p] = i
+							break
+						}
+					}
+				}
+			} else {
+				m.focusSession(id)
+			}
 		}
 	}
 	sync()
@@ -828,8 +843,8 @@ func (m *Model) moveProjectCmd(name string, delta int) tea.Cmd {
 	return func() tea.Msg { return ProjectMovedMsg{Name: name, Err: m.backend.MoveProject(name, delta)} }
 }
 
-// openSessionCmd returns a Cmd that opens/attaches the given session,
-// shared by the Enter/o key binding and a row click.
+// openSessionCmd returns a Cmd that opens/attaches the given session, used
+// by the Enter/o key binding.
 func (m *Model) openSessionCmd(id string) tea.Cmd {
 	return func() tea.Msg {
 		hint, err := m.backend.OpenSession(id)
