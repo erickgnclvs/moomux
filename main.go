@@ -99,6 +99,13 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) == 3 && os.Args[1] == "__park-detached" {
+		if err := runParkDetached(os.Args[2]); err != nil {
+			fmt.Fprintln(os.Stderr, "moomux:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "reseed" {
 		if err := runReseed(); err != nil {
 			fmt.Fprintln(os.Stderr, "moomux:", err)
@@ -269,7 +276,7 @@ func newApp() (*app.App, error) {
 		slog.Warn("tmux EnsureEnvRefresh failed", "err", err)
 	}
 
-	return &app.App{
+	a := &app.App{
 		Cfg:          cfg,
 		CfgPath:      cfgPath,
 		Store:        store,
@@ -278,7 +285,30 @@ func newApp() (*app.App, error) {
 		Git:          gitwt.New(),
 		PR:           prstatus.New(),
 		WorktreeRoot: app.WorktreeRootDefault(),
-	}, nil
+	}
+	if usesCodex(cfg, store) {
+		if executable, err := os.Executable(); err != nil {
+			slog.Warn("resolve Codex command executable failed", "err", err)
+		} else if _, err := codexhook.EnsureAgentExecutable(home, executable); err != nil {
+			slog.Warn("install Codex command executable failed", "err", err)
+		}
+	}
+	a.InstallKnownCommands()
+	return a, nil
+}
+
+func usesCodex(cfg *config.Config, store *session.Store) bool {
+	for _, project := range cfg.Projects {
+		if project.AgentName() == "codex" {
+			return true
+		}
+	}
+	for _, s := range store.All() {
+		if s.AgentName() == "codex" {
+			return true
+		}
+	}
+	return false
 }
 
 // runSpawn implements `moomux spawn`: create a session (worktree + tmux +
@@ -399,6 +429,10 @@ func orNone(s string) string {
 // via currentSession rather than taking an explicit ID. The worktree,
 // branch, and moomux list entry are left intact so the session can be
 // reopened later — see App.KillTmux's doc comment.
+//
+// Closing the current terminal tab terminates the process group that invoked
+// this command before it can kill tmux. Run the actual park operation in a
+// new session so it survives the tab closing long enough to finish.
 func runPark() error {
 	a, err := newApp()
 	if err != nil {
@@ -408,10 +442,34 @@ func runPark() error {
 	if err != nil {
 		return fmt.Errorf("park: %w", err)
 	}
-	if err := a.KillTmux(s.ID); err != nil {
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("park: resolve executable: %w", err)
+	}
+	cmd := newParkHelperCommand(executable, s.ID)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("park: %w", err)
 	}
 	fmt.Println("parked " + s.Name)
+	return nil
+}
+
+func newParkHelperCommand(executable, id string) *exec.Cmd {
+	cmd := exec.Command(executable, "__park-detached", id)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	return cmd
+}
+
+func runParkDetached(id string) error {
+	a, err := newApp()
+	if err != nil {
+		return err
+	}
+	if err := a.KillTmux(id); err != nil {
+		return fmt.Errorf("park: %w", err)
+	}
 	return nil
 }
 

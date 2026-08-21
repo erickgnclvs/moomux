@@ -5,27 +5,23 @@ import (
 	"path/filepath"
 )
 
-// killPrompt is installed as the body of the /kill custom prompt — see
-// EnsureKillPrompt. Codex's custom-prompt frontmatter only documents
-// description/argument-hint, not Claude Code's allowed-tools, and has no
-// bash-execution-during-expansion syntax either (Claude Code's bang-backtick
+// killPrompt is installed as the body of the legacy /prompts:kill custom
+// prompt — see EnsureKillPrompt. Codex's custom-prompt frontmatter only
+// documents description/argument-hint, not Claude Code's allowed-tools, and
+// has no bash-execution-during-expansion syntax either (Claude Code's bang-backtick
 // `!command`) — per developers.openai.com/codex/custom-prompts — so this
 // hands Codex an instruction rather than running anything directly; it
 // still has to decide to actually run the command via its own shell tool,
 // same as any other prompt. The wording below is deliberately direct ("run
 // it now, don't ask") to make that one extra hop as reliable as it can be.
 //
-// Also worth knowing: OpenAI marks custom prompts deprecated in favor of
-// "skills" as of this writing, and invocation syntax has drifted across CLI
-// versions (bare /kill in some, /prompts:kill in others per
-// github.com/openai/codex/issues/15941) — this is the best mechanism
-// available today, not a guaranteed-stable one.
+// OpenAI deprecated custom prompts in favor of skills. skills.go installs the
+// current $kill command; this prompt remains for older Codex CLI versions.
 const killPrompt = `---
 description: Park this moomux session (stop tmux, close its tab, keep the worktree/branch)
 ---
 
-Run ` + "`moomux park`" + ` in a shell now — don't ask for confirmation first — to park this moomux session. It stops the tmux session and closes its terminal tab, but keeps the worktree/branch so the session can be reopened later (same as moomux's own "x" key). Then report what it printed.
-`
+` + killSkillInstructions
 
 // ensurePrompt writes body to $CODEX_HOME/prompts/<name>.md (here, always
 // ~/.codex/prompts/ — see EnsureHooks's doc comment on why this package
@@ -33,10 +29,9 @@ Run ` + "`moomux park`" + ` in a shell now — don't ask for confirmation first 
 // needed and skipping the write when the content is already there. changed
 // reports whether this call wrote the file.
 //
-// Custom prompts live in the global prompts dir so they're available from
-// every worktree. Unlike hooks.json, they only ever run when the user
-// explicitly types them, so Codex requires no trust/review step for them
-// the way it does for hooks.
+// Legacy custom prompts live in the global prompts dir so they're available
+// from every worktree. Unlike hooks.json, they only ever run when the user
+// explicitly types them, so Codex requires no trust/review step for them.
 func ensurePrompt(home, name, body string) (changed bool, err error) {
 	path := filepath.Join(home, ".codex", "prompts", name+".md")
 
@@ -66,26 +61,7 @@ const tagPrompt = `---
 description: Tag this moomux session with its PR (and ticket, if one is already tracked)
 ---
 
-Run ` + "`moomux tag`" + ` with no flags first to see what's already tracked on this
-session.
-
-Find the open pull request for the current branch (e.g. ` + "`gh pr view --json url,body --jq '.url + \"\\n\" + .body'`" + `) and run:
-
-    moomux tag -pr <that PR URL>
-
-Leave out ` + "`-ticket`" + ` — moomux keeps this session's existing ticket automatically
-when you don't pass one. If ` + "`moomux tag`" + ` showed no ticket tracked yet, look for
-a ticket link in the PR title/body, the branch name, and recent commit
-messages (` + "`git log --oneline -20`" + `). Recognize common
-formats: Asana (` + "`https://app.asana.com/.../task/...`" + `), Jira
-(` + "`https://<org>.atlassian.net/browse/<KEY>-<num>`" + ` or a bare ` + "`<KEY>-<num>`" + `
-you can expand to that URL), and Linear (` + "`https://linear.app/<org>/issue/<KEY>-<num>`" + `).
-If you find one, pass it too:
-` + "`moomux tag -pr <PR URL> -ticket <ticket URL>`" + `.
-
-If there's no open PR yet, say so instead of guessing one. Don't guess a
-ticket link either — only pass ` + "`-ticket`" + ` when you actually found one.
-`
+` + tagSkillInstructions
 
 // EnsureTagPrompt installs the /tag custom prompt — see ensurePrompt.
 func EnsureTagPrompt(home string) (changed bool, err error) {
@@ -99,29 +75,7 @@ const spawnPrompt = `---
 description: Spawn a new moomux session (worktree + tmux + agent) for a delegated task
 ---
 
-Parse ` + "`$ARGUMENTS`" + ` as a free-text task description, optionally followed by a
-project name at the end if it doesn't match the current repo. Treat it as
-literal text — don't try to resolve ` + "`#N`" + ` or similar tokens against GitHub
-issues/PRs or anything else.
-
-**Project**: run ` + "`moomux spawn -list`" + ` and match the current repo (e.g.
-` + "`basename $(git rev-parse --show-toplevel)`" + `, or ` + "`git remote get-url origin`" + `)
-against a listed project name. If ` + "`$ARGUMENTS`" + ` explicitly names a different
-project, use that instead. If nothing matches, ask rather than guessing.
-
-**Task**: write a clear, self-contained prompt from ` + "`$ARGUMENTS`" + ` (the new
-session's agent starts with no context beyond what you pass in ` + "`-prompt`" + `).
-
-**Name**: derive a short kebab-case session name from the task description.
-
-Then run:
-
-    moomux spawn -project <project> -name <name> -prompt "<task prompt>"
-
-This is fire-and-forget — it creates the worktree/branch, tmux session, and
-agent, types the prompt in, and returns immediately. Don't wait on or try to
-check the spawned session's progress.
-`
+` + spawnSkillInstructions
 
 // EnsureSpawnPrompt installs the /spawn custom prompt — see ensurePrompt.
 func EnsureSpawnPrompt(home string) (changed bool, err error) {
@@ -134,8 +88,7 @@ const reseedPrompt = `---
 description: Re-run this session's worktree-create userscripts with --force, re-syncing template files
 ---
 
-Run ` + "`moomux reseed`" + ` in a shell now — don't ask for confirmation first — to re-run this moomux session's worktree-create userscripts with MOOMUX_FORCE=1, so they redo setup they'd otherwise skip as already done. Then report what it printed.
-`
+` + reseedSkillInstructions
 
 // EnsureReseedPrompt installs the /reseed custom prompt — see ensurePrompt.
 func EnsureReseedPrompt(home string) (changed bool, err error) {

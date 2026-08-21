@@ -42,6 +42,7 @@ type fakeTmuxRunner struct {
 	calls  [][]string
 	out    map[string]string
 	failOn map[string]bool
+	events *[]string
 	// seq, when set for a key, returns successive values on each call to
 	// that key (staying on the last one once exhausted) instead of out's
 	// fixed value — used to simulate pane content actually changing across
@@ -58,6 +59,9 @@ func (exitErr) ExitCode() int { return 1 }
 func (f *fakeTmuxRunner) Run(args ...string) (string, error) {
 	key := strings.Join(args, " ")
 	f.calls = append(f.calls, append([]string(nil), args...))
+	if f.events != nil {
+		*f.events = append(*f.events, "tmux "+key)
+	}
 	if f.failOn[key] {
 		return "", exitErr{}
 	}
@@ -120,6 +124,7 @@ func (f *fakeTabTerminal) OpenTab(tabID, tmuxSession, title string) (string, str
 type fakeCloseTabTerminal struct {
 	closed []string
 	err    error
+	events *[]string
 }
 
 func (f *fakeCloseTabTerminal) OpenSession(tmuxSession, title string) (string, error) {
@@ -128,6 +133,9 @@ func (f *fakeCloseTabTerminal) OpenSession(tmuxSession, title string) (string, e
 
 func (f *fakeCloseTabTerminal) CloseTab(tabID string) error {
 	f.closed = append(f.closed, tabID)
+	if f.events != nil {
+		*f.events = append(*f.events, "close "+tabID)
+	}
 	return f.err
 }
 
@@ -430,7 +438,7 @@ func TestCreateSessionInstallsKillCommand(t *testing.T) {
 	}
 }
 
-func TestCreateSessionInstallsKillPrompt(t *testing.T) {
+func TestCreateSessionInstallsCodexKillCommand(t *testing.T) {
 	a, git, tm, _ := newTestApp(t, gitProject("/repo"))
 	home, _ := os.UserHomeDir()
 	tn := TmuxSessionName("demo:feat", "feat")
@@ -441,7 +449,32 @@ func TestCreateSessionInstallsKillPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".codex", "prompts", "kill.md")); err != nil {
-		t.Fatalf("expected ~/.codex/prompts/kill.md to be written: %v", err)
+		t.Fatalf("expected legacy ~/.codex/prompts/kill.md to be written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", "kill", "SKILL.md")); err != nil {
+		t.Fatalf("expected current ~/.agents/skills/kill/SKILL.md to be written: %v", err)
+	}
+}
+
+func TestInstallKnownCommandsBackfillsExistingCodexSessions(t *testing.T) {
+	a, _, _, _ := newTestApp(t, gitProject("/repo"))
+	home, _ := os.UserHomeDir()
+	if err := a.Store.Put(session.Session{
+		ID: "demo:codex", Project: "demo", Name: "codex", Agent: "codex",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	a.InstallKnownCommands()
+
+	for _, name := range []string{"kill", "tag", "spawn", "reseed"} {
+		path := filepath.Join(home, ".agents", "skills", name, "SKILL.md")
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected existing Codex session to backfill %s: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf("startup command backfill must not install untrusted hooks: %v", err)
 	}
 }
 
@@ -1059,7 +1092,7 @@ func TestOpenSessionRepairsMissingKillCommand(t *testing.T) {
 	}
 }
 
-func TestOpenSessionRepairsMissingKillPrompt(t *testing.T) {
+func TestOpenSessionRepairsMissingCodexKillCommand(t *testing.T) {
 	a, _, tm, term := newTestApp(t, gitProject("/repo"))
 	home, _ := os.UserHomeDir()
 	term.hint = "run: tmux attach -t moomux-feat"
@@ -1070,12 +1103,16 @@ func TestOpenSessionRepairsMissingKillPrompt(t *testing.T) {
 	})
 	tm.out["list-panes -t =moomux-feat: -F #{pane_current_path}"] = wt + "\n"
 
-	// Session predates the /kill feature: no ~/.codex/prompts/kill.md yet.
+	// Session predates the Codex command: neither the legacy prompt nor current
+	// skill exists yet.
 	if _, err := a.OpenSession("demo:feat"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".codex", "prompts", "kill.md")); err != nil {
-		t.Fatalf("expected OpenSession to backfill ~/.codex/prompts/kill.md: %v", err)
+		t.Fatalf("expected OpenSession to backfill legacy ~/.codex/prompts/kill.md: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", "kill", "SKILL.md")); err != nil {
+		t.Fatalf("expected OpenSession to backfill current ~/.agents/skills/kill/SKILL.md: %v", err)
 	}
 }
 
@@ -1162,6 +1199,28 @@ func TestKillTmuxClosesTerminalTab(t *testing.T) {
 	}
 	if !tm.called("kill-session -t =moomux-a") {
 		t.Fatalf("calls = %v", tm.calls)
+	}
+}
+
+func TestKillTmuxKillsSessionBeforeClosingTerminalTab(t *testing.T) {
+	a, _, tm, _ := newTestApp(t, gitProject("/repo"))
+	var events []string
+	tm.events = &events
+	a.Terminal = &fakeCloseTabTerminal{events: &events}
+	_ = a.Store.Put(session.Session{
+		ID: "demo:a", Project: "demo", Name: "a", TmuxSession: "moomux-a", TermTabID: "tab-7",
+	})
+
+	if err := a.KillTmux("demo:a"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"tmux has-session -t =moomux-a",
+		"tmux kill-session -t =moomux-a",
+		"close tab-7",
+	}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("park events = %q, want %q", events, want)
 	}
 }
 
