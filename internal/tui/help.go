@@ -154,11 +154,11 @@ func (m *Model) renderHelp() string {
 	b.WriteString(lipgloss.JoinVertical(lipgloss.Left, rows...))
 	b.WriteString("\n\n")
 	b.WriteString(hintStyle.Width(tableWidth).Render(
-		"tip: /kill inside a Claude or Codex session parks it too, same as x",
+		"tip: park from agent: Claude /kill · Codex $kill",
 	))
 	b.WriteString("\n")
 	b.WriteString(hintStyle.Width(tableWidth).Render(
-		"tip: run /tag inside Claude Code or Codex to tag this session's PR (and ticket) without leaving the agent",
+		"tip: tag from agent: Claude /tag · Codex $tag",
 	))
 	return b.String()
 }

@@ -85,6 +85,53 @@ func TestCurrentSessionPrefersTmuxOverStaleCwd(t *testing.T) {
 	}
 }
 
+// TestParkHelperCommandIsDetached reproduces the Codex /kill failure where
+// closing the iTerm tab killed `moomux park` before it reached tmux. The
+// helper must have its own session so it survives closing the invoking tab.
+func TestParkHelperCommandIsDetached(t *testing.T) {
+	cmd := newParkHelperCommand("/tmp/moomux", "demo:a")
+	if cmd.Path != "/tmp/moomux" {
+		t.Fatalf("helper path = %q, want /tmp/moomux", cmd.Path)
+	}
+	wantArgs := []string{"/tmp/moomux", "__park-detached", "demo:a"}
+	if len(cmd.Args) != len(wantArgs) {
+		t.Fatalf("helper args = %q, want %q", cmd.Args, wantArgs)
+	}
+	for i := range wantArgs {
+		if cmd.Args[i] != wantArgs[i] {
+			t.Fatalf("helper args = %q, want %q", cmd.Args, wantArgs)
+		}
+	}
+	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setsid {
+		t.Fatal("park helper must start in a detached process session")
+	}
+}
+
+func TestUsesCodexFindsConfiguredProjectOrExistingSession(t *testing.T) {
+	store := &session.Store{Path: filepath.Join(t.TempDir(), "sessions.json")}
+	if err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if usesCodex(&config.Config{}, store) {
+		t.Fatal("empty configuration should not install the Codex executable")
+	}
+
+	cfg := &config.Config{Projects: map[string]config.Project{
+		"demo": {Agent: "codex"},
+	}}
+	if !usesCodex(cfg, store) {
+		t.Fatal("Codex project should install the Codex executable")
+	}
+
+	cfg = &config.Config{}
+	if err := store.Put(session.Session{ID: "demo:a", Agent: "codex"}); err != nil {
+		t.Fatal(err)
+	}
+	if !usesCodex(cfg, store) {
+		t.Fatal("existing Codex session should install the Codex executable")
+	}
+}
+
 // TestOrNone covers the formatting `moomux tag` (called with neither flag
 // set) relies on to report an untagged field as "none" rather than a blank,
 // easy-to-miss line.

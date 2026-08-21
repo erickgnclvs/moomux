@@ -91,9 +91,9 @@ func (a *App) newTmuxSession(tmuxName, cwd, cmd, windowName string) error {
 
 // agentInstallers are the per-agent writers that wire moomux's integrations
 // into the user's global agent config: the "needs input" hooks, and the
-// /kill, /tag, and /spawn custom commands (so any session can park, tag, or
-// spawn a delegated session without leaving the agent). Each maps an agent
-// name to its installer; an agent with
+// /kill, /tag, /spawn, and /reseed custom commands (so any session can park,
+// tag, or spawn a delegated session without leaving the agent). Each maps an
+// agent name to its installer; an agent with
 // no entry (opencode, everywhere) doesn't support that integration yet — add a
 // sibling package and a map entry to bring one in. changed reports whether the
 // call actually wrote something new (see codexHooksHint).
@@ -116,19 +116,19 @@ var agentInstallers = []struct {
 	}},
 	{"kill command", false, map[string]func(string) (bool, error){
 		"claude": claudehook.EnsureKillCommand,
-		"codex":  codexhook.EnsureKillPrompt,
+		"codex":  codexhook.EnsureKillCommand,
 	}},
 	{"tag command", false, map[string]func(string) (bool, error){
 		"claude": claudehook.EnsureTagCommand,
-		"codex":  codexhook.EnsureTagPrompt,
+		"codex":  codexhook.EnsureTagCommand,
 	}},
 	{"spawn command", false, map[string]func(string) (bool, error){
 		"claude": claudehook.EnsureSpawnCommand,
-		"codex":  codexhook.EnsureSpawnPrompt,
+		"codex":  codexhook.EnsureSpawnCommand,
 	}},
 	{"reseed command", false, map[string]func(string) (bool, error){
 		"claude": claudehook.EnsureReseedCommand,
-		"codex":  codexhook.EnsureReseedPrompt,
+		"codex":  codexhook.EnsureReseedCommand,
 	}},
 }
 
@@ -164,6 +164,46 @@ func installAgentSupport(agent string) string {
 		}
 	}
 	return hint
+}
+
+// InstallKnownCommands backfills custom commands for every agent referenced
+// by a configured project or existing session. It intentionally skips hook
+// installers: newly written hooks require an in-agent trust prompt, whose hint
+// is only meaningful while creating or opening that agent's session.
+//
+// Running this at ordinary moomux startup makes command upgrades discoverable
+// without requiring the user to reopen a particular session first.
+func (a *App) InstallKnownCommands() {
+	agents := make(map[string]bool)
+	for _, project := range a.Cfg.Projects {
+		agents[project.AgentName()] = true
+	}
+	for _, s := range a.Store.All() {
+		agents[s.AgentName()] = true
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		slog.Warn("agent command install failed", "err", err)
+		return
+	}
+	for _, agent := range []string{"claude", "codex", "opencode"} {
+		if !agents[agent] {
+			continue
+		}
+		for _, entry := range agentInstallers {
+			if entry.hintOnChange {
+				continue
+			}
+			install, ok := entry.byAgent[agent]
+			if !ok {
+				continue
+			}
+			if _, err := install(home); err != nil {
+				slog.Warn(entry.what+" install failed", "agent", agent, "err", err)
+			}
+		}
+	}
 }
 
 // ReseedWorktree re-runs the worktree-create userscripts for an existing
@@ -1002,16 +1042,23 @@ func (a *App) TmuxAliveAll() map[string]bool {
 // cleared on success so a later reopen creates a fresh tab instead of
 // chasing a handle that's gone.
 //
-// The tab is closed before the tmux session is killed, not after: closing
-// it only kills the `tmux attach` client shown there — pane processes
-// belong to the tmux server, not to any attached client (see
-// terminal/processtree.go's attachedClientPID doc comment) — so this order
-// is safe even when KillTmux runs from inside the very pane it's killing
-// (see main.go's runPark, used by the /kill slash command).
+// The tmux session is killed before the terminal tab is closed. `moomux
+// park` runs this method in a detached helper so it survives killing its
+// own pane; closing the tab first can otherwise terminate the command and
+// all of its descendants before the tmux kill is issued.
 func (a *App) KillTmux(id string) error {
 	s, ok := a.Store.Get(id)
 	if !ok {
 		return fmt.Errorf("unknown session %q", id)
+	}
+	has, err := a.Tmux.HasSession(s.TmuxSession)
+	if err != nil {
+		return err
+	}
+	if has {
+		if err := a.Tmux.KillSession(s.TmuxSession); err != nil {
+			return err
+		}
 	}
 	if closer, ok := a.Terminal.(terminal.TabCloser); ok && s.TermTabID != "" {
 		if err := closer.CloseTab(s.TermTabID); err != nil {
@@ -1022,14 +1069,7 @@ func (a *App) KillTmux(id string) error {
 			slog.Warn("clear terminal tab id failed", "id", id, "err", err)
 		}
 	}
-	has, err := a.Tmux.HasSession(s.TmuxSession)
-	if err != nil {
-		return err
-	}
-	if !has {
-		return nil
-	}
-	return a.Tmux.KillSession(s.TmuxSession)
+	return nil
 }
 
 func (a *App) validateProject(name string, p *config.Project) error {

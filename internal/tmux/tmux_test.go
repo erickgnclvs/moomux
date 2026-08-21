@@ -20,7 +20,7 @@ func (f *fakeRunner) Run(args ...string) (string, error) {
 	key := strings.Join(args, " ")
 	f.calls = append(f.calls, append([]string(nil), args...))
 	if f.failOn[key] {
-		return "", exitErr{code: 1}
+		return f.out[key], exitErr{code: 1}
 	}
 	return f.out[key], nil
 }
@@ -177,6 +177,22 @@ func TestHasSessionAbsent(t *testing.T) {
 	ok, err := c.HasSession("moomux-foo")
 	if err != nil || ok {
 		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+}
+
+func TestHasSessionReturnsConnectionErrors(t *testing.T) {
+	key := "has-session -t =moomux-foo"
+	fr := &fakeRunner{
+		failOn: map[string]bool{key: true},
+		out:    map[string]string{key: "error connecting to /tmp/tmux-501/default (Operation not permitted)\n"},
+	}
+	c := &Client{Runner: fr}
+	ok, err := c.HasSession("moomux-foo")
+	if err == nil || ok {
+		t.Fatalf("ok=%v err=%v, want a connection error", ok, err)
+	}
+	if !strings.Contains(err.Error(), "Operation not permitted") {
+		t.Fatalf("err = %v, want tmux diagnostic", err)
 	}
 }
 
