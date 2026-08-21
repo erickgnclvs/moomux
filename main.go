@@ -286,29 +286,8 @@ func newApp() (*app.App, error) {
 		PR:           prstatus.New(),
 		WorktreeRoot: app.WorktreeRootDefault(),
 	}
-	if usesCodex(cfg, store) {
-		if executable, err := os.Executable(); err != nil {
-			slog.Warn("resolve Codex command executable failed", "err", err)
-		} else if _, err := codexhook.EnsureAgentExecutable(home, executable); err != nil {
-			slog.Warn("install Codex command executable failed", "err", err)
-		}
-	}
 	a.InstallKnownCommands()
 	return a, nil
-}
-
-func usesCodex(cfg *config.Config, store *session.Store) bool {
-	for _, project := range cfg.Projects {
-		if project.AgentName() == "codex" {
-			return true
-		}
-	}
-	for _, s := range store.All() {
-		if s.AgentName() == "codex" {
-			return true
-		}
-	}
-	return false
 }
 
 // runSpawn implements `moomux spawn`: create a session (worktree + tmux +

@@ -198,11 +198,11 @@ func TestEnsureCommandsInstallCurrentSkillsAndLegacyPrompts(t *testing.T) {
 			if !strings.Contains(string(data), "require_escalated") {
 				t.Fatalf("%s skill must escape the sandbox for moomux's shared state: %s", tt.name, data)
 			}
-			if !strings.Contains(string(data), agentCommandPath) {
-				t.Fatalf("%s skill must use the RTK-safe agent executable: %s", tt.name, data)
+			if !strings.Contains(string(data), "moomux "+tt.name) && tt.name != "kill" {
+				t.Fatalf("%s skill must invoke the corresponding moomux command: %s", tt.name, data)
 			}
-			if !strings.Contains(string(data), "RTK") {
-				t.Fatalf("%s skill must explain the RTK-safe invocation: %s", tt.name, data)
+			if tt.name == "kill" && !strings.Contains(string(data), "moomux park") {
+				t.Fatalf("kill skill must invoke moomux park: %s", data)
 			}
 
 			promptPath := filepath.Join(home, ".codex", "prompts", tt.name+".md")
