@@ -61,6 +61,11 @@ type UpdateAvailableMsg struct{ Version string }
 // Releases, so long-running sessions still notice new versions.
 type UpdateCheckTickMsg struct{}
 
+// UpdateAppliedMsg is delivered by runUpdateCmd once `brew upgrade moomux`
+// finishes. Err is nil on success, in which case the caller quits the
+// program so main() can exec the newly-installed binary in place.
+type UpdateAppliedMsg struct{ Err error }
+
 type InfoMsg struct {
 	When time.Time
 }

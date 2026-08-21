@@ -505,6 +505,13 @@ func run() error {
 		return err
 	}
 	cancel()
+	if m.Relaunch {
+		self, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		return syscall.Exec(self, os.Args, os.Environ())
+	}
 	return nil
 }
 

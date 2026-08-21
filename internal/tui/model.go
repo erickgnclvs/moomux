@@ -2,9 +2,11 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"hash/fnv"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -225,6 +227,13 @@ type Model struct {
 	// UpdateVersion is the latest GitHub release, set by checkUpdateCmd once
 	// it resolves; empty unless it's newer than Version.
 	UpdateVersion string
+	// updating is true while runUpdateCmd's `brew upgrade` is in flight, so
+	// a repeat press of Update doesn't shell out twice concurrently.
+	updating bool
+	// Relaunch is set right before quitting once an update installs
+	// successfully. main() checks it after p.Run() returns and, if set,
+	// execs the freshly-installed binary in place of this process.
+	Relaunch bool
 
 	projects     []string
 	activeProj   int
@@ -1051,7 +1060,7 @@ func (m *Model) Init() tea.Cmd {
 // updateCheckInterval is how often a long-running session re-polls GitHub
 // Releases, so a session left open for days still notices new versions
 // instead of only checking once at startup.
-const updateCheckInterval = 6 * time.Hour
+const updateCheckInterval = 1 * time.Hour
 
 // checkUpdateCmd asynchronously checks GitHub Releases for a version newer
 // than current. It's a background nicety, not a feature — any failure
@@ -1064,6 +1073,20 @@ func checkUpdateCmd(current string) tea.Cmd {
 			return nil
 		}
 		return UpdateAvailableMsg{Version: strings.TrimPrefix(latest, "v")}
+	}
+}
+
+// runUpdateCmd shells out to the same command the footer/help already tell
+// users to run by hand. Homebrew-only: a go install/git clone build has no
+// self-update path, so this just fails with brew's own error in that case,
+// which flashError surfaces as-is.
+func runUpdateCmd() tea.Cmd {
+	return func() tea.Msg {
+		out, err := exec.Command("sh", "-c", "brew update && brew upgrade moomux").CombinedOutput()
+		if err != nil {
+			return UpdateAppliedMsg{Err: fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))}
+		}
+		return UpdateAppliedMsg{}
 	}
 }
 
