@@ -505,6 +505,7 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 	}
 	slog.Info("tmux session created", "name", tmuxName)
 	var tabID, hint string
+	var opened bool
 	if openTerminal {
 		var err error
 		tabID, hint, err = a.openTerminal("", tmuxName, name)
@@ -514,6 +515,8 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 			// manual-attach hint instead.
 			slog.Error("terminal open failed", "tmux_session", tmuxName, "name", name, "err", err)
 			hint = fmt.Sprintf("couldn't open a terminal (%v) — attach yourself: tmux attach -t %s", err, tmuxName)
+		} else {
+			opened = true
 		}
 		if hooksHint != "" {
 			hint = joinHints(hooksHint, hint)
@@ -538,6 +541,13 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 		AgentPort:    agentPort,
 		Ticket:       ticket,
 		TermTabID:    tabID,
+	}
+	// A terminal opened right here means the user is dropped straight into
+	// the new session, same as OpenSession's attach — without this, a
+	// never-since-reopened session sorts as if never opened at all and
+	// sinks to the bottom under "most-recently-opened first".
+	if opened {
+		s.LastOpened = time.Now()
 	}
 	if err := a.Store.Put(s); err != nil {
 		slog.Error("store put failed", "id", s.ID, "err", err)

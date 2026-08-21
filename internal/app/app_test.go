@@ -345,6 +345,45 @@ func TestCreateSessionWorktree(t *testing.T) {
 	}
 }
 
+// TestCreateSessionStampsLastOpened guards against a session created with
+// openTerminal=true — which drops the user straight into it, same as
+// OpenSession's attach — being treated as "never opened" by the
+// most-recently-opened sort (see OpenSession's own LastOpened stamp and
+// session.SortByRecent) just because it was never *re*-opened afterward.
+func TestCreateSessionStampsLastOpened(t *testing.T) {
+	a, git, tm, _ := newTestApp(t, gitProject("/repo"))
+	tn := TmuxSessionName("demo:feat", "feat")
+	tm.out["list-panes -t ="+tn+": -F #{pane_id}"] = "%0\n"
+	noBranch(git, "feat")
+
+	before := time.Now()
+	s, _, err := a.CreateSession("demo", "feat", "", "", "", true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.LastOpened.Before(before) {
+		t.Fatalf("LastOpened = %v, want at/after %v", s.LastOpened, before)
+	}
+}
+
+// TestCreateSessionBackgroundLeavesLastOpenedZero covers the openTerminal=false
+// path (e.g. `moomux spawn`): nothing actually attached the user to the
+// session, so it should sort as never-opened, not as just-opened.
+func TestCreateSessionBackgroundLeavesLastOpenedZero(t *testing.T) {
+	a, git, tm, _ := newTestApp(t, gitProject("/repo"))
+	tn := TmuxSessionName("demo:feat", "feat")
+	tm.out["list-panes -t ="+tn+": -F #{pane_id}"] = "%0\n"
+	noBranch(git, "feat")
+
+	s, _, err := a.CreateSession("demo", "feat", "", "", "", false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.LastOpened.IsZero() {
+		t.Fatalf("LastOpened = %v, want zero", s.LastOpened)
+	}
+}
+
 func TestCreateSessionInstallsClaudeHooks(t *testing.T) {
 	// Claude hooks install globally (see claudehook.EnsureHooksInstalled's
 	// doc comment), not per-worktree — newTestApp already sandboxes HOME so
