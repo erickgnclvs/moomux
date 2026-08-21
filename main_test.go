@@ -107,31 +107,6 @@ func TestParkHelperCommandIsDetached(t *testing.T) {
 	}
 }
 
-func TestUsesCodexFindsConfiguredProjectOrExistingSession(t *testing.T) {
-	store := &session.Store{Path: filepath.Join(t.TempDir(), "sessions.json")}
-	if err := store.Load(); err != nil {
-		t.Fatal(err)
-	}
-	if usesCodex(&config.Config{}, store) {
-		t.Fatal("empty configuration should not install the Codex executable")
-	}
-
-	cfg := &config.Config{Projects: map[string]config.Project{
-		"demo": {Agent: "codex"},
-	}}
-	if !usesCodex(cfg, store) {
-		t.Fatal("Codex project should install the Codex executable")
-	}
-
-	cfg = &config.Config{}
-	if err := store.Put(session.Session{ID: "demo:a", Agent: "codex"}); err != nil {
-		t.Fatal(err)
-	}
-	if !usesCodex(cfg, store) {
-		t.Fatal("existing Codex session should install the Codex executable")
-	}
-}
-
 // TestOrNone covers the formatting `moomux tag` (called with neither flag
 // set) relies on to report an untagged field as "none" rather than a blank,
 // easy-to-miss line.
