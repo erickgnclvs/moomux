@@ -105,6 +105,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case StatusRefreshedMsg:
 		m.tmuxAlive = msg.TmuxAlive
+		// tmuxAlive drives the live-session float in refreshSessions' sort,
+		// so a change here has to re-sort m.sessions immediately — otherwise
+		// the list only catches up next time something unrelated happens to
+		// call refreshSessions(), which reads as a session jumping into the
+		// middle of the list out of nowhere.
+		m.refreshSessions()
 		for id, p := range msg.Prompts {
 			if m.prompts[id] == "" {
 				m.prompts[id] = p
