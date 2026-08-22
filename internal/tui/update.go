@@ -763,8 +763,11 @@ func (m *Model) switchProject(delta int) {
 // used to launch a tmux attach unexpectedly, which is disruptive enough that
 // it's not worth the tap-to-open convenience. In ModeList it just moves the
 // cursor there; in ModeMultiView it does the multi-panel equivalent: pick
-// that row's project (m.multiFocus) the same way Tab would, so a click
-// anywhere in a panel is how you pick which project to act on.
+// that row's project (m.multiFocus) the same way Tab would. A click that
+// lands elsewhere in a panel — the detail pane, an empty list, the title
+// line — still picks that project via m.panelHits, just without moving its
+// cursor, so anywhere in a project's square is how you pick which one to
+// act on.
 func (m *Model) handleListMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	var proj string
 	var hasFocus bool
@@ -825,6 +828,13 @@ func (m *Model) handleListMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				}
 			} else {
 				m.focusSession(id)
+			}
+		} else if m.mode == ModeMultiView {
+			// Missed every row (e.g. the detail pane, an empty list, the
+			// title line) but still landed inside a panel — pick that
+			// project without touching its cursor.
+			if p, ok := m.panelAt(msg.X, msg.Y); ok {
+				m.focusMultiProject(p)
 			}
 		}
 	}
