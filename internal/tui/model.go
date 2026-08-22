@@ -365,6 +365,7 @@ type Model struct {
 
 	linkHits        []resolvedLinkHit
 	rowHits         []resolvedRowHit
+	panelHits       []resolvedPanelHit
 	overlayViewport viewport.Model
 	overlayMode     Mode
 	overlayFocus    int
@@ -391,14 +392,42 @@ type resolvedRowHit struct {
 	x0, x1    int // half-open column range
 }
 
+// resolvedPanelHit records one ModeMultiView panel's full rendered
+// rectangle (border included) in absolute terminal coordinates, computed
+// fresh by renderMultiView on every View() call. It's the fallback the mouse
+// handler in Update() consults when a click doesn't land on a link or a
+// session row — e.g. the detail pane, the panel's title line, or empty
+// space below a short list — so clicking anywhere in a project's panel
+// picks that project, not just its session rows.
+type resolvedPanelHit struct {
+	project string
+	x0, x1  int // half-open column range
+	y0, y1  int // half-open row range
+}
+
+// panelAt returns the project whose panel rectangle contains absolute
+// terminal coordinates (x, y), if any.
+func (m *Model) panelAt(x, y int) (string, bool) {
+	for _, h := range m.panelHits {
+		if x >= h.x0 && x < h.x1 && y >= h.y0 && y < h.y1 {
+			return h.project, true
+		}
+	}
+	return "", false
+}
+
 // updateLinkHits recomputes m.linkHits and m.rowHits in absolute terminal
 // coordinates from the list- and detail-local hits produced during
 // rendering. It's a no-op (clearing hits) outside ModeList and ModeMultiView,
 // since panels aren't clickable behind an overlay. ModeMultiView only ever
 // reaches here via renderListView's own single-project fallback (see
 // renderMultiView) — its actual multi-panel layout computes and appends its
-// own hits directly (one origin per panel) and never calls this.
+// own hits directly (one origin per panel) and never calls this. Either way
+// m.panelHits (the real multi-panel layout's own project-rectangle hits) is
+// cleared here too — it's stale outside that layout, e.g. right after a
+// resize drops down to a single panel.
 func (m *Model) updateLinkHits(header string, listHits, detailHits []linkHit, detailX, detailY int, listRows []rowHit, listWidth int) {
+	m.panelHits = nil
 	if m.mode != ModeList && m.mode != ModeMultiView {
 		m.linkHits = nil
 		m.rowHits = nil

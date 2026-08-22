@@ -252,6 +252,48 @@ func TestMultiViewRowClickPicksProjectWithoutOpening(t *testing.T) {
 	}
 }
 
+// TestMultiViewPanelClickPicksProjectEvenOffAnyRow asserts that a click
+// landing inside a panel but not on any session row — its title line, its
+// detail pane, empty space below a short list — still picks that panel's
+// project, via m.panelHits rather than m.rowHits. Without this, only
+// clicking directly on a row could switch multiFocus, which doesn't match
+// "click anywhere in the project square."
+func TestMultiViewPanelClickPicksProjectEvenOffAnyRow(t *testing.T) {
+	be := &fakeBackend{sessions: []session.Session{
+		{ID: "a1", Project: "alpha", Name: "a1"},
+		{ID: "b1", Project: "beta", Name: "b1"},
+	}}
+	m := newMultiProjectTestModel(be)
+	m.mode = ModeMultiView
+	m.multiFocus = 0 // alpha
+	m.View()         // populate m.panelHits
+
+	var hit resolvedPanelHit
+	for _, h := range m.panelHits {
+		if h.project == "beta" {
+			hit = h
+		}
+	}
+	if hit.project == "" {
+		t.Fatalf("no panel hit found for beta, hits: %+v", m.panelHits)
+	}
+
+	// The panel's top-left corner (its border/title line) isn't any
+	// session's row.
+	if _, ok := m.sessionRowAt(hit.x0, hit.y0); ok {
+		t.Fatalf("test setup: (%d,%d) unexpectedly matched a row hit", hit.x0, hit.y0)
+	}
+
+	run(m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: hit.x0, Y: hit.y0})
+
+	if m.multiFocus != 1 {
+		t.Errorf("multiFocus = %d, want 1 (beta)", m.multiFocus)
+	}
+	if len(be.openCalls) != 0 {
+		t.Errorf("openCalls = %v, want none", be.openCalls)
+	}
+}
+
 func TestMultiViewTabWrapsFocusAmongVisiblePanels(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{
 		{ID: "a1", Project: "alpha", Name: "a1"},

@@ -347,10 +347,10 @@ func (m *Model) refreshSessionsAndSync() {
 // renderMultiView is ModeMultiView's whole-screen render, replacing the
 // normal single-project body with one panel per visible project — the base
 // View() dispatches straight here instead of computing the usual list+detail
-// layout. It records its own link/row hits directly into m.linkHits/
-// m.rowHits (in absolute terminal coordinates, one panel-local origin per
-// panel) rather than going through updateLinkHits, which only knows how to
-// place a single list+detail pair.
+// layout. It records its own link/row/panel hits directly into m.linkHits/
+// m.rowHits/m.panelHits (in absolute terminal coordinates, one panel-local
+// origin per panel) rather than going through updateLinkHits, which only
+// knows how to place a single list+detail pair.
 func (m *Model) renderMultiView() string {
 	m.ensureMultiFocusVisible()
 
@@ -375,6 +375,7 @@ func (m *Model) renderMultiView() string {
 
 	m.linkHits = nil
 	m.rowHits = nil
+	m.panelHits = nil
 
 	projs := m.multiViewProjects()
 	offset := m.multiOffset
@@ -429,6 +430,17 @@ func (m *Model) renderMultiView() string {
 					x1:        originX + w - 2,
 				})
 			}
+			// The panel's own full rectangle, border included (+2 in each
+			// dimension, matching panelBorder's NormalBorder), so a click
+			// anywhere in it — the detail pane, an empty list, the title
+			// line, even the border itself — resolves back to this project.
+			m.panelHits = append(m.panelHits, resolvedPanelHit{
+				project: proj,
+				x0:      panelX,
+				x1:      panelX + w + 2,
+				y0:      lipgloss.Height(header),
+				y1:      lipgloss.Height(header) + bodyHeight + 2,
+			})
 			// +2 for this panel's own border, matching the +2*n reserved by
 			// multiViewPanelWidths so successive panels' origins line up
 			// with where lipgloss.JoinHorizontal actually places them.
