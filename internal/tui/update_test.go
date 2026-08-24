@@ -2076,3 +2076,35 @@ func TestUpdateAppliedMsgHandling(t *testing.T) {
 		t.Fatalf("expected success to return tea.Quit")
 	}
 }
+
+// TestUpdateFlashSurvivesWhileBrewRuns covers a real bug: `brew update &&
+// brew upgrade` routinely runs far longer than infoFlashDuration (3s), so
+// without m.busy the "updating…" flash would vanish on the next InfoMsg tick
+// while the shell-out was still in flight, making the update look like it
+// silently did nothing.
+func TestUpdateFlashSurvivesWhileBrewRuns(t *testing.T) {
+	be := &fakeBackend{}
+	m := newTestModel(be)
+	m.UpdateVersion = "9.9.9"
+
+	if _, cmd := m.Update(keyRune("u")); cmd == nil {
+		t.Fatalf("expected a cmd once a newer version is known")
+	}
+	if !m.busy {
+		t.Fatalf("expected busy=true while the brew shell-out is in flight")
+	}
+
+	// Simulate an InfoMsg tick landing well after infoFlashDuration would
+	// normally have expired the flash.
+	m.flashTime = time.Now().Add(-2 * infoFlashDuration)
+	m.Update(InfoMsg{})
+	if !strings.Contains(m.flash, "updating to v9.9.9") {
+		t.Fatalf("flash = %q, want the updating notice to survive while busy", m.flash)
+	}
+
+	// Once the shell-out reports back, busy clears and later ticks can expire it.
+	m.Update(UpdateAppliedMsg{Err: errors.New("brew: command not found")})
+	if m.busy {
+		t.Fatalf("expected busy to clear once the update finishes")
+	}
+}
