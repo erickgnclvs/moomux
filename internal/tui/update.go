@@ -39,6 +39,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case UpdateAppliedMsg:
 		m.updating = false
+		m.busy = false
 		if msg.Err != nil {
 			return m.flashError(msg.Err)
 		}
@@ -724,6 +725,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.updating = true
+		m.busy = true
 		m.setFlash("info", "updating to v"+m.UpdateVersion+"…")
 		return m, runUpdateCmd()
 	}
