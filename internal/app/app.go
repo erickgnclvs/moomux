@@ -1061,6 +1061,7 @@ func (a *App) KillTmux(id string) error {
 	if !ok {
 		return fmt.Errorf("unknown session %q", id)
 	}
+	slog.Debug("KillTmux: starting", "id", id, "pid", os.Getpid(), "tmux_session", s.TmuxSession, "term_tab_id", s.TermTabID)
 	has, err := a.Tmux.HasSession(s.TmuxSession)
 	if err != nil {
 		return err
@@ -1071,7 +1072,9 @@ func (a *App) KillTmux(id string) error {
 		}
 	}
 	if closer, ok := a.Terminal.(terminal.TabCloser); ok && s.TermTabID != "" {
-		if err := closer.CloseTab(s.TermTabID); err != nil {
+		err := closer.CloseTab(s.TermTabID)
+		slog.Debug("KillTmux: CloseTab returned", "id", id, "tab_id", s.TermTabID, "err", err)
+		if err != nil {
 			slog.Warn("close terminal tab failed", "id", id, "tab_id", s.TermTabID, "err", err)
 		}
 		s.TermTabID = ""

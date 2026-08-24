@@ -106,6 +106,13 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) == 3 && os.Args[1] == "__park-worker" {
+		if err := runParkWorker(os.Args[2]); err != nil {
+			fmt.Fprintln(os.Stderr, "moomux:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "reseed" {
 		if err := runReseed(); err != nil {
 			fmt.Fprintln(os.Stderr, "moomux:", err)
@@ -425,9 +432,7 @@ func runPark() error {
 	if err != nil {
 		return fmt.Errorf("park: resolve executable: %w", err)
 	}
-	cmd := newParkHelperCommand(executable, s.ID)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd := newParkHelperCommand(executable, "__park-detached", s.ID)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("park: %w", err)
 	}
@@ -435,18 +440,60 @@ func runPark() error {
 	return nil
 }
 
-func newParkHelperCommand(executable, id string) *exec.Cmd {
-	cmd := exec.Command(executable, "__park-detached", id)
+// newParkHelperCommand leaves Stdin/Stdout/Stderr unset (-> /dev/null, see
+// os/exec's Cmd docs) rather than inheriting this process's own: when the
+// caller is a slash command like /kill, this process's stdout is a pipe the
+// host CLI reads to capture command output, not the pane's tty. Inheriting
+// that pipe into a detached helper ties its lifetime to the pipe staying
+// open, which defeats the whole point of detaching it from the pane it's
+// about to kill — the read side blocking on/timing out waiting for EOF can
+// tear the helper down before it reaches CloseTab.
+func newParkHelperCommand(executable, subcommand, id string) *exec.Cmd {
+	cmd := exec.Command(executable, subcommand, id)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	return cmd
 }
 
+// runParkDetached is the first of two detachment layers and deliberately
+// does no park work itself. Setsid shields it from the SIGHUP a killed tmux
+// session's pty delivers to the pane's foreground process group, but not
+// from a supervisor that reaps its own descendants by walking the process
+// tree rather than relying on that signal — e.g. a host CLI like Claude
+// Code cleaning up whatever /kill spawned once the shell command that ran
+// it is gone. Setsid changes this process's session, not its place in that
+// tree: it's still a child of `moomux park`, which is still a child of the
+// pane being killed.
+//
+// So instead of parking here, this starts a second Setsid'd child
+// (__park-worker) with Start (not Run) and returns immediately without
+// waiting on it. The moment this process exits, the OS reparents that
+// child away to init/launchd — off the tree entirely — before the
+// supervisor's cleanup has a real chance to reach it.
 func runParkDetached(id string) error {
+	executable, err := os.Executable()
+	if err != nil {
+		slog.Error("park-detached: resolve executable failed", "id", id, "err", err)
+		return err
+	}
+	if err := newParkHelperCommand(executable, "__park-worker", id).Start(); err != nil {
+		slog.Error("park-detached: start worker failed", "id", id, "err", err)
+		return err
+	}
+	return nil
+}
+
+// runParkWorker does the actual park operation — see runParkDetached's doc
+// comment for why it runs a step further removed from `moomux park` than
+// the process that started it. Its stderr is /dev/null too (same reasoning
+// as runPark), so a failure here is otherwise invisible — log it.
+func runParkWorker(id string) error {
 	a, err := newApp()
 	if err != nil {
+		slog.Error("park-worker: load app failed", "id", id, "err", err)
 		return err
 	}
 	if err := a.KillTmux(id); err != nil {
+		slog.Error("park-worker: kill tmux failed", "id", id, "err", err)
 		return fmt.Errorf("park: %w", err)
 	}
 	return nil

@@ -89,21 +89,33 @@ func TestCurrentSessionPrefersTmuxOverStaleCwd(t *testing.T) {
 // closing the iTerm tab killed `moomux park` before it reached tmux. The
 // helper must have its own session so it survives closing the invoking tab.
 func TestParkHelperCommandIsDetached(t *testing.T) {
-	cmd := newParkHelperCommand("/tmp/moomux", "demo:a")
-	if cmd.Path != "/tmp/moomux" {
-		t.Fatalf("helper path = %q, want /tmp/moomux", cmd.Path)
-	}
-	wantArgs := []string{"/tmp/moomux", "__park-detached", "demo:a"}
-	if len(cmd.Args) != len(wantArgs) {
-		t.Fatalf("helper args = %q, want %q", cmd.Args, wantArgs)
-	}
-	for i := range wantArgs {
-		if cmd.Args[i] != wantArgs[i] {
+	for _, subcommand := range []string{"__park-detached", "__park-worker"} {
+		cmd := newParkHelperCommand("/tmp/moomux", subcommand, "demo:a")
+		if cmd.Path != "/tmp/moomux" {
+			t.Fatalf("helper path = %q, want /tmp/moomux", cmd.Path)
+		}
+		wantArgs := []string{"/tmp/moomux", subcommand, "demo:a"}
+		if len(cmd.Args) != len(wantArgs) {
 			t.Fatalf("helper args = %q, want %q", cmd.Args, wantArgs)
 		}
-	}
-	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setsid {
-		t.Fatal("park helper must start in a detached process session")
+		for i := range wantArgs {
+			if cmd.Args[i] != wantArgs[i] {
+				t.Fatalf("helper args = %q, want %q", cmd.Args, wantArgs)
+			}
+		}
+		if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setsid {
+			t.Fatal("park helper must start in a detached process session")
+		}
+		// Regression: a /kill invocation's stdout is a pipe the host CLI
+		// reads to capture command output, not a stable tty. Wiring the
+		// detached helper's stdio to it (as runPark used to, via
+		// cmd.Stdout/Stderr = os.Stdout/os.Stderr after construction) ties
+		// the helper's lifetime to that pipe staying open, so the read side
+		// blocking on/timing out waiting for EOF can kill the helper before
+		// it reaches CloseTab — closing tmux but leaving the tab open.
+		if cmd.Stdin != nil || cmd.Stdout != nil || cmd.Stderr != nil {
+			t.Fatal("park helper must not inherit the caller's stdio — leave it unset so it goes to /dev/null")
+		}
 	}
 }
 
