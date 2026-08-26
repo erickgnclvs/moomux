@@ -497,6 +497,7 @@ func (m *Model) openNewSessionForm() {
 	m.newFormAutoSubmit = m.cfg.AutoSubmitDefault
 	m.nameInput.SetValue("")
 	m.branchInput.SetValue("")
+	m.baseBranchInput.SetValue("")
 	m.ticketInput.SetValue("")
 	m.prInput.SetValue("")
 	m.promptInput.SetValue("")
@@ -900,7 +901,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// The prompt field is a multi-line textarea — leave ↑/↓ to it for
 		// moving the cursor between lines. But if you're on the first
 		// or last line, let it switch fields!
-		if m.newFormFocus == 3 {
+		if m.newFormFocus == 4 {
 			atTop := m.promptInput.Line() == 0
 			atBottom := m.promptInput.Line() == m.promptInput.LineCount()-1
 			if (key.Matches(msg, m.keys.FormUp) && !atTop) || (key.Matches(msg, m.keys.FormDown) && !atBottom) {
@@ -953,7 +954,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case key.Matches(msg, m.keys.Enter):
-		if m.newFormFocus == 3 {
+		if m.newFormFocus == 4 {
 			// Enter inserts a newline in the multi-line prompt field instead
 			// of submitting — tab to another field to submit with Enter.
 			break
@@ -964,6 +965,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		name := m.nameInput.Value()
 		branch := m.branchInput.Value()
+		baseBranch := m.baseBranchInput.Value()
 		ticket := m.ticketInput.Value()
 		pr := m.prInput.Value()
 		firstPrompt := m.promptInput.Value()
@@ -994,7 +996,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				// session creation if the config write fails.
 				_ = m.backend.SetAutoSubmitDefault(autoSubmit)
 			}
-			s, hint, err := m.backend.CreateSession(proj, name, agent, branch, ticket, openTerminal, dangerous)
+			s, hint, err := m.backend.CreateSession(proj, name, agent, branch, ticket, openTerminal, dangerous, baseBranch)
 			if err != nil {
 				return CreateFailedMsg{Err: err}
 			}
@@ -1034,10 +1036,12 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case 2:
 		m.branchInput, cmd = m.branchInput.Update(msg)
 	case 3:
-		m.promptInput, cmd = m.promptInput.Update(msg)
+		m.baseBranchInput, cmd = m.baseBranchInput.Update(msg)
 	case 4:
-		m.ticketInput, cmd = m.ticketInput.Update(msg)
+		m.promptInput, cmd = m.promptInput.Update(msg)
 	case 5:
+		m.ticketInput, cmd = m.ticketInput.Update(msg)
+	case 6:
 		m.prInput, cmd = m.prInput.Update(msg)
 	}
 	return m, cmd
@@ -1082,6 +1086,7 @@ func (m *Model) newFormMoveFocus(delta int) {
 func (m *Model) newFormBlurAll() {
 	m.nameInput.Blur()
 	m.branchInput.Blur()
+	m.baseBranchInput.Blur()
 	m.ticketInput.Blur()
 	m.prInput.Blur()
 	m.promptInput.Blur()
@@ -1096,10 +1101,12 @@ func (m *Model) newFormFocusInput() {
 	case 2:
 		m.branchInput.Focus()
 	case 3:
-		m.promptInput.Focus()
+		m.baseBranchInput.Focus()
 	case 4:
-		m.ticketInput.Focus()
+		m.promptInput.Focus()
 	case 5:
+		m.ticketInput.Focus()
+	case 6:
 		m.prInput.Focus()
 	}
 }

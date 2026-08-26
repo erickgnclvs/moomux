@@ -34,7 +34,7 @@ type Backend interface {
 	// CreateSession's hint, when non-empty, is a user-facing instruction
 	// (e.g. "run: tmux attach -t ...") to show alongside success — it is
 	// not an error.
-	CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool) (s session.Session, hint string, err error)
+	CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch string) (s session.Session, hint string, err error)
 	// StartFirstPrompt waits for a freshly created session's agent pane to
 	// be ready, then types prompt into it, and — if autoSubmit is true —
 	// presses Enter to start the agent working on it. No-op if prompt is
@@ -265,10 +265,11 @@ type Model struct {
 	mode                    Mode
 	nameInput               textinput.Model
 	branchInput             textinput.Model
+	baseBranchInput         textinput.Model
 	ticketInput             textinput.Model
 	prInput                 textinput.Model
 	promptInput             textarea.Model
-	newFormFocus            int // 0=project selector, 1=nameInput, 2=branchInput, 3=promptInput, 4=ticketInput, 5=prInput, 6=agent selector, 7=dangerous toggle, 8=open-terminal toggle, 9=auto-submit toggle
+	newFormFocus            int // 0=project selector, 1=nameInput, 2=branchInput, 3=baseBranchInput, 4=promptInput, 5=ticketInput, 6=prInput, 7=agent selector, 8=dangerous toggle, 9=open-terminal toggle, 10=auto-submit toggle
 	newFormErr              string
 	newFormAgentIdx         int  // index into agentNames; -1 means "not chosen yet"
 	newFormDangerous        bool // whether to run the chosen agent with its permission-skipping flag; off by default
@@ -505,6 +506,11 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 	bi.CharLimit = 128
 	bi.Width = 40
 
+	bbi := textinput.New()
+	bbi.Placeholder = "base branch (optional, defaults to project's)"
+	bbi.CharLimit = 128
+	bbi.Width = 40
+
 	tki := textinput.New()
 	tki.Placeholder = "ticket url (optional)"
 	tki.CharLimit = 256
@@ -550,6 +556,7 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 		cancelPoll:       cancel,
 		nameInput:        ti,
 		branchInput:      bi,
+		baseBranchInput:  bbi,
 		ticketInput:      tki,
 		prInput:          pri,
 		promptInput:      pi,
