@@ -1277,6 +1277,50 @@ func TestKillTmuxSkipsTabCloseWhenNoTabRecorded(t *testing.T) {
 	}
 }
 
+// TestWorktreeStatusFetchesOnceUntilStale guards gitFetchStaleAfter: without
+// it, WorktreeStatus's ahead/unpushed counts would only ever reflect
+// whatever was fetched at session-creation time, never picking up a push
+// made elsewhere (another worktree, a merged PR) — see dueForFetch.
+func TestWorktreeStatusFetchesOnceUntilStale(t *testing.T) {
+	a, git, _, _ := newTestApp(t, gitProject("/repo"))
+	_ = a.Store.Put(session.Session{
+		ID: "demo:feat", Project: "demo", Name: "feat", Branch: "feat",
+		WorktreePath: "/wt/feat",
+	})
+
+	fetchCalls := func() int {
+		n := 0
+		for _, c := range git.calls {
+			if len(c) >= 4 && c[1] == "fetch" && c[2] == "origin" && c[3] == "feat" {
+				n++
+			}
+		}
+		return n
+	}
+
+	if _, _, ok := a.WorktreeStatus("demo:feat"); !ok {
+		t.Fatal("WorktreeStatus not ok")
+	}
+	if n := fetchCalls(); n != 1 {
+		t.Fatalf("fetch calls after first check = %d, want 1", n)
+	}
+
+	if _, _, ok := a.WorktreeStatus("demo:feat"); !ok {
+		t.Fatal("WorktreeStatus not ok")
+	}
+	if n := fetchCalls(); n != 1 {
+		t.Fatalf("fetch calls after second immediate check = %d, want still 1 (not due yet)", n)
+	}
+
+	a.lastFetch["demo:feat"] = time.Now().Add(-gitFetchStaleAfter - time.Second)
+	if _, _, ok := a.WorktreeStatus("demo:feat"); !ok {
+		t.Fatal("WorktreeStatus not ok")
+	}
+	if n := fetchCalls(); n != 2 {
+		t.Fatalf("fetch calls after threshold elapsed = %d, want 2", n)
+	}
+}
+
 func TestMoveSession(t *testing.T) {
 	a, _, _, _ := newTestApp(t, gitProject("/repo"))
 	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Order: 1})
