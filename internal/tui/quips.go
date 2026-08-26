@@ -7,6 +7,9 @@ var quipsWorking = []string{
 	"milking this for progress",
 	"no time to graze",
 	"plowing through it",
+	"cud-crunching the details",
+	"herding tokens into place",
+	"in the zone, don't spook me",
 }
 
 var quipsDone = []string{
@@ -14,18 +17,25 @@ var quipsDone = []string{
 	"udder success",
 	"cow-culated risk paid off",
 	"steaks were high, nailed it",
+	"mission moo-complished",
+	"pasture perfect finish",
+	"that'll do, cow, that'll do",
 }
 
 var quipsNeedsInput = []string{
 	"udderly stuck without you",
 	"moo-ve this along, please",
 	"cow-nfused, help me out",
+	"can't budge without a moo-tion",
+	"stalled in the stall",
 }
 
 var quipsParked = []string{
 	"chewing the cud, nothing to see",
 	"herd nothing, seen nothing",
 	"mootering off for now",
+	"out to pasture",
+	"on a moo-ratorium",
 }
 
 // quipPool returns the quip pool matching a session's state.
