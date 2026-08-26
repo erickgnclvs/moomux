@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/erickgnclvs/moomux/internal/browser"
@@ -34,6 +35,38 @@ type App struct {
 	Git          *gitwt.Client
 	PR           *prstatus.Client
 	WorktreeRoot string
+
+	// fetchMu guards lastFetch, written concurrently by WorktreeStatus calls
+	// for different sessions running on separate tea.Cmd goroutines.
+	fetchMu   sync.Mutex
+	lastFetch map[string]time.Time // by session id; see gitFetchStaleAfter
+}
+
+// gitFetchStaleAfter bounds how long WorktreeStatus trusts a session's
+// remote-tracking refs before running a `git fetch` to refresh them. Without
+// this, moomux's ahead/unpushed counts only ever reflect the last fetch done
+// at session-creation time — accurate right after a push made from within
+// that same worktree (push updates its own local ref), but stale once
+// anything else moves the remote (another worktree pushes the same branch,
+// a PR merges, a force-push). Much longer than gitStatusStaleAfter since
+// this hits the network and only needs to catch up occasionally, not on
+// every status poll.
+const gitFetchStaleAfter = 5 * time.Minute
+
+// dueForFetch reports whether id hasn't been fetched within
+// gitFetchStaleAfter, and marks it as fetched now if so — so concurrent or
+// rapid-fire calls for the same id don't each trigger their own fetch.
+func (a *App) dueForFetch(id string) bool {
+	a.fetchMu.Lock()
+	defer a.fetchMu.Unlock()
+	if a.lastFetch == nil {
+		a.lastFetch = map[string]time.Time{}
+	}
+	if time.Since(a.lastFetch[id]) < gitFetchStaleAfter {
+		return false
+	}
+	a.lastFetch[id] = time.Now()
+	return true
 }
 
 // agentCmd returns the CLI binary name for the given agent.
@@ -1338,6 +1371,9 @@ func (a *App) WorktreeStatus(id string) (dirty, unpushed, ok bool) {
 	s, exists := a.Store.Get(id)
 	if !exists {
 		return false, false, false
+	}
+	if s.Branch != "" && a.dueForFetch(id) && a.Git.HasRemote(s.WorktreePath, "origin") {
+		_ = a.Git.Fetch(s.WorktreePath, s.Branch) // best-effort
 	}
 	clean, err := a.Git.IsWorktreeClean(s.WorktreePath)
 	if err != nil {
