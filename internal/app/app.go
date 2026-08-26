@@ -378,8 +378,11 @@ func (a *App) tmuxSessionUsingWorktree(path string) (string, error) {
 // CreateSession's hint, when non-empty, is a user-facing instruction
 // (e.g. "run: tmux attach -t ...") to show alongside success — it is
 // not an error. When openTerminal is false, the tmux session is started
-// detached and no terminal window is opened.
-func (a *App) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool) (session.Session, string, error) {
+// detached and no terminal window is opened. baseBranch, when set, is used
+// instead of the project's configured base branch as the ref a fresh branch
+// is cut from; it has no effect when existingBranch is set (resuming a
+// branch has no base to cut from).
+func (a *App) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch string) (session.Session, string, error) {
 	proj, ok := a.Cfg.Projects[project]
 	if !ok {
 		return session.Session{}, "", fmt.Errorf("unknown project %q", project)
@@ -407,6 +410,10 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 	tmuxName := TmuxSessionName(session.MakeID(project, name), name)
 	branch := ""
 	var userscriptHint string
+	baseBranchRef := proj.BaseBranch
+	if baseBranch != "" {
+		baseBranchRef = baseBranch
+	}
 
 	if proj.UsesWorktree() {
 		wt = filepath.Join(a.WorktreeRoot, project, name)
@@ -430,7 +437,7 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 			// user can act on — git's own "fatal: invalid reference" doesn't
 			// say which field was wrong or what to do about it.
 			if !a.Git.BranchExists(proj.Repo, branch) && !a.Git.RemoteBranchExists(proj.Repo, branch) {
-				return session.Session{}, "", fmt.Errorf("no branch %q in %s (checked local and origin) — fix the name, or clear the branch field to start a new branch off %s", branch, proj.Repo, proj.BaseBranch)
+				return session.Session{}, "", fmt.Errorf("no branch %q in %s (checked local and origin) — fix the name, or clear the branch field to start a new branch off %s", branch, proj.Repo, baseBranchRef)
 			}
 		} else {
 			branch = name
@@ -439,7 +446,7 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 			}
 		}
 		if newBranch && hasRemote {
-			_ = a.Git.Fetch(proj.Repo, proj.BaseBranch) // best-effort
+			_ = a.Git.Fetch(proj.Repo, baseBranchRef) // best-effort
 		}
 		var err error
 		if !newBranch {
@@ -463,7 +470,7 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 			}
 			err = a.Git.AddWorktreeExisting(proj.Repo, wt, branch)
 		} else {
-			err = a.Git.AddWorktree(proj.Repo, wt, branch, proj.BaseBranch)
+			err = a.Git.AddWorktree(proj.Repo, wt, branch, baseBranchRef)
 		}
 		if err != nil {
 			slog.Error("git worktree add failed", "repo", proj.Repo, "path", wt, "branch", branch, "err", err)

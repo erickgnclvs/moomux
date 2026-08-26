@@ -58,8 +58,8 @@ func TestNewSessionFormFlow(t *testing.T) {
 	m.nameInput.SetValue("myfeat")
 	m.nameInput.CursorEnd()
 	press(m, tea.KeyTab) // -> branch
-	for i := 0; i < 4; i++ {
-		press(m, tea.KeyTab) // branch -> prompt -> ticket -> PR -> agent selector
+	for i := 0; i < 5; i++ {
+		press(m, tea.KeyTab) // branch -> base branch -> prompt -> ticket -> PR -> agent selector
 	}
 	press(m, tea.KeyRight) // claude -> codex
 	if agentNames[m.newFormAgentIdx] != "codex" {
@@ -69,6 +69,7 @@ func TestNewSessionFormFlow(t *testing.T) {
 	press(m, tea.KeyShiftTab) // agent -> PR
 	press(m, tea.KeyShiftTab) // PR -> ticket
 	typeText(m, "https://t/1")
+	press(m, tea.KeyShiftTab)
 	press(m, tea.KeyShiftTab)
 	press(m, tea.KeyShiftTab) // -> branch again
 	if m.newFormFocus != 2 {
@@ -94,8 +95,8 @@ func TestNewSessionFormSendsFirstPrompt(t *testing.T) {
 
 	m.Update(keyRune("n"))
 	typeText(m, "myfeat")
-	for i := 0; i < 2; i++ {
-		press(m, tea.KeyTab) // name -> branch -> prompt
+	for i := 0; i < 3; i++ {
+		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt
 	}
 	typeText(m, "do the thing")
 	press(m, tea.KeyTab) // prompt -> ticket, so Enter submits rather than adding a newline
@@ -125,8 +126,8 @@ func TestNewSessionFormAutoSubmitToggle(t *testing.T) {
 
 	m.Update(keyRune("n"))
 	typeText(m, "myfeat")
-	for i := 0; i < 2; i++ {
-		press(m, tea.KeyTab) // name -> branch -> prompt
+	for i := 0; i < 3; i++ {
+		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt
 	}
 	typeText(m, "do the thing")
 	for i := 0; i < 6; i++ {
@@ -168,8 +169,8 @@ func TestNewSessionFormAutoSubmitDefaultsFromConfigAndOnlyPersistsOnChange(t *te
 		t.Fatal("form did not seed auto-submit from cfg.AutoSubmitDefault")
 	}
 	typeText(m, "myfeat")
-	for i := 0; i < 2; i++ {
-		press(m, tea.KeyTab) // name -> branch -> prompt
+	for i := 0; i < 3; i++ {
+		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt
 	}
 	typeText(m, "do the thing")
 	press(m, tea.KeyTab) // prompt -> ticket, so Enter submits rather than adding a newline
@@ -200,10 +201,10 @@ func TestNewSessionFormPromptSupportsMultilineNavigation(t *testing.T) {
 
 	m.Update(keyRune("n"))
 	typeText(m, "myfeat")
-	for i := 0; i < 2; i++ {
-		press(m, tea.KeyTab) // name -> branch -> prompt
+	for i := 0; i < 3; i++ {
+		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt
 	}
-	if m.newFormFocus != 3 {
+	if m.newFormFocus != 4 {
 		t.Fatalf("focus = %d, want prompt field", m.newFormFocus)
 	}
 
@@ -227,21 +228,21 @@ func TestNewSessionFormPromptSupportsMultilineNavigation(t *testing.T) {
 	}
 
 	press(m, tea.KeyUp)
-	if m.newFormFocus != 3 {
+	if m.newFormFocus != 4 {
 		t.Fatalf("up arrow left the prompt field: focus = %d", m.newFormFocus)
 	}
 	press(m, tea.KeyDown)
-	if m.newFormFocus != 3 {
+	if m.newFormFocus != 4 {
 		t.Fatalf("down arrow left the prompt field: focus = %d", m.newFormFocus)
 	}
 
 	// Every other field still cycles focus on up/down.
 	press(m, tea.KeyTab) // prompt -> ticket
-	if m.newFormFocus != 4 {
+	if m.newFormFocus != 5 {
 		t.Fatalf("focus = %d, want ticket field", m.newFormFocus)
 	}
 	press(m, tea.KeyDown)
-	if m.newFormFocus != 5 {
+	if m.newFormFocus != 6 {
 		t.Fatalf("down arrow did not advance focus off the ticket field: focus = %d", m.newFormFocus)
 	}
 }
@@ -257,8 +258,8 @@ func TestNewSessionFormSurvivesPostCreatePRTagFailure(t *testing.T) {
 
 	m.Update(keyRune("n"))
 	typeText(m, "myfeat")
-	for i := 0; i < 4; i++ {
-		press(m, tea.KeyTab) // name -> branch -> prompt -> ticket -> PR
+	for i := 0; i < 5; i++ {
+		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt -> ticket -> PR
 	}
 	typeText(m, "https://github.com/x/y/pull/2")
 
@@ -285,8 +286,8 @@ func TestNewSessionFormSurvivesPostCreateFirstPromptFailure(t *testing.T) {
 
 	m.Update(keyRune("n"))
 	typeText(m, "myfeat")
-	for i := 0; i < 2; i++ {
-		press(m, tea.KeyTab) // name -> branch -> prompt
+	for i := 0; i < 3; i++ {
+		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt
 	}
 	typeText(m, "do the thing")
 	press(m, tea.KeyTab) // prompt -> ticket, so Enter submits rather than adding a newline
@@ -309,6 +310,7 @@ func TestNewSessionFormClearsPRAndPromptOnReopen(t *testing.T) {
 
 	m.Update(keyRune("n"))
 	press(m, tea.KeyTab) // -> branch
+	press(m, tea.KeyTab) // -> base branch
 	press(m, tea.KeyTab) // -> prompt
 	typeText(m, "leftover prompt")
 	for i := 0; i < 2; i++ {
@@ -333,6 +335,7 @@ func TestNewSessionFormAppendsTicketAndPRToFirstPrompt(t *testing.T) {
 	m.Update(keyRune("n"))
 	typeText(m, "myfeat")
 	press(m, tea.KeyTab) // -> branch
+	press(m, tea.KeyTab) // -> base branch
 	press(m, tea.KeyTab) // -> prompt
 	typeText(m, "do the thing")
 	press(m, tea.KeyTab) // -> ticket

@@ -71,6 +71,7 @@ func (m *Model) resizeFormInputs() {
 	setInputWidth(&m.nameInput, textInputWidth(&m.nameInput, 40, avail))
 	setInputWidth(&m.sessionForm.nameInput, textInputWidth(&m.sessionForm.nameInput, 40, avail))
 	setInputWidth(&m.branchInput, textInputWidth(&m.branchInput, 40, avail))
+	setInputWidth(&m.baseBranchInput, textInputWidth(&m.baseBranchInput, 40, avail))
 	setInputWidth(&m.ticketInput, textInputWidth(&m.ticketInput, 40, avail))
 	setInputWidth(&m.prInput, textInputWidth(&m.prInput, 40, avail))
 	// Unlike the single-line fields above, the textarea soft-wraps its
@@ -135,29 +136,30 @@ func (m *Model) renderFormHint(text string) string {
 // new-session form is currently focused, so the jargon (worktree, base
 // branch) doesn't have to be memorized up front.
 // newFormFieldCount is the focus cycle length: project selector, name,
-// branch, prompt, ticket, PR, agent selector, dangerous toggle,
+// branch, base branch, prompt, ticket, PR, agent selector, dangerous toggle,
 // open-terminal toggle, auto-submit toggle — matching the rendered order.
 // The named constants below are the newFormFocus values for the non-text
 // rows in that order; the text inputs are referred to by their bare index.
 const (
-	newFormFieldCount        = 10
-	newFormAgentFocus        = 6
-	newFormDangerousFocus    = 7
-	newFormOpenTerminalFocus = 8
-	newFormAutoSubmitFocus   = 9
+	newFormFieldCount        = 11
+	newFormAgentFocus        = 7
+	newFormDangerousFocus    = 8
+	newFormOpenTerminalFocus = 9
+	newFormAutoSubmitFocus   = 10
 )
 
 var newFormFieldHints = []string{
-	0: "which project this session belongs to — ←→ to choose",
-	1: "shown in the list and worktree folder — blank uses branch",
-	2: "resume an existing branch; blank = new branch off base",
-	3: "optional — the agent's first task; enter for a newline, tab away to submit",
-	4: "optional — shown as a clickable ticket icon next to the session",
-	5: "optional — shown as a clickable PR icon next to the session",
-	6: "which agent CLI runs in the session's pane — ←→ to choose",
-	7: "on: skips permission prompts (--dangerously-skip-permissions / --yolo); no effect for opencode",
-	8: "on: starts the session in the background, no terminal window",
-	9: "on: presses enter after typing the first prompt so the agent starts right away; off: leaves it typed for you to review first",
+	0:  "which project this session belongs to — ←→ to choose",
+	1:  "shown in the list and worktree folder — blank uses branch",
+	2:  "resume an existing branch; blank = new branch off base",
+	3:  "only used for a new branch — blank uses the project's base branch",
+	4:  "optional — the agent's first task; enter for a newline, tab away to submit",
+	5:  "optional — shown as a clickable ticket icon next to the session",
+	6:  "optional — shown as a clickable PR icon next to the session",
+	7:  "which agent CLI runs in the session's pane — ←→ to choose",
+	8:  "on: skips permission prompts (--dangerously-skip-permissions / --yolo); no effect for opencode",
+	9:  "on: starts the session in the background, no terminal window",
+	10: "on: presses enter after typing the first prompt so the agent starts right away; off: leaves it typed for you to review first",
 }
 
 func (m *Model) renderNewForm() string {
@@ -170,6 +172,8 @@ func (m *Model) renderNewForm() string {
 	b.WriteString(m.nameInput.View())
 	b.WriteString("\n\n")
 	b.WriteString(m.branchInput.View())
+	b.WriteString("\n\n")
+	b.WriteString(m.baseBranchInput.View())
 	b.WriteString("\n\n")
 	b.WriteString(m.promptInput.View())
 	b.WriteString("\n\n")

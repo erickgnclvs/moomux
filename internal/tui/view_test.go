@@ -372,13 +372,14 @@ func TestShortFormViewportKeepsFocusedInputVisible(t *testing.T) {
 	m.mode = ModeNewForm
 	m.nameInput.SetValue("unique-name")
 	m.branchInput.SetValue("unique-branch")
+	m.baseBranchInput.SetValue("unique-basebranch")
 	m.promptInput.SetValue("unique-prompt")
 	m.ticketInput.SetValue("unique-ticket")
 	m.prInput.SetValue("unique-pr")
 	m.resizeFormInputs()
 
-	values := []string{"[demo]", "unique-name", "unique-branch", "unique-prompt", "unique-ticket", "unique-pr", "[claude]", "[off]", "[off]", "[off]"}
-	hints := []string{"which project", "worktree folder", "existing branch", "agent's first task", "clickable ticket", "clickable PR", "←→ to choose", "permission prompts", "background", "starts right away"}
+	values := []string{"[demo]", "unique-name", "unique-branch", "unique-basebranch", "unique-prompt", "unique-ticket", "unique-pr", "[claude]", "[off]", "[off]", "[off]"}
+	hints := []string{"which project", "worktree folder", "existing branch", "project's base branch", "agent's first task", "clickable ticket", "clickable PR", "←→ to choose", "permission prompts", "background", "starts right away"}
 	for focus, value := range values {
 		m.newFormBlurAll()
 		m.newFormFocus = focus
@@ -408,6 +409,7 @@ func TestFocusedOverlayLineCoversEveryNewFormField(t *testing.T) {
 	m.mode = ModeNewForm
 	m.nameInput.SetValue("tok-name")
 	m.branchInput.SetValue("tok-branch")
+	m.baseBranchInput.SetValue("tok-basebranch")
 	m.promptInput.SetValue("tok-firstprompt")
 	m.ticketInput.SetValue("tok-ticket")
 	m.prInput.SetValue("tok-prurl")
@@ -421,9 +423,10 @@ func TestFocusedOverlayLineCoversEveryNewFormField(t *testing.T) {
 		{newFormProjFocus, "project:"},
 		{1, "tok-name"},
 		{2, "tok-branch"},
-		{3, "tok-firstprompt"},
-		{4, "tok-ticket"},
-		{5, "tok-prurl"},
+		{3, "tok-basebranch"},
+		{4, "tok-firstprompt"},
+		{5, "tok-ticket"},
+		{6, "tok-prurl"},
 		{newFormAgentFocus, "agent:"},
 		{newFormDangerousFocus, "dangerous:"},
 		{newFormOpenTerminalFocus, "open in background:"},
