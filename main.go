@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-isatty"
@@ -345,12 +344,13 @@ func runSpawn(args []string) error {
 	fmt.Println(s.TmuxSession)
 
 	if *prompt != "" {
-		// ponytail: fixed delay, not a readiness poll — good enough for a
-		// fire-and-forget v1. Upgrade to polling pane content for a ready
-		// marker if agent startup time ever outgrows this.
-		time.Sleep(2 * time.Second)
-		if err := a.SendPrompt(s.TmuxSession, *prompt); err != nil {
-			return fmt.Errorf("send prompt: %w", err)
+		// StartFirstPrompt waits for the agent to actually be ready for
+		// input (rather than a fixed delay) and errors out — instead of
+		// silently returning success — if the pane looks stuck on something
+		// else, e.g. an interactive SSH passphrase prompt from a
+		// worktree-create userscript or the agent's own launch command.
+		if err := a.StartFirstPrompt(s.TmuxSession, *prompt, true); err != nil {
+			return fmt.Errorf("send prompt: %w (session %s was created but may need manual attention: tmux attach -t %s)", err, s.TmuxSession, s.TmuxSession)
 		}
 	}
 	return nil

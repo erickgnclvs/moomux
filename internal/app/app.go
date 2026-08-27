@@ -603,15 +603,6 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 	return s, hint, nil
 }
 
-// SendPrompt types text into a session's agent pane, for handing a freshly
-// spawned session its initial task. No-op if prompt is empty.
-func (a *App) SendPrompt(tmuxSession, prompt string) error {
-	if prompt == "" {
-		return nil
-	}
-	return a.Tmux.SendKeys(tmuxSession, prompt)
-}
-
 // paneStablePoll/paneStableChecks/paneReadyTimeout tune StartFirstPrompt's
 // readiness wait: an agent CLI's startup render (splash, model warmup, hook
 // setup) takes a variable amount of time, and typing into it before it's
@@ -631,13 +622,42 @@ const (
 	paneReadyTimeout = 15 * time.Second
 )
 
+// stuckPromptMarkers are substrings seen in real incidents where a pane's
+// tty landed on an interactive credential prompt — e.g. an SSH passphrase
+// prompt, surfaced when a worktree-create userscript or the agent's own
+// launch command needs to auth over SSH and the environment's ssh-agent
+// socket is stale — instead of the agent CLI ever starting. Such a prompt
+// looks exactly as "stable" as an idle agent input box, but typing the task
+// text into it just spams a wrong-passphrase loop until the text runs out,
+// and the agent itself never receives anything.
+var stuckPromptMarkers = []string{
+	"enter passphrase",
+	"password:",
+	"verification code",
+}
+
+// stuckPromptMarker returns the first stuckPromptMarkers substring found in
+// content (case-insensitive), or "" if none match.
+func stuckPromptMarker(content string) string {
+	lower := strings.ToLower(content)
+	for _, m := range stuckPromptMarkers {
+		if strings.Contains(lower, m) {
+			return m
+		}
+	}
+	return ""
+}
+
 // waitForPaneReady blocks until tmuxSession's pane content has visibly
 // changed from its pre-launch state and then stops changing across
 // paneStableChecks consecutive polls, or paneReadyTimeout elapses overall —
 // whichever comes first. Timing out during either phase is not an error: the
 // caller proceeds best-effort regardless, same as the fixed-delay behavior
-// this replaces.
-func (a *App) waitForPaneReady(tmuxSession string) {
+// this replaces. Returns an error, without proceeding, if the pane it landed
+// on looks like a stuck interactive prompt rather than the agent (see
+// stuckPromptMarkers) — sending the caller's text into that would be
+// actively harmful, not just wasted.
+func (a *App) waitForPaneReady(tmuxSession string) error {
 	deadline := time.Now().Add(paneReadyTimeout)
 	before, _ := a.Tmux.CapturePane(tmuxSession)
 
@@ -654,19 +674,24 @@ func (a *App) waitForPaneReady(tmuxSession string) {
 		// Never saw anything but the pre-launch state within the whole
 		// budget — proceeding to check "stability" against it would just
 		// immediately declare it stable, defeating the point of this wait.
-		return
+		return nil
 	}
-	a.waitForPaneStable(tmuxSession, last, deadline)
+	final := a.waitForPaneStable(tmuxSession, last, deadline)
+	if marker := stuckPromptMarker(final); marker != "" {
+		return fmt.Errorf("pane is showing an interactive prompt (%q), not the agent — refusing to type the prompt into it", marker)
+	}
+	return nil
 }
 
 // waitForPaneStable polls tmuxSession's pane, starting from the already-known
 // seed content, until paneStableChecks consecutive captures come back
-// identical (and non-empty) or deadline passes — whichever comes first.
-// Shared by waitForPaneReady (waiting for startup rendering to finish) and
-// StartFirstPrompt (waiting for the just-typed prompt to finish rendering
-// before Enter is pressed) — both are the same "stop guessing a fixed delay,
-// wait for the pane to actually stop changing" problem.
-func (a *App) waitForPaneStable(tmuxSession, seed string, deadline time.Time) {
+// identical (and non-empty) or deadline passes — whichever comes first. It
+// returns the last content it saw, so callers can inspect what the pane
+// settled on. Shared by waitForPaneReady (waiting for startup rendering to
+// finish) and StartFirstPrompt (waiting for the just-typed prompt to finish
+// rendering before Enter is pressed) — both are the same "stop guessing a
+// fixed delay, wait for the pane to actually stop changing" problem.
+func (a *App) waitForPaneStable(tmuxSession, seed string, deadline time.Time) string {
 	last := seed
 	stable := 0
 	for {
@@ -674,14 +699,14 @@ func (a *App) waitForPaneStable(tmuxSession, seed string, deadline time.Time) {
 		if err == nil && cur == last && cur != "" {
 			stable++
 			if stable >= paneStableChecks {
-				return
+				return cur
 			}
 		} else {
 			stable = 0
 		}
 		last = cur
 		if time.Now().After(deadline) {
-			return
+			return last
 		}
 		time.Sleep(paneStablePoll)
 	}
@@ -698,14 +723,23 @@ func (a *App) StartFirstPrompt(tmuxSession, prompt string, autoSubmit bool) erro
 	if prompt == "" {
 		return nil
 	}
-	a.waitForPaneReady(tmuxSession)
-	if err := a.Tmux.SendLiteral(tmuxSession, prompt); err != nil {
+	if err := a.waitForPaneReady(tmuxSession); err != nil {
+		return err
+	}
+	if err := a.Tmux.PasteText(tmuxSession, prompt); err != nil {
 		return err
 	}
 	if !autoSubmit {
 		return nil
 	}
-	a.waitForPaneStable(tmuxSession, "", time.Now().Add(paneReadyTimeout))
+	settled := a.waitForPaneStable(tmuxSession, "", time.Now().Add(paneReadyTimeout))
+	if marker := stuckPromptMarker(settled); marker != "" {
+		// The prompt text was already typed above — on a real passphrase
+		// prompt (which doesn't echo input) it's already gone, consumed as a
+		// failed auth attempt. Pressing Enter here would only submit another
+		// one; report the failure instead of compounding it.
+		return fmt.Errorf("pane shows an interactive prompt (%q) after typing the prompt — the agent likely never received it", marker)
+	}
 	return a.pressEnterUntilSubmitted(tmuxSession, prompt)
 }
 
@@ -724,7 +758,7 @@ const (
 // input rather than an earlier pause in a multi-phase startup (splash screen,
 // then connecting to MCP servers, then finally ready). Landing in an earlier
 // plateau can put the Enter in the same narrow window the agent's own
-// paste-safety heuristic swallows (see SendLiteral's doc comment), so instead
+// paste-safety heuristic swallows (see PasteText's doc comment), so instead
 // of trusting the first press, check whether the prompt is still sitting
 // there afterward and press again if so.
 func (a *App) pressEnterUntilSubmitted(tmuxSession, prompt string) error {
