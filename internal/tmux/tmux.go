@@ -210,32 +210,58 @@ func (c *Client) NewSession(name, cwd, cmd, windowName string) error {
 	return nil
 }
 
-// SendKeys types text into session's active pane followed by Enter. NewSession
-// leaves the left (agent) pane active, so this reaches the agent's input.
-func (c *Client) SendKeys(session, text string) error {
-	_, err := c.Runner.Run("send-keys", "-t", exactWindow(session), text, "Enter")
-	return err
-}
-
 // PressEnter sends a bare Enter keypress to session's active pane, with no
-// text — must be its own send-keys call (see SendLiteral's doc comment for
-// why bundling it with the text is unreliable).
+// text — must be its own step (see PasteText's doc comment for why bundling
+// it with the text is unreliable).
 func (c *Client) PressEnter(session string) error {
 	_, err := c.Runner.Run("send-keys", "-t", exactWindow(session), "Enter")
 	return err
 }
 
-// SendLiteral types text into session's active pane with no trailing Enter
-// and no interpretation of text as tmux key names. Deliberately not bundled
-// with Enter in the same send-keys call: many terminal-raw-mode TUIs (Ink,
-// readline) detect "paste" by how a chunk of input arrives, and a whole
-// text+Enter burst delivered in one tmux command commonly gets swallowed as
-// pasted content instead of text-then-submit — the Enter never registers as
-// a keypress. Sending text and Enter as separate send-keys invocations (see
-// PressEnter), with a short gap between them, is the pattern that actually
-// submits.
-func (c *Client) SendLiteral(session, text string) error {
-	_, err := c.Runner.Run("send-keys", "-t", exactWindow(session), "-l", "--", text)
+// PasteText delivers text into session's active pane via tmux's paste
+// buffer (load-buffer + paste-buffer) rather than send-keys, with no
+// trailing Enter. Two problems with send-keys -l made this necessary:
+//
+//  1. send-keys -l submits text as a sequence of individual synthetic
+//     keystrokes, not a paste — a multi-line prompt's embedded newlines each
+//     arrive as their own Enter keypress, so the receiving CLI can submit
+//     (and start acting on) an incomplete prefix of the prompt partway
+//     through instead of receiving the whole thing as one entry.
+//  2. Long text passed as a single argv argument can also just exceed
+//     tmux/exec argument-length limits, silently truncating the prompt.
+//
+// paste-buffer instead hands the terminal one atomic block, which tmux (and
+// any bracketed-paste-aware readline/TUI on the other end) delivers and
+// renders as a single paste — embedded newlines can't be mistaken for
+// separate Enter presses. Deliberately still not bundled with Enter: many
+// terminal-raw-mode TUIs (Ink, readline) detect "paste" by how a chunk of
+// input arrives, and a whole text+Enter burst delivered together commonly
+// gets swallowed as pasted content instead of text-then-submit — the Enter
+// never registers as a keypress. Sending text and Enter as separate steps
+// (see PressEnter), with a short gap between them, is the pattern that
+// actually submits.
+func (c *Client) PasteText(session, text string) error {
+	f, err := os.CreateTemp("", "moomux-paste-*")
+	if err != nil {
+		return fmt.Errorf("paste text: %w", err)
+	}
+	tmpPath := f.Name()
+	defer os.Remove(tmpPath)
+	_, writeErr := f.WriteString(text)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return fmt.Errorf("paste text: %w", writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("paste text: %w", closeErr)
+	}
+	if _, err := c.Runner.Run("load-buffer", tmpPath); err != nil {
+		return err
+	}
+	// -d deletes the buffer immediately after pasting, so it doesn't linger
+	// in tmux's paste-buffer stack (visible to, and reusable by, anything
+	// else in the session via prefix-]).
+	_, err = c.Runner.Run("paste-buffer", "-d", "-t", exactWindow(session))
 	return err
 }
 

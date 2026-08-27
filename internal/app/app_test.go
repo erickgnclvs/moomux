@@ -57,8 +57,17 @@ func (exitErr) Error() string { return "exit status 1" }
 func (exitErr) ExitCode() int { return 1 }
 
 func (f *fakeTmuxRunner) Run(args ...string) (string, error) {
-	key := strings.Join(args, " ")
-	f.calls = append(f.calls, append([]string(nil), args...))
+	recorded := append([]string(nil), args...)
+	if len(args) == 2 && args[0] == "load-buffer" {
+		// PasteText hands load-buffer a temp file path (unpredictable across
+		// runs) rather than the text itself; record what it actually staged
+		// so assertions can check on content instead of a throwaway path.
+		if data, err := os.ReadFile(args[1]); err == nil {
+			recorded = []string{"load-buffer", string(data)}
+		}
+	}
+	key := strings.Join(recorded, " ")
+	f.calls = append(f.calls, recorded)
 	if f.events != nil {
 		*f.events = append(*f.events, "tmux "+key)
 	}
@@ -201,27 +210,6 @@ func TestAgentCmd(t *testing.T) {
 		if got := agentCmd(agent); got != want {
 			t.Errorf("agentCmd(%q) = %q, want %q", agent, got, want)
 		}
-	}
-}
-
-func TestSendPromptTypesIntoSession(t *testing.T) {
-	a, _, tm, _ := newTestApp(t, gitProject("/repo"))
-	if err := a.SendPrompt("moomux-foo", "fix the bug"); err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"send-keys", "-t", "=moomux-foo:", "fix the bug", "Enter"}
-	if len(tm.calls) != 1 || !reflect.DeepEqual(tm.calls[0], want) {
-		t.Fatalf("calls = %v", tm.calls)
-	}
-}
-
-func TestSendPromptEmptyIsNoop(t *testing.T) {
-	a, _, tm, _ := newTestApp(t, gitProject("/repo"))
-	if err := a.SendPrompt("moomux-foo", ""); err != nil {
-		t.Fatal(err)
-	}
-	if len(tm.calls) != 0 {
-		t.Fatalf("expected no tmux calls, got %v", tm.calls)
 	}
 }
 
@@ -2250,7 +2238,7 @@ func TestDeleteSessionOrphanedProjectKeepsRealFolder(t *testing.T) {
 	}
 }
 
-func TestStartFirstPromptWaitsForPaneThenSendsLiteralTextThenSeparateEnter(t *testing.T) {
+func TestStartFirstPromptWaitsForPaneThenPastesTextThenSeparateEnter(t *testing.T) {
 	a, _, tm, _ := newTestApp(t, map[string]config.Project{})
 	// A transition from the pre-launch shell to the agent's idle screen —
 	// see waitForPaneReady's doc comment for why a constant value here
@@ -2268,15 +2256,19 @@ func TestStartFirstPromptWaitsForPaneThenSendsLiteralTextThenSeparateEnter(t *te
 	if !tm.called("capture-pane -p -t =demo:x:") {
 		t.Fatalf("did not poll pane readiness before sending: %v", tm.calls)
 	}
-	// Text and Enter must be two separate send-keys calls — bundling them
-	// into one is what a terminal-raw-mode TUI's paste detection swallows
-	// (see Client.SendLiteral's doc comment).
-	if tm.called("send-keys -t =demo:x: do the thing Enter") {
-		t.Fatalf("text and Enter must not be sent in the same call: %v", tm.calls)
+	// The prompt must be delivered via tmux's paste buffer (load-buffer +
+	// paste-buffer), not send-keys -l: send-keys submits text as individual
+	// synthetic keystrokes, so a multi-line prompt's embedded newlines each
+	// arrive as their own Enter — paste-buffer hands the terminal one atomic
+	// block instead (see Client.PasteText's doc comment).
+	if !tm.called("load-buffer do the thing") {
+		t.Fatalf("did not stage the prompt via load-buffer: %v", tm.calls)
 	}
-	if !tm.called("send-keys -t =demo:x: -l -- do the thing") {
-		t.Fatalf("did not type the prompt as a literal, Enter-less call: %v", tm.calls)
+	if !tm.called("paste-buffer -d -t =demo:x:") {
+		t.Fatalf("did not paste the staged buffer into the pane: %v", tm.calls)
 	}
+	// Enter must be a separate step from the paste — bundling it in is what a
+	// terminal-raw-mode TUI's paste detection swallows.
 	if !tm.called("send-keys -t =demo:x: Enter") {
 		t.Fatalf("did not send a separate Enter to actually start the work: %v", tm.calls)
 	}
@@ -2310,7 +2302,7 @@ func TestStartFirstPromptWaitsForActualPaneChangeBeforeStabilizing(t *testing.T)
 		if sendIdx == -1 && strings.HasPrefix(joined, "capture-pane") {
 			captureBeforeSend++
 		}
-		if strings.HasPrefix(joined, "send-keys -t =demo:x: -l --") {
+		if strings.HasPrefix(joined, "paste-buffer") {
 			sendIdx = i
 			break
 		}
@@ -2329,8 +2321,8 @@ func TestStartFirstPromptWaitsForActualPaneChangeBeforeStabilizing(t *testing.T)
 
 // TestStartFirstPromptWaitsForPaneToSettleAfterTypingBeforePressingEnter
 // guards the same class of race waitForPaneReady already guards against
-// before typing, but on the other side of SendLiteral: a CLI that's still
-// re-rendering the just-typed text (e.g. collapsing a multi-line paste, or
+// before typing, but on the other side of PasteText: a CLI that's still
+// re-rendering the just-pasted text (e.g. collapsing a multi-line paste, or
 // just a slower machine) can still be changing when a fixed, unconditional
 // delay elapses, and pressing Enter into that mid-render state is exactly
 // what swallows it instead of submitting. Enter must wait for the pane to
@@ -2353,7 +2345,7 @@ func TestStartFirstPromptWaitsForPaneToSettleAfterTypingBeforePressingEnter(t *t
 	for i, c := range tm.calls {
 		joined := strings.Join(c, " ")
 		switch {
-		case strings.HasPrefix(joined, "send-keys -t =demo:x: -l --"):
+		case strings.HasPrefix(joined, "paste-buffer"):
 			sendIdx = i
 		case joined == "send-keys -t =demo:x: Enter":
 			enterIdx = i
@@ -2412,6 +2404,60 @@ func TestStartFirstPromptRetriesEnterWhenPromptStillShowing(t *testing.T) {
 	}
 }
 
+// TestStartFirstPromptRefusesStuckSSHPassphrasePrompt reproduces the
+// incident this guards against: a worktree-create userscript (or the
+// agent's launch command itself) needs to auth over SSH, a stale
+// SSH_AUTH_SOCK forces a fallback to an interactive tty passphrase prompt,
+// and that prompt sits there looking exactly as "stable" as an idle agent
+// input box. StartFirstPrompt must recognize it and refuse to type the task
+// text into it — which would otherwise get consumed character-by-character
+// as wrong passphrase attempts — rather than silently reporting success.
+func TestStartFirstPromptRefusesStuckSSHPassphrasePrompt(t *testing.T) {
+	a, _, tm, _ := newTestApp(t, map[string]config.Project{})
+	tm.seq = map[string][]string{
+		"capture-pane -p -t =demo:x:": {
+			"$ claude",
+			"Enter passphrase for key '/home/user/.ssh/id_ed25519':",
+			"Enter passphrase for key '/home/user/.ssh/id_ed25519':",
+		},
+	}
+
+	err := a.StartFirstPrompt("demo:x", "do the thing", true)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "passphrase") {
+		t.Fatalf("error %q does not mention the stuck prompt", err)
+	}
+	if tm.called("load-buffer") || tm.called("paste-buffer") {
+		t.Fatalf("must not type the prompt into a stuck passphrase prompt: %v", tm.calls)
+	}
+}
+
+// TestStartFirstPromptRefusesWhenPromptAppearsAfterTyping guards the case
+// where the pane looked like an idle agent when typing started, but an
+// interactive prompt (e.g. a delayed SSH auth from a slower userscript)
+// shows up by the time the typed text has settled — StartFirstPrompt must
+// not press Enter (which would submit another failed credential attempt)
+// and must report the failure instead of silently declaring success.
+func TestStartFirstPromptRefusesWhenPromptAppearsAfterTyping(t *testing.T) {
+	a, _, tm, _ := newTestApp(t, map[string]config.Project{})
+	tm.seq = map[string][]string{
+		"capture-pane -p -t =demo:x:": {
+			"$ claude", "agent-idle", "agent-idle", // pre-type: looks ready
+			"Password:", "Password:", "Password:", // post-type: actually a stuck prompt
+		},
+	}
+
+	err := a.StartFirstPrompt("demo:x", "do the thing", true)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if tm.called("send-keys -t =demo:x: Enter") {
+		t.Fatalf("must not press Enter into a stuck prompt discovered after typing: %v", tm.calls)
+	}
+}
+
 func TestStartFirstPromptNoopOnEmptyPrompt(t *testing.T) {
 	a, _, tm, _ := newTestApp(t, map[string]config.Project{})
 	if err := a.StartFirstPrompt("demo:x", "", true); err != nil {
@@ -2435,8 +2481,8 @@ func TestStartFirstPromptSkipsEnterWhenAutoSubmitFalse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !tm.called("send-keys -t =demo:x: -l -- do the thing") {
-		t.Fatalf("did not type the prompt: %v", tm.calls)
+	if !tm.called("load-buffer do the thing") || !tm.called("paste-buffer -d -t =demo:x:") {
+		t.Fatalf("did not paste the prompt: %v", tm.calls)
 	}
 	if tm.called("send-keys -t =demo:x: Enter") {
 		t.Fatalf("Enter must not be pressed when autoSubmit is false: %v", tm.calls)
