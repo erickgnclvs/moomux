@@ -183,6 +183,10 @@ func (m *Model) focusedOverlayLine(content string) int {
 			return lineContaining(content, m.prInput.View())
 		case newFormAgentFocus:
 			return lineContaining(content, m.renderNewFormAgentSelector())
+		case newFormModelFocus:
+			return lineContaining(content, muteStyle.Render("model:  ")+m.renderNewFormModelSelector())
+		case newFormThinkingFocus:
+			return lineContaining(content, muteStyle.Render("thinking:  ")+m.renderNewFormThinkingSelector())
 		case newFormDangerousFocus:
 			// Both toggle rows render an identical "[on]"/"[off]" value, so
 			// searching for the value alone can match the wrong row (their
@@ -347,7 +351,7 @@ func (m *Model) View() string {
 	switch m.mode {
 	case ModeNewForm:
 		content := m.compactOverlayContent(m.renderNewForm())
-		footer := m.formFooter(newFormFieldHints[m.newFormFocus], "tab/↑↓ fields  ←→ choose  enter  esc cancel", m.newFormErr)
+		footer := m.formFooter(m.newFormFieldHint(), "tab/↑↓ fields  ←→ choose  enter  esc cancel", m.newFormErr)
 		return m.renderOverlay(content, footer, m.focusedOverlayLine(content))
 	case ModeConfirmDelete:
 		return m.renderOverlay(m.renderConfirm(), "", -1)

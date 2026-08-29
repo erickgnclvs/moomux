@@ -305,6 +305,8 @@ func runSpawn(args []string) error {
 	project := fs.String("project", "", "project name (required; run -list to see configured projects)")
 	name := fs.String("name", "", "session name (derived from -branch if omitted)")
 	agent := fs.String("agent", "", "agent override (claude, codex, opencode)")
+	model := fs.String("model", "", "model override, passed to the agent as --model (e.g. sonnet, opus, haiku)")
+	thinking := fs.String("thinking", "", "thinking/reasoning level: for codex, a real -c model_reasoning_effort value (minimal, low, medium, high, xhigh); for claude/opencode, a phrase prepended to -prompt (e.g. think, think hard, ultrathink) — no effect there without -prompt")
 	dangerous := fs.Bool("dangerous", false, "run the agent with its permission-skipping flag (claude: --dangerously-skip-permissions, codex: --yolo)")
 	branch := fs.String("branch", "", "existing branch to check out, instead of creating a new one")
 	ticket := fs.String("ticket", "", "ticket URL to attach to the session")
@@ -334,7 +336,7 @@ func runSpawn(args []string) error {
 		return err
 	}
 
-	s, hint, err := a.CreateSession(*project, *name, *agent, *branch, *ticket, true, *dangerous, "")
+	s, hint, err := a.CreateSession(*project, *name, *agent, *branch, *ticket, true, *dangerous, "", *model, *thinking)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}
@@ -344,12 +346,20 @@ func runSpawn(args []string) error {
 	fmt.Println(s.TmuxSession)
 
 	if *prompt != "" {
+		firstPrompt := *prompt
+		// codex's thinking level is a real -c model_reasoning_effort flag,
+		// already applied to the launch command above; claude/opencode have
+		// no such flag, so lean on the same magic words a user would type
+		// into the prompt by hand.
+		if *agent != "codex" && *thinking != "" && *thinking != "default" {
+			firstPrompt = *thinking + ": " + firstPrompt
+		}
 		// StartFirstPrompt waits for the agent to actually be ready for
 		// input (rather than a fixed delay) and errors out — instead of
 		// silently returning success — if the pane looks stuck on something
 		// else, e.g. an interactive SSH passphrase prompt from a
 		// worktree-create userscript or the agent's own launch command.
-		if err := a.StartFirstPrompt(s.TmuxSession, *prompt, true); err != nil {
+		if err := a.StartFirstPrompt(s.TmuxSession, firstPrompt, true); err != nil {
 			return fmt.Errorf("send prompt: %w (session %s was created but may need manual attention: tmux attach -t %s)", err, s.TmuxSession, s.TmuxSession)
 		}
 	}

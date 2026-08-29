@@ -130,8 +130,8 @@ func TestNewSessionFormAutoSubmitToggle(t *testing.T) {
 		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt
 	}
 	typeText(m, "do the thing")
-	for i := 0; i < 6; i++ {
-		press(m, tea.KeyTab) // prompt -> ticket -> PR -> agent -> dangerous -> open-in-background -> auto-submit
+	for i := 0; i < 8; i++ {
+		press(m, tea.KeyTab) // prompt -> ticket -> PR -> agent -> model -> thinking -> dangerous -> open-in-background -> auto-submit
 	}
 	if m.newFormFocus != newFormAutoSubmitFocus {
 		t.Fatalf("focus = %d, want auto-submit toggle", m.newFormFocus)

@@ -495,12 +495,15 @@ func (m *Model) openNewSessionForm() {
 	m.newFormOpenInBackground = false
 	m.newFormDangerous = false
 	m.newFormAutoSubmit = m.cfg.AutoSubmitDefault
+	m.newFormModelIdx = 0
+	m.newFormThinkingIdx = 0
 	m.nameInput.SetValue("")
 	m.branchInput.SetValue("")
 	m.baseBranchInput.SetValue("")
 	m.ticketInput.SetValue("")
 	m.prInput.SetValue("")
 	m.promptInput.SetValue("")
+	m.newFormModelInput.SetValue("")
 	m.newFormBlurAll()
 	m.newFormFocusInput()
 	m.resetOverlayViewport()
@@ -939,6 +942,44 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			} else {
 				m.newFormAgentIdx = (m.newFormAgentIdx + 1) % len(agentNames)
 			}
+			// Each agent has its own model list (or, for opencode, a
+			// free-text field) and thinking-level list; a stale choice from a
+			// previous agent could point at the wrong value, so reset both
+			// whenever the agent changes.
+			m.newFormModelIdx = 0
+			m.newFormModelInput.SetValue("")
+			m.newFormThinkingIdx = 0
+			return m, nil
+		}
+		if m.newFormFocus == newFormModelFocus {
+			agent := ""
+			if m.newFormAgentIdx >= 0 {
+				agent = agentNames[m.newFormAgentIdx]
+			}
+			if agent == "opencode" {
+				// Free-text field: leave ←→ to the text input's own cursor
+				// movement, handled by the default routing below.
+				break
+			}
+			names := modelNamesFor(agent)
+			if key.Matches(msg, m.keys.Left) {
+				m.newFormModelIdx = (m.newFormModelIdx - 1 + len(names)) % len(names)
+			} else {
+				m.newFormModelIdx = (m.newFormModelIdx + 1) % len(names)
+			}
+			return m, nil
+		}
+		if m.newFormFocus == newFormThinkingFocus {
+			agent := ""
+			if m.newFormAgentIdx >= 0 {
+				agent = agentNames[m.newFormAgentIdx]
+			}
+			names := thinkingNamesFor(agent)
+			if key.Matches(msg, m.keys.Left) {
+				m.newFormThinkingIdx = (m.newFormThinkingIdx - 1 + len(names)) % len(names)
+			} else {
+				m.newFormThinkingIdx = (m.newFormThinkingIdx + 1) % len(names)
+			}
 			return m, nil
 		}
 		if m.newFormFocus == newFormDangerousFocus {
@@ -980,6 +1021,11 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.newFormErr = ""
 		proj := m.projects[m.newFormProjIdx]
 		agent := agentNames[m.newFormAgentIdx]
+		model := m.newFormModelInput.Value()
+		if agent != "opencode" {
+			model = modelNamesFor(agent)[m.newFormModelIdx]
+		}
+		thinking := thinkingNamesFor(agent)[m.newFormThinkingIdx]
 		dangerous := m.newFormDangerous
 		openTerminal := !m.newFormOpenInBackground
 		m.mode = m.sessionDialogReturn
@@ -996,7 +1042,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				// session creation if the config write fails.
 				_ = m.backend.SetAutoSubmitDefault(autoSubmit)
 			}
-			s, hint, err := m.backend.CreateSession(proj, name, agent, branch, ticket, openTerminal, dangerous, baseBranch)
+			s, hint, err := m.backend.CreateSession(proj, name, agent, branch, ticket, openTerminal, dangerous, baseBranch, model, thinking)
 			if err != nil {
 				return CreateFailedMsg{Err: err}
 			}
@@ -1014,6 +1060,12 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if firstPrompt != "" {
+				if agent != "codex" {
+					// codex's thinking level is a real -c model_reasoning_effort
+					// flag (already applied to the launch command above), not a
+					// prompt phrase.
+					firstPrompt = thinkingPromptPrefix(thinking) + firstPrompt
+				}
 				if extra := newFormPromptExtras(ticket, pr); extra != "" {
 					firstPrompt += "\n\n" + extra
 				}
@@ -1043,6 +1095,10 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ticketInput, cmd = m.ticketInput.Update(msg)
 	case 6:
 		m.prInput, cmd = m.prInput.Update(msg)
+	case newFormModelFocus:
+		if m.newFormAgentIdx >= 0 && agentNames[m.newFormAgentIdx] == "opencode" {
+			m.newFormModelInput, cmd = m.newFormModelInput.Update(msg)
+		}
 	}
 	return m, cmd
 }
@@ -1075,6 +1131,18 @@ func newFormPromptExtras(ticket, pr string) string {
 	return strings.Join(lines, "\n")
 }
 
+// thinkingPromptPrefix returns level+": " to prepend to the first prompt, or
+// "" for "default". There's no CLI flag for extended-thinking effort, so this
+// leans on the same magic words a user would type by hand.
+// ponytail: a no-op when there's no first prompt to prepend to — the form
+// doesn't warn about that combination, it just has no effect.
+func thinkingPromptPrefix(level string) string {
+	if level == "" || level == "default" {
+		return ""
+	}
+	return level + ": "
+}
+
 // newFormMoveFocus blurs the currently focused field and shifts focus by
 // delta (wrapping), then focuses whatever field lands there.
 func (m *Model) newFormMoveFocus(delta int) {
@@ -1090,10 +1158,13 @@ func (m *Model) newFormBlurAll() {
 	m.ticketInput.Blur()
 	m.prInput.Blur()
 	m.promptInput.Blur()
+	m.newFormModelInput.Blur()
 }
 
 // newFormFocusInput focuses the text input at the current focus, if any — the
-// selector and toggle rows have nothing to focus.
+// selector and toggle rows have nothing to focus. The model row is a text
+// input only for opencode; for claude/codex it's a selector, so it's left
+// unfocused there.
 func (m *Model) newFormFocusInput() {
 	switch m.newFormFocus {
 	case 1:
@@ -1108,6 +1179,10 @@ func (m *Model) newFormFocusInput() {
 		m.ticketInput.Focus()
 	case 6:
 		m.prInput.Focus()
+	case newFormModelFocus:
+		if m.newFormAgentIdx >= 0 && agentNames[m.newFormAgentIdx] == "opencode" {
+			m.newFormModelInput.Focus()
+		}
 	}
 }
 
