@@ -34,7 +34,7 @@ type Backend interface {
 	// CreateSession's hint, when non-empty, is a user-facing instruction
 	// (e.g. "run: tmux attach -t ...") to show alongside success — it is
 	// not an error.
-	CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch string) (s session.Session, hint string, err error)
+	CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch, model, thinking string) (s session.Session, hint string, err error)
 	// StartFirstPrompt waits for a freshly created session's agent pane to
 	// be ready, then types prompt into it, and — if autoSubmit is true —
 	// presses Enter to start the agent working on it. No-op if prompt is
@@ -118,6 +118,46 @@ const (
 // — opencode has no permission-skipping flag (see dangerousFlag in
 // internal/app), so its toggle is simply a no-op.
 var agentNames = []string{"claude", "codex", "opencode"}
+
+// modelNamesByAgent is the new-session form's model selector, one list per
+// agentNames entry since each CLI names its own models. "default" omits the
+// --model flag entirely, leaving the agent's own default in place. opencode
+// has no entry — it has no small fixed model list worth hardcoding, so its
+// form row is a free-text input (newFormModelInput) instead of a selector.
+var modelNamesByAgent = map[string][]string{
+	"claude": {"default", "sonnet", "opus", "fable"},
+	"codex":  {"default", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"},
+}
+
+// modelNamesFor returns modelNamesByAgent[agent], defaulting to claude's list
+// for an unrecognized agent so the selector always has at least "default".
+// Never called for "opencode" — see modelNamesByAgent.
+func modelNamesFor(agent string) []string {
+	if names, ok := modelNamesByAgent[agent]; ok {
+		return names
+	}
+	return modelNamesByAgent["claude"]
+}
+
+// thinkingNames is the new-session form's thinking-level selector for
+// claude and opencode. Neither has a launch-time reasoning-effort flag, so
+// these are prepended as a phrase to the first prompt instead (see
+// thinkingPromptPrefix in update.go); "default" means no prefix.
+var thinkingNames = []string{"default", "think", "think hard", "think harder", "ultrathink"}
+
+// codexThinkingNames is codex's thinking-level selector: real values for its
+// -c model_reasoning_effort flag (see reasoningEffortFlag in internal/app),
+// not a prompt phrase.
+var codexThinkingNames = []string{"default", "minimal", "low", "medium", "high", "xhigh"}
+
+// thinkingNamesFor returns codexThinkingNames for codex, thinkingNames
+// otherwise.
+func thinkingNamesFor(agent string) []string {
+	if agent == "codex" {
+		return codexThinkingNames
+	}
+	return thinkingNames
+}
 
 // agentNameIndex finds agent's position in agentNames, defaulting to 0
 // (claude) if it's unrecognized.
@@ -269,9 +309,12 @@ type Model struct {
 	ticketInput             textinput.Model
 	prInput                 textinput.Model
 	promptInput             textarea.Model
-	newFormFocus            int // 0=project selector, 1=nameInput, 2=branchInput, 3=baseBranchInput, 4=promptInput, 5=ticketInput, 6=prInput, 7=agent selector, 8=dangerous toggle, 9=open-terminal toggle, 10=auto-submit toggle
+	newFormModelInput       textinput.Model // opencode's free-text model field; unused for claude/codex
+	newFormFocus            int             // 0=project selector, 1=nameInput, 2=branchInput, 3=baseBranchInput, 4=promptInput, 5=ticketInput, 6=prInput, 7=agent selector, 8=model selector, 9=thinking selector, 10=dangerous toggle, 11=open-terminal toggle, 12=auto-submit toggle
 	newFormErr              string
 	newFormAgentIdx         int  // index into agentNames; -1 means "not chosen yet"
+	newFormModelIdx         int  // index into modelNamesFor(chosen agent); 0 ("default") initially, reset on agent change
+	newFormThinkingIdx      int  // index into thinkingNamesFor(chosen agent); 0 ("default") initially, reset on agent change
 	newFormDangerous        bool // whether to run the chosen agent with its permission-skipping flag; off by default
 	newFormProjIdx          int  // project selector in the new-session form; index into m.projects
 	newFormOpenInBackground bool // whether to skip opening a terminal window for the new session; off by default
@@ -521,6 +564,14 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 	pri.CharLimit = 256
 	pri.Width = 40
 
+	// opencode has no fixed model list of its own worth hardcoding — it's a
+	// free-text field instead of a selector like modelNamesByAgent's other
+	// entries.
+	mi := textinput.New()
+	mi.Placeholder = "model (optional, e.g. anthropic/claude-sonnet-4-5)"
+	mi.CharLimit = 128
+	mi.Width = 40
+
 	si := textinput.New()
 	si.Placeholder = "session name"
 	si.CharLimit = 64
@@ -541,30 +592,31 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 	pi.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("enter", "ctrl+j", "ctrl+m"), key.WithHelp("enter", "newline"))
 
 	m := &Model{
-		cfg:              cfg,
-		backend:          backend,
-		keys:             DefaultKeyMap(),
-		states:           map[string]watcher.State{},
-		titleState:       map[string]watcher.State{},
-		tmuxAlive:        map[string]bool{},
-		gitStatus:        map[string]gitStatusInfo{},
-		gitStatusPending: map[string]bool{},
-		prStatus:         map[string]prStatusInfo{},
-		prStatusPending:  map[string]bool{},
-		prompts:          map[string]string{},
-		statusCh:         statusCh,
-		cancelPoll:       cancel,
-		nameInput:        ti,
-		branchInput:      bi,
-		baseBranchInput:  bbi,
-		ticketInput:      tki,
-		prInput:          pri,
-		promptInput:      pi,
-		searchInput:      si,
-		overlayViewport:  viewport.New(1, 1),
-		overlayMode:      ModeList,
-		overlayFocus:     -1,
-		multiCursors:     map[string]int{},
+		cfg:               cfg,
+		backend:           backend,
+		keys:              DefaultKeyMap(),
+		states:            map[string]watcher.State{},
+		titleState:        map[string]watcher.State{},
+		tmuxAlive:         map[string]bool{},
+		gitStatus:         map[string]gitStatusInfo{},
+		gitStatusPending:  map[string]bool{},
+		prStatus:          map[string]prStatusInfo{},
+		prStatusPending:   map[string]bool{},
+		prompts:           map[string]string{},
+		statusCh:          statusCh,
+		cancelPoll:        cancel,
+		nameInput:         ti,
+		branchInput:       bi,
+		baseBranchInput:   bbi,
+		ticketInput:       tki,
+		prInput:           pri,
+		promptInput:       pi,
+		newFormModelInput: mi,
+		searchInput:       si,
+		overlayViewport:   viewport.New(1, 1),
+		overlayMode:       ModeList,
+		overlayFocus:      -1,
+		multiCursors:      map[string]int{},
 	}
 	m.projects = cfg.OrderedProjectNames()
 	// Land on the first project with active sessions rather than always

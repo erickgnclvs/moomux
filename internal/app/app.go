@@ -94,14 +94,46 @@ func dangerousFlag(agent string) string {
 	}
 }
 
+// modelFlag returns the --model flag for agent, or "" if model is empty or
+// "default".
+// ponytail: assumes --model is the right flag name for all three agents;
+// revisit if codex/opencode turn out to use something else.
+func modelFlag(agent, model string) string {
+	if model == "" || model == "default" {
+		return ""
+	}
+	return "--model " + model
+}
+
+// reasoningEffortFlag returns codex's -c model_reasoning_effort="<value>"
+// flag, or "" if thinking is empty/"default" or agent isn't codex. Unlike
+// --model, this isn't assumed to generalize: claude has no CLI flag for
+// extended-thinking effort (it's driven by magic words in the prompt
+// instead, see thinkingPromptPrefix in internal/tui), and opencode's
+// reasoning-effort flag (--variant) only exists on its one-shot `run`
+// subcommand, not the interactive session moomux launches here.
+func reasoningEffortFlag(agent, thinking string) string {
+	if agent != "codex" || thinking == "" || thinking == "default" {
+		return ""
+	}
+	return fmt.Sprintf("-c model_reasoning_effort=%q", thinking)
+}
+
 // buildAgentCmd returns the shell command that launches agent in its tmux
-// pane, appending its dangerous flag when requested and supported.
-func buildAgentCmd(agent string, dangerous bool) string {
+// pane, appending its dangerous flag, --model flag, and (codex only)
+// reasoning-effort flag when requested and supported.
+func buildAgentCmd(agent string, dangerous bool, model, thinking string) string {
 	cmd := agentCmd(agent)
 	if dangerous {
 		if flag := dangerousFlag(agent); flag != "" {
 			cmd += " " + flag
 		}
+	}
+	if flag := modelFlag(agent, model); flag != "" {
+		cmd += " " + flag
+	}
+	if flag := reasoningEffortFlag(agent, thinking); flag != "" {
+		cmd += " " + flag
 	}
 	return cmd
 }
@@ -414,8 +446,13 @@ func (a *App) tmuxSessionUsingWorktree(path string) (string, error) {
 // detached and no terminal window is opened. baseBranch, when set, is used
 // instead of the project's configured base branch as the ref a fresh branch
 // is cut from; it has no effect when existingBranch is set (resuming a
-// branch has no base to cut from).
-func (a *App) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch string) (session.Session, string, error) {
+// branch has no base to cut from). model, when non-empty and not "default",
+// is passed to the agent as --model. thinking, when non-empty and not
+// "default", is passed to codex as -c model_reasoning_effort=<value> (see
+// reasoningEffortFlag); it has no effect for claude/opencode, which have no
+// launch-time reasoning-effort flag — the caller is expected to apply their
+// magic-word prompt prefix itself (see thinkingPromptPrefix in internal/tui).
+func (a *App) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch, model, thinking string) (session.Session, string, error) {
 	proj, ok := a.Cfg.Projects[project]
 	if !ok {
 		return session.Session{}, "", fmt.Errorf("unknown project %q", project)
@@ -532,11 +569,14 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 			slog.Warn("claude trust write failed", "path", wt, "err", err)
 		}
 	}
-	cmd := buildAgentCmd(agent, dangerous)
+	cmd := buildAgentCmd(agent, dangerous, model, thinking)
 	agentPort := 0
 	if agent == "opencode" {
 		agentPort = a.nextOpenCodePort()
 		cmd = fmt.Sprintf("opencode --port %d", agentPort)
+		if flag := modelFlag(agent, model); flag != "" {
+			cmd += " " + flag
+		}
 	}
 
 	if err := a.newTmuxSession(tmuxName, wt, cmd, name); err != nil {
@@ -1051,7 +1091,10 @@ func (a *App) OpenSession(id string) (string, error) {
 			}
 		}
 		slog.Info("tmux session absent, recreating", "tmux_session", s.TmuxSession, "cwd", s.WorktreePath)
-		cmd := buildAgentCmd(s.AgentName(), s.Dangerous)
+		// ponytail: session.Session has no stored model/thinking fields, so a
+		// recreated pane always relaunches with the agent's defaults — same
+		// as it always has for everything but the dangerous flag.
+		cmd := buildAgentCmd(s.AgentName(), s.Dangerous, "", "")
 		if s.AgentName() == "opencode" {
 			if s.AgentPort == 0 {
 				s.AgentPort = a.nextOpenCodePort()

@@ -103,7 +103,7 @@ type setThemeCall struct{ theme, appearance string }
 type createCall struct {
 	project, name, agent, branch, ticket string
 	openTerminal, dangerous              bool
-	baseBranch                           string
+	baseBranch, model, thinking          string
 }
 type sendPromptCall struct {
 	tmuxSession, prompt string
@@ -134,8 +134,8 @@ type moveProjectCall struct {
 	delta int
 }
 
-func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch string) (session.Session, string, error) {
-	f.createCalls = append(f.createCalls, createCall{project, name, agent, existingBranch, ticket, openTerminal, dangerous, baseBranch})
+func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch, model, thinking string) (session.Session, string, error) {
+	f.createCalls = append(f.createCalls, createCall{project, name, agent, existingBranch, ticket, openTerminal, dangerous, baseBranch, model, thinking})
 	if f.createErr != nil {
 		return session.Session{}, "", f.createErr
 	}

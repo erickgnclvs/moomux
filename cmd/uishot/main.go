@@ -45,6 +45,16 @@ var screens = map[string][]string{
 	// Branch field focused, so its hint (the field that most often needs
 	// correcting) is the one on screen — 2 tabs from the project selector.
 	"new-session-branch": {"n", "tab", "tab"},
+	// 9 tabs from the project selector lands on the thinking selector (see
+	// newFormFieldCount) — the field right after the new model selector,
+	// exercising both new rows' scroll-into-view and hint text at once.
+	"new-session-model": {"n", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "tab"},
+	// 7 tabs from the project selector lands on the agent selector, which the
+	// active sample project ("demo") defaults to codex; one "right" cycles it
+	// to opencode, then a final tab lands on the model row, which for
+	// opencode is a free-text input instead of the claude/codex selector —
+	// exercises that per-agent branch.
+	"new-session-model-opencode": {"n", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "right", "tab"},
 	// The form preselects the active project, so no "right" press is needed
 	// to pick one; 3 tabs from there lands on the first-prompt textarea (see
 	// newFormFieldCount) — both Enter and ctrl+j insert a newline there,
@@ -220,7 +230,7 @@ type fakeBackend struct {
 	createErr error
 }
 
-func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch string) (session.Session, string, error) {
+func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch, model, thinking string) (session.Session, string, error) {
 	return session.Session{}, "", f.createErr
 }
 func (f *fakeBackend) StartFirstPrompt(tmuxSession, prompt string, autoSubmit bool) error {
