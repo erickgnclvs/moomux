@@ -2027,13 +2027,13 @@ func TestValidateProjectErrors(t *testing.T) {
 	}
 	for _, c := range cases {
 		p := c.p
-		if err := a.validateProject(c.name, &p); err == nil {
-			t.Errorf("validateProject(%q, %+v) should fail", c.name, c.p)
+		if err := a.validateProjectLocked(c.name, &p); err == nil {
+			t.Errorf("validateProjectLocked(%q, %+v) should fail", c.name, c.p)
 		}
 	}
 	// home expansion + base branch default
 	p := config.Project{Repo: "~/somewhere"}
-	if err := a.validateProject("ok", &p); err != nil {
+	if err := a.validateProjectLocked("ok", &p); err != nil {
 		t.Fatal(err)
 	}
 	home, _ := os.UserHomeDir()

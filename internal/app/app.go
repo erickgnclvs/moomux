@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +42,51 @@ type App struct {
 	// for different sessions running on separate tea.Cmd goroutines.
 	fetchMu   sync.Mutex
 	lastFetch map[string]time.Time // by session id; see gitFetchStaleAfter
+
+	// cfgMu guards Cfg. Mutators (AddProject and friends, the Set* settings)
+	// take it for writing and hold it across their I/O, which also closes
+	// the TOCTOU between validateProjectLocked's duplicate-name check and
+	// saveProjectLocked. Readers copy what they need and let go — several
+	// (CreateSession above all) run for seconds and must not block a write
+	// that whole time.
+	//
+	// The local TUI already needed this: CreateSession and WorktreeStatus
+	// read Cfg.Projects from tea.Cmd goroutines while AddProject writes it
+	// from the Update loop. Serving App over a socket, one goroutine per
+	// connection, made the same race routine rather than narrow.
+	cfgMu sync.RWMutex
+}
+
+// project returns a copy of the named project's config. config.Project is
+// all value types, so the copy is safe to use after the lock is released —
+// which matters for CreateSession, whose work outlives any lock it should
+// hold.
+func (a *App) project(name string) (config.Project, bool) {
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+	p, ok := a.Cfg.Projects[name]
+	return p, ok
+}
+
+// projectsSnapshot copies the project map for callers that iterate it.
+func (a *App) projectsSnapshot() map[string]config.Project {
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+	return maps.Clone(a.Cfg.Projects)
+}
+
+// ConfigSnapshot returns a copy of the live config, with the reference-typed
+// fields cloned so the caller neither races a concurrent write nor holds a
+// handle on App's own state. This is how anything outside App should read
+// Cfg; the local TUI is the exception, and aliases a.Cfg deliberately (see
+// runProgram) so config edits reach its render loop.
+func (a *App) ConfigSnapshot() config.Config {
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+	c := *a.Cfg
+	c.Projects = maps.Clone(a.Cfg.Projects)
+	c.Order = slices.Clone(a.Cfg.Order)
+	return c
 }
 
 // gitFetchStaleAfter bounds how long WorktreeStatus trusts a session's
@@ -240,7 +287,7 @@ func installAgentSupport(agent string) string {
 // without requiring the user to reopen a particular session first.
 func (a *App) InstallKnownCommands() {
 	agents := make(map[string]bool)
-	for _, project := range a.Cfg.Projects {
+	for _, project := range a.projectsSnapshot() {
 		agents[project.AgentName()] = true
 	}
 	for _, s := range a.Store.All() {
@@ -281,10 +328,11 @@ func (a *App) ReseedWorktree(s session.Session) []string {
 	if err != nil {
 		return []string{err.Error()}
 	}
+	proj, _ := a.project(s.Project)
 	return userscript.RunWorktreeCreate(home, userscript.Env{
 		Project:  s.Project,
 		Worktree: s.WorktreePath,
-		Repo:     a.Cfg.Projects[s.Project].Repo,
+		Repo:     proj.Repo,
 		Branch:   s.Branch,
 		Force:    true,
 	})
@@ -328,16 +376,22 @@ func (a *App) nextOpenCodePort() int {
 	return port
 }
 
-func (a *App) Projects() []string { return a.Cfg.OrderedProjectNames() }
+func (a *App) Projects() []string {
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+	return a.Cfg.OrderedProjectNames()
+}
 
 // MoveProject shifts the project with the given name by delta positions (-1
 // left, +1 right) in the manual project order and persists it. It's a no-op
 // if the move would go out of bounds.
 func (a *App) MoveProject(name string, delta int) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
-	order := a.Projects()
+	order := a.Cfg.OrderedProjectNames() // not a.Projects(): we already hold cfgMu
 	idx := -1
 	for i, n := range order {
 		if n == name {
@@ -370,7 +424,10 @@ func (a *App) MoveProject(name string, delta int) error {
 func (a *App) Sessions() []session.Session {
 	_ = a.Store.Reload()
 	all := a.Store.All()
-	if a.Cfg.SortRecentFirst {
+	a.cfgMu.RLock()
+	recentFirst := a.Cfg.SortRecentFirst
+	a.cfgMu.RUnlock()
+	if recentFirst {
 		session.SortByRecent(all)
 	}
 	return all
@@ -453,7 +510,7 @@ func (a *App) tmuxSessionUsingWorktree(path string) (string, error) {
 // launch-time reasoning-effort flag — the caller is expected to apply their
 // magic-word prompt prefix itself (see thinkingPromptPrefix in internal/tui).
 func (a *App) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch, model, thinking string) (session.Session, string, error) {
-	proj, ok := a.Cfg.Projects[project]
+	proj, ok := a.project(project)
 	if !ok {
 		return session.Session{}, "", fmt.Errorf("unknown project %q", project)
 	}
@@ -1020,7 +1077,7 @@ func (a *App) SetSessionArchived(id string, archived bool) (session.Session, err
 // sessions created before a given integration existed. See
 // installAgentSupport — this only adds the "still a known project" guard.
 func (a *App) repairAgentSupport(s session.Session) string {
-	if _, ok := a.Cfg.Projects[s.Project]; !ok {
+	if _, ok := a.project(s.Project); !ok {
 		return ""
 	}
 	return installAgentSupport(s.AgentName())
@@ -1202,7 +1259,9 @@ func (a *App) KillTmux(id string) error {
 	return nil
 }
 
-func (a *App) validateProject(name string, p *config.Project) error {
+// validateProjectLocked requires a.cfgMu held for writing: its duplicate-name
+// check is only meaningful if it can't be overtaken before saveProjectLocked.
+func (a *App) validateProjectLocked(name string, p *config.Project) error {
 	if name == "" {
 		return fmt.Errorf("project name required")
 	}
@@ -1228,7 +1287,8 @@ func (a *App) validateProject(name string, p *config.Project) error {
 	return nil
 }
 
-func (a *App) saveProject(name string, p config.Project) error {
+// saveProjectLocked requires a.cfgMu held for writing.
+func (a *App) saveProjectLocked(name string, p config.Project) error {
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
@@ -1244,33 +1304,39 @@ func (a *App) saveProject(name string, p config.Project) error {
 }
 
 func (a *App) AddProject(name string, p config.Project) error {
-	if err := a.validateProject(name, &p); err != nil {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	if err := a.validateProjectLocked(name, &p); err != nil {
 		return err
 	}
 	if err := gitwt.IsRepo(p.Repo); err != nil {
 		return err
 	}
 	p.Kind = "git"
-	return a.saveProject(name, p)
+	return a.saveProjectLocked(name, p)
 }
 
 // InitProjectAndAdd creates the directory (if missing), runs `git init` with the
 // given base branch + an empty initial commit, then saves the project.
 func (a *App) InitProjectAndAdd(name string, p config.Project) error {
-	if err := a.validateProject(name, &p); err != nil {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	if err := a.validateProjectLocked(name, &p); err != nil {
 		return err
 	}
 	if err := gitwt.Init(p.Repo, p.BaseBranch); err != nil {
 		return err
 	}
 	p.Kind = "git"
-	return a.saveProject(name, p)
+	return a.saveProjectLocked(name, p)
 }
 
 // AddPlainProject saves a non-git project. Sessions run directly in the
 // project folder; no branches, no worktrees, no per-session isolation.
 func (a *App) AddPlainProject(name string, p config.Project) error {
-	if err := a.validateProject(name, &p); err != nil {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	if err := a.validateProjectLocked(name, &p); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(p.Repo, 0o755); err != nil {
@@ -1279,10 +1345,12 @@ func (a *App) AddPlainProject(name string, p config.Project) error {
 	p.Kind = "plain"
 	p.BaseBranch = ""
 	p.BranchPrefix = ""
-	return a.saveProject(name, p)
+	return a.saveProjectLocked(name, p)
 }
 
 func (a *App) UpdateProject(name string, updated config.Project) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
@@ -1340,6 +1408,8 @@ func (a *App) UpdateProject(name string, updated config.Project) error {
 // SetTheme persists the chosen theme name and appearance override to config,
 // following the same reload -> mutate -> save idiom as UpdateProject.
 func (a *App) SetTheme(theme, appearance string) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
@@ -1358,6 +1428,8 @@ func (a *App) SetTheme(theme, appearance string) error {
 // form's auto-submit toggle, following the same reload -> mutate -> save
 // idiom as SetTheme.
 func (a *App) SetAutoSubmitDefault(autoSubmit bool) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
@@ -1374,6 +1446,8 @@ func (a *App) SetAutoSubmitDefault(autoSubmit bool) error {
 // most-recently-opened first), following the same reload -> mutate -> save
 // idiom as SetTheme.
 func (a *App) SetSortRecentFirst(recentFirst bool) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
@@ -1390,6 +1464,8 @@ func (a *App) SetSortRecentFirst(recentFirst bool) error {
 // fields most useful at a glance, following the same reload -> mutate ->
 // save idiom as SetSortRecentFirst.
 func (a *App) SetCompactDetail(compact bool) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
@@ -1408,6 +1484,8 @@ func (a *App) SetCompactDetail(compact bool) error {
 // interactively, by promptAutoTmux in main.go before the TUI starts; this
 // gives it a second, always-available entry point via the settings screen.
 func (a *App) SetAutoTmux(autoTmux bool) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
@@ -1421,6 +1499,8 @@ func (a *App) SetAutoTmux(autoTmux bool) error {
 }
 
 func (a *App) RemoveProject(name string) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
@@ -1521,7 +1601,7 @@ func (a *App) DeleteSession(id string) (string, error) {
 		}
 	}
 	var hint string
-	if proj, ok := a.Cfg.Projects[s.Project]; ok {
+	if proj, ok := a.project(s.Project); ok {
 		if proj.UsesWorktree() {
 			if home, err := os.UserHomeDir(); err != nil {
 				slog.Warn("userscript run skipped", "err", err)
