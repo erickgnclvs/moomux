@@ -19,6 +19,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/codexhook"
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/gitwt"
+	"github.com/erickgnclvs/moomux/internal/ipc"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/terminal"
@@ -53,6 +54,10 @@ Usage:
                      whose worktree you're currently in, with MOOMUX_FORCE=1
                      so they redo setup they'd otherwise skip as already
                      done. Backs the /reseed slash command inside Claude Code.
+  moomux serve      Run the orchestration core headless on a unix socket,
+                     for another front end to drive. 'moomux serve -h'.
+  moomux ui ...     Run the TUI against a running 'moomux serve' instead of
+                     its own core. Run 'moomux ui -h' for its flags.
   moomux --version  Print the version.
   moomux --help     Show this message.`)
 }
@@ -107,6 +112,20 @@ func main() {
 	}
 	if len(os.Args) == 3 && os.Args[1] == "__park-worker" {
 		if err := runParkWorker(os.Args[2]); err != nil {
+			fmt.Fprintln(os.Stderr, "moomux:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "serve" {
+		if err := runServe(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "moomux:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "ui" {
+		if err := runRemote(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "moomux:", err)
 			os.Exit(1)
 		}
@@ -585,13 +604,18 @@ func run() error {
 	}
 
 	home, _ := os.UserHomeDir()
+	return runProgram(cfg, a, buildWatcher(home))
+}
+
+// runProgram drives the TUI against any backend + watcher, so the local
+// (*app.App) path and the socket-backed (*ipc.Client) path share one setup.
+func runProgram(cfg *config.Config, b tui.Backend, w watcher.Watcher) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	statusCh := make(chan watcher.Snapshot, 4)
-	multi := buildWatcher(home)
-	go multi.Run(ctx, statusCh)
+	go w.Run(ctx, statusCh)
 
 	tui.ApplySettings(cfg)
-	m := tui.New(cfg, a, statusCh, cancel)
+	m := tui.New(cfg, b, statusCh, cancel)
 	m.Version = version
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
@@ -607,6 +631,51 @@ func run() error {
 		return syscall.Exec(self, os.Args, os.Environ())
 	}
 	return nil
+}
+
+// runServe implements `moomux serve`: expose the orchestration core on a
+// unix socket so a second front end (the TUI over -socket, or a native app)
+// can drive it without linking any of this.
+func runServe(args []string) error {
+	home, _ := os.UserHomeDir()
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	sock := fs.String("socket", ipc.DefaultSocket(home), "unix socket path to listen on")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	a, err := newApp()
+	if err != nil {
+		return err
+	}
+	ln, err := ipc.Listen(*sock)
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+	fmt.Fprintln(os.Stderr, "moomux: serving on", *sock)
+	return (&ipc.Server{Backend: a, Config: a.ConfigSnapshot, Watcher: buildWatcher(home)}).Serve(ln)
+}
+
+// runRemote implements `moomux ui -socket`: the same TUI, driven entirely
+// over the socket. Proves the boundary is complete — anything it can't do
+// is a hole a native client would hit too.
+func runRemote(args []string) error {
+	home, _ := os.UserHomeDir()
+	fs := flag.NewFlagSet("ui", flag.ExitOnError)
+	sock := fs.String("socket", ipc.DefaultSocket(home), "unix socket of a running `moomux serve`")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	c := &ipc.Client{Socket: *sock}
+	cfg, err := c.Config()
+	if err != nil {
+		return fmt.Errorf("connect %s: %w (is `moomux serve` running?)", *sock, err)
+	}
+	// The TUI reads projects and settings off this pointer for the rest of
+	// the run; Bind lets the client refresh it in place after any change,
+	// the way App mutating its own a.Cfg does locally.
+	c.Bind(cfg)
+	return runProgram(cfg, c, c)
 }
 
 func buildWatcher(home string) watcher.Watcher {
