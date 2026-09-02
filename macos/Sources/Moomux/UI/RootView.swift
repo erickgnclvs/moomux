@@ -141,25 +141,92 @@ private struct SessionDetail: View {
     @Environment(AppState.self) private var app
     let session: Session
 
+    /// Attaching is deliberate, never a side effect of selecting a row: a tmux
+    /// client sizes the shared window down to its own dimensions for *every*
+    /// other client on that session, so auto-attaching would silently squash
+    /// the user's iTerm and phone windows as they browsed the list. See
+    /// `TerminalPane` for why this is inherent to a plain attach.
+    @State private var attached = false
+    @State private var showInfo = false
+
     var body: some View {
         let state = app.state(for: session)
+        Group {
+            if attached {
+                SessionTerminal(session: session, onDetach: { attached = false })
+            } else {
+                SessionInfo(session: session, onAttach: { attached = true })
+            }
+        }
+        .navigationTitle(session.name)
+        .navigationSubtitle(state.label)
+        .onChange(of: attached) { _, isAttached in if !isAttached { showInfo = false } }
+        .inspector(isPresented: $showInfo) {
+            SessionInfo(session: session, onAttach: nil)
+                .inspectorColumnWidth(min: 280, ideal: 340, max: 520)
+        }
+        .toolbar {
+            if attached {
+                ToolbarItem {
+                    Button {
+                        attached = false
+                    } label: {
+                        Label("Detach", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                    .help("Leave the session running and give the size back")
+                }
+                ToolbarItem {
+                    Button {
+                        showInfo.toggle()
+                    } label: {
+                        Label("Info", systemImage: "sidebar.right")
+                    }
+                    .keyboardShortcut("i")
+                    .help("Session details")
+                }
+            }
+        }
+        // Selecting another session must not carry the attachment with it.
+        .onChange(of: session.id) { _, _ in attached = false }
+    }
+}
+
+/// Everything about a session that isn't the terminal itself.
+private struct SessionInfo: View {
+    @Environment(AppState.self) private var app
+    let session: Session
+    /// nil when this is the inspector beside a terminal that is already attached.
+    var onAttach: (() -> Void)?
+
+    var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 8) {
-                    Image(systemName: state.symbol).foregroundStyle(Theme.color(state))
-                    Text(session.name).font(.title2)
-                    Text(state.label).foregroundStyle(.secondary)
-                }
+                if let onAttach {
+                    HStack {
+                        Button(action: onAttach) {
+                            Label("Attach", systemImage: "terminal")
+                        }
+                        .keyboardShortcut(.return)
+                        .disabled(!app.isAlive(session) || ToolPath.find("tmux") == nil)
+                        .help("Attach this tmux session inside the app")
 
-                Button {
-                    app.open(session)
-                } label: {
-                    Label("Open session", systemImage: "arrow.up.forward.app")
+                        Button {
+                            app.open(session)
+                        } label: {
+                            Label("Open in terminal", systemImage: "arrow.up.forward.app")
+                        }
+                        // The core's own open path: a real terminal window, and
+                        // what revives a session whose tmux is gone.
+                        .help("Hand this session to your terminal app, as the TUI does")
+                    }
+                    if !app.isAlive(session) {
+                        Text("No live tmux session — open it to start one.")
+                            .foregroundStyle(.secondary)
+                    } else if ToolPath.find("tmux") == nil {
+                        Text("Can't find a tmux binary to attach with.")
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .keyboardShortcut(.return)
-                // Until the tmux control-mode client exists, opening still hands
-                // the session to the user's terminal, exactly as the TUI does.
-                .help("Attach in your terminal")
 
                 if let hint = app.hint {
                     Text(hint).font(Theme.mono).textSelection(.enabled)

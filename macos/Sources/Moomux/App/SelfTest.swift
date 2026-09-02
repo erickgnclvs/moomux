@@ -16,6 +16,7 @@ enum SelfTest {
 
         Wire.demo()
         MoomuxClient.demo()
+        ToolPath.demo()
         AppState.demo()
 
         print("selftest: ok")

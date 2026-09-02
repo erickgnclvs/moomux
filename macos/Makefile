@@ -35,8 +35,11 @@ app: build
 # to point at a `moomux serve` other than the default one.
 ARGS ?=
 
+# Waiting out the old process is not politeness: `open` against an app that is
+# still terminating silently does nothing, which reads as a crash on launch.
 run: app
 	pkill -x Moomux || true
+	@while pgrep -x Moomux >/dev/null; do sleep 0.2; done
 	open $(APP) --args $(ARGS)
 
 # A debug bundle for the edit-look-edit loop: seconds instead of the release
@@ -44,6 +47,7 @@ run: app
 dev: CONFIG = debug
 dev: app
 	pkill -x Moomux || true
+	@while pgrep -x Moomux >/dev/null; do sleep 0.2; done
 	open $(APP) --args $(ARGS)
 
 install: app

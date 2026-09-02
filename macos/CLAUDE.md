@@ -1,12 +1,12 @@
 # Moomux.app
 
-The native macOS front end. SwiftUI, SwiftPM executable, **zero external dependencies**, driving
-the Go core over the `moomux serve` unix socket — see `docs/native-macos-rewrite.md` for why this
-shape and not a rewrite. This file is for working on it; the Go side's `AGENTS.md` still governs
+The native macOS front end. SwiftUI, SwiftPM executable, one dependency (SwiftTerm), driving the
+Go core over the `moomux serve` unix socket — see `docs/native-macos-rewrite.md` for why this shape
+and not a rewrite. This file is for working on it; the Go side's `AGENTS.md` still governs
 everything outside `macos/`.
 
-Right now this is a scaffold: it lists sessions, streams their live agent state, shows detail, and
-opens a session in the user's terminal. The terminal pane, tmux control mode, and every write path
+Today it lists sessions, streams their live agent state, shows detail, attaches a session's tmux
+inside the app, and hands a session to the user's terminal. tmux control mode and every write path
 beyond `OpenSession` are not built yet.
 
 ## The environment decides more than you'd think
@@ -103,9 +103,19 @@ inversion check whenever you add a check that matters.
 **Do not run concurrent `swift build`s** in this directory — they corrupt the shared `.build`. Use
 `swiftc -parse <file>` for a syntax check while something else is building.
 
-**Spike a dependency before adopting it** (there are none today, and `Package.swift` should stay
-that way for as long as possible). A throwaway package settles in under a minute what the README
-won't tell you — this is how `#Preview`-using libraries get caught.
+**Spike a dependency before adopting it.** A throwaway package settles in under a minute what the
+README won't tell you — this is how `#Preview`-using libraries get caught. SwiftTerm was spiked this
+way before it went into `Package.swift` (builds clean under CommandLineTools, `LocalProcessTerminalView`
+instantiates). It is the only dependency; keep it that way for as long as possible.
+
+**`NSLog` does not reach `log show` / `log stream` from this bundle.** Two rounds of debugging went
+into a predicate that was never going to match. When you need to trace something inside the running
+app, append to a file from the code and `cat` it — crude, instant, and it actually works.
+
+**Synthetic key events need a real event source.** `CGEvent(keyboardEventSource: nil, …)` silently
+drops modifier flags, so a scripted `C-b` arrives as a bare `b` and the thing you are testing looks
+broken when it is fine. Pass `CGEventSource(stateID: .hidSystemState)`. This cost an hour chasing a
+focus bug that had already been fixed.
 
 ## Architecture
 
@@ -125,11 +135,16 @@ Views                  read AppState and nothing else
 Core/UnixSocket.swift    AF_UNIX plumbing; blocking, closed to cancel
 Core/Models.swift        the wire types + JSON coding + Wire.demo()
 Core/MoomuxClient.swift  the Swift half of internal/ipc
+Core/ToolPath.swift      finding tmux without a shell's PATH
 App/AppState.swift       the single root store, poll loop, watch loop
 App/MoomuxApp.swift      scenes: main window + MenuBarExtra
 App/SelfTest.swift       --selftest
-UI/RootView.swift        split view, rows, detail, menu-bar content
+UI/RootView.swift        split view, rows, detail, inspector, menu-bar content
+UI/TerminalPane.swift    SwiftTerm hosting a `tmux attach` client
 ```
+
+SwiftTerm is reached **only** through `UI/TerminalPane.swift`, so swapping it for libghostty later
+is one file — which is the arrangement the plan doc assumes.
 
 `internal/ipc/client.go` is the reference implementation of `MoomuxClient`. Keep the two honest
 against each other — anything the Swift side cannot do over the socket is a hole in the boundary
@@ -166,8 +181,28 @@ to fix in Go, not a reason to link the core.
   `App/MoomuxApp.swift`.
 - **`@Observable` fires on any assignment, equal or not.** Guard writes that repeat every tick
   (`AppState.set(statusError:)`) or every row re-renders on each watcher poll.
-- **The app is not sandboxed**, which is the only reason `NSHomeDirectory()` finds the real socket.
-  Sandboxing it means finding another way to the core.
+- **The app is not sandboxed**, which is the only reason `NSHomeDirectory()` finds the real socket —
+  and the only reason the terminal pane can spawn anything at all. Sandboxing it means finding
+  another way to the core.
+- **A GUI app does not inherit your shell's `PATH`.** Launched from Finder it gets launchd's
+  (`/usr/bin:/bin:/usr/sbin:/sbin`), so Homebrew's `tmux` is invisible and `Process` just reports
+  that the executable does not exist. `ToolPath` searches `PATH` and then the usual prefixes. Every
+  tool this app ever shells out to goes through it.
+- **Every tmux client on a session shares one window size.** While the app is attached, the user's
+  iTerm and phone are letterboxed down to the app's dimensions, and it only springs back on detach —
+  not when the bigger client is used again. Grouped sessions (`new-session -t`) do **not** fix this;
+  a group shares the windows themselves. Measured, both ways. This is why attaching is an explicit
+  action and not a consequence of selecting a row, and it is the strongest argument for control
+  mode, where the GUI owns the layout.
+- **SwiftTerm marks its overrides `public`, not `open`.** `keyDown` and friends cannot be overridden
+  from this module — the compiler says "overriding non-open instance method outside of its defining
+  module". `viewDidMoveToWindow` is fine because it comes from `NSView`.
+- **SwiftUI does not give the terminal first responder.** Focus stays on the sidebar list, so
+  everything typed after "Attach" goes to the list instead. `updateNSView` is too early (no window
+  yet); `AttachedTerminalView.viewDidMoveToWindow` is the hook that works.
+- **`open` against an app that is still terminating does nothing at all**, which reads exactly like
+  a crash on launch. `make run`/`make dev` wait out the old process for this reason — do not
+  "simplify" that loop away.
 
 ## Conventions
 
@@ -184,8 +219,11 @@ to fix in Go, not a reason to link the core.
 
 Decisions, not oversights. Don't "fix" these without being asked.
 
-- **No terminal pane, no tmux control mode.** That is the next big piece (SwiftTerm behind a
-  protocol, `tmux -CC`), and the reason the plan picks substrate A.
+- **No tmux control mode (`tmux -CC`).** The pane runs a plain `tmux attach`, so tmux draws its own
+  splits and status line inside one view and the app cannot see the layout: no native tabs, no
+  native splits, and the shared-window-size cost above. Control mode is ~1–1.5k LOC of stateful
+  line protocol and buys nothing until there is UI to put a layout into.
+- **No terminal settings** — font, size, colours and cursor are all SwiftTerm's defaults.
 - **No write paths beyond `OpenSession`.** Create/rename/delete/tag/settings all exist on the socket
   already; the scaffold only proves one round trip.
 - **No app icon**, so the bundle shows the generic one. `~/tmp/mergeright/Scripts/make-icon.swift`
