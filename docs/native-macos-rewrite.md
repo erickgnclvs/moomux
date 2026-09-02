@@ -208,6 +208,11 @@ mode.**
 
 Concretely:
 
+Status: **1 is done** (`internal/ipc`, `moomux serve`, `moomux ui -socket`), and **2 is
+scaffolded** — `macos/` is a SwiftUI app on SwiftPM that lists sessions over the socket, streams
+live agent state, and already carries the menu-bar count from §5. No terminal pane yet, which is
+the next real piece. See `macos/CLAUDE.md`.
+
 1. **Extract a headless core.** Move the TUI's calls to `internal/app` behind a
    JSON-RPC-over-unix-socket server (`moomux serve`). ~300 LOC. The existing
    TUI becomes its first client; nothing user-visible changes. This is
