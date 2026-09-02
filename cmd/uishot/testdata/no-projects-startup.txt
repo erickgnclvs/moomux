@@ -1,0 +1,54 @@
+=== 40x20 ===
+                                        
+╭──────────────────────────────────────╮
+│                                      │
+│  Add project                         │
+│                                      │
+│  name:> name (e.g. eg_system)        │
+│  repo:> repo path (e.g. ~/Devel…     │
+│  base branch:> base branch (def…     │
+│  branch prefix:> branch prefix …     │
+│  emoji:‹ [auto] ›                    │
+│  agent:‹ [claude] ›                  │
+│  dangerous:[off]                     │
+│  worktrees:[on]                      │
+│                                      │
+│  internal label for this project —   │
+│  shown in the tabs at the top        │
+│  tab/↑↓  ←→ choose  enter save  esc  │
+│                                      │
+╰──────────────────────────────────────╯
+                                        
+=== 100x32 ===
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+           ╭────────────────────────────────────────────────────────────────────────────╮           
+           │                                                                            │           
+           │  Add project                                                               │           
+           │                                                                            │           
+           │  name:          > name (e.g. eg_system)                                    │           
+           │  repo:          > repo path (e.g. ~/Development/eg_system)                 │           
+           │  base branch:   > base branch (default:…                                   │           
+           │  branch prefix: > branch prefix (option…                                   │           
+           │  emoji:         [auto]  🐙  🦊  🚀  🔥  🌊  🍀  ⚡  🎯  🐝  🦉             │           
+           │  agent:         [claude]  codex  opencode  ask each time                   │           
+           │  dangerous:     [off]                                                      │           
+           │  worktrees:     [on]                                                       │           
+           │                                                                            │           
+           │  internal label for this project — shown in the tabs at the top            │           
+           │  tab/↑↓  ←→ choose  enter save  esc cancel                                 │           
+           │                                                                            │           
+           ╰────────────────────────────────────────────────────────────────────────────╯           
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    

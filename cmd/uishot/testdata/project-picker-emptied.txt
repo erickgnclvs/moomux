@@ -1,0 +1,54 @@
+=== 40x20 ===
+                                        
+                                        
+                                        
+                                        
+                                        
+╭──────────────────────────────────────╮
+│                                      │
+│  PROJECTS                            │
+│                                      │
+│  no projects yet — press n to add o  │
+│                                      │
+│  ✓ removed project solo              │
+│  esc cancel  enter open              │
+│                                      │
+╰──────────────────────────────────────╯
+                                        
+                                        
+                                        
+                                        
+                                        
+=== 100x32 ===
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+           ╭────────────────────────────────────────────────────────────────────────────╮           
+           │                                                                            │           
+           │  PROJECTS                                                                  │           
+           │                                                                            │           
+           │  no projects yet — press n to add one                                      │           
+           │                                                                            │           
+           │  ✓ removed project solo                                                    │           
+           │  n add  e edit  d delete  shift+↑↓ reorder  enter open  esc cancel         │           
+           │                                                                            │           
+           ╰────────────────────────────────────────────────────────────────────────────╯           
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    

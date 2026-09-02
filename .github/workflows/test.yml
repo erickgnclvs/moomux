@@ -11,19 +11,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Both OSes, because moomux shells out to tmux and git and is used mostly
+  # from macOS: Linux-only CI missed that tmux reports a pane's cwd with
+  # symlinks resolved, so every macOS worktree under a symlinked path looked
+  # like a cwd mismatch (see samePath in internal/app/app.go).
   test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: Install tmux
+      - name: Install tmux (Linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - name: Install tmux (macOS)
+        if: runner.os == 'macOS'
+        run: brew list tmux >/dev/null 2>&1 || brew install tmux
 
       - name: Build
         run: go build ./...
@@ -32,7 +45,46 @@ jobs:
         run: go vet ./...
 
       - name: Unit tests
-        run: go test ./... -race -count=1
+        run: go test ./... -race -shuffle=on -count=1
 
+      # -race here too: the e2e tests are the only ones driving the real
+      # tmux/git binaries, which is where concurrent access actually happens.
       - name: End-to-end tests
-        run: go test -tags e2e ./e2e/... -v -count=1
+        run: go test -tags e2e ./e2e/... -race -shuffle=on -v -count=1
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Deliberately not go.mod's version: staticcheck and govulncheck below
+      # need a newer toolchain than the app itself targets, and they compile
+      # 1.24 code fine. Bump the tool pins here, not go.mod.
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::not gofmt'd — run gofmt -w on:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+
+      # Default (symbol-level) mode: flags only vulnerabilities the code
+      # actually reaches, so an unreachable one in a required module doesn't
+      # block every merge until an upstream release lands.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+
+      # The version-bump logic that tags and ships every merge to main had a
+      # test that nothing ever ran.
+      - name: Release version rules
+        run: ./scripts/next_version_test.sh

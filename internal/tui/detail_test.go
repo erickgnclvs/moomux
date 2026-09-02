@@ -152,7 +152,7 @@ func TestCompactDetailTrimsFieldsAndShortensPR(t *testing.T) {
 	m := New(cfg, be, statusCh, func() {})
 	m.width, m.height = 80, 24
 
-	frame, hits := m.renderDetail(80-2, 24-2)
+	frame, _ := m.renderDetail(80-2, 24-2)
 	for _, want := range []string{"project", "agent", "ticket", "worktree", "created", "^__^", "||----w"} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("expected %q in the default (non-compact) frame\n%s", want, frame)
@@ -168,7 +168,7 @@ func TestCompactDetailTrimsFieldsAndShortensPR(t *testing.T) {
 	m.prStatus["demo:one"] = prStatusInfo{ok: true, info: prstatus.Info{State: "MERGED"}}
 
 	cfg.CompactDetail = true
-	frame, hits = m.renderDetail(80-2, 24-2)
+	frame, hits := m.renderDetail(80-2, 24-2)
 	for _, unwanted := range []string{"project", "agent", "ticket", "worktree", "created", "||----w"} {
 		if strings.Contains(frame, unwanted) {
 			t.Fatalf("expected compact detail to drop %q:\n%s", unwanted, frame)

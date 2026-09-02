@@ -1,0 +1,54 @@
+=== 40x20 ===
+╭──────────────────────────────────────╮
+│                                      │
+│  General                             │
+│    ?  toggle this help               │
+│    q  quit                           │
+│    r  refresh                        │
+│    s  settings (theme, sort mode,    │
+│       auto-tmux, auto-submit)        │
+│    u  update & relaunch (when a new  │
+│       version is available)          │
+│                                      │
+│                                      │
+│  tip: park from agent: Claude /kill  │
+│  · Codex $kill                       │
+│  tip: tag from agent: Claude /tag ·  │
+│  Codex $tag                          │
+│                                      │
+│  ↑↓/jk/pg scroll  ?/esc close        │
+│                                      │
+╰──────────────────────────────────────╯
+=== 100x32 ===
+           ╭────────────────────────────────────────────────────────────────────────────╮           
+           │                                                                            │           
+           │  Sessions                            Navigation                            │           
+           │    n          new session              ↑ / k              move up          │           
+           │    f          find session (all        ↓ / j              move down        │           
+           │               projects)                shift+↑↓ / KJ      reorder session  │           
+           │    enter / o  open (attach tmux)       tab / ] / →        next project     │           
+           │    x          park (kill tmux)         shift+tab / [ / ←  prev project     │           
+           │    d          delete worktree          } / {              ...incl. empty   │           
+           │    a          archive session                             ones             │           
+           │    A          show archived            shift+←→ / HL      reorder project  │           
+           │    t          tag ticket / PR          R                  force-copy       │           
+           │    e          edit session                                ticket/PR        │           
+           │                                                           links: off       │           
+           │                                                                            │           
+           │                                                                            │           
+           │  Projects                            General                               │           
+           │    /      pick project                 ?  toggle this help                 │           
+           │    D      remove project               q  quit                             │           
+           │    n/e/d  add/edit/remove (picker)     r  refresh                          │           
+           │                                        s  settings (theme, sort mode,      │           
+           │                                           auto-tmux, auto-submit)          │           
+           │                                        u  update & relaunch (when a new    │           
+           │                                           version is available)            │           
+           │                                                                            │           
+           │                                                                            │           
+           │  tip: park from agent: Claude /kill · Codex $kill                          │           
+           │  tip: tag from agent: Claude /tag · Codex $tag                             │           
+           │                                                                            │           
+           │  ↑↓/jk/pg scroll  ?/esc close                                              │           
+           │                                                                            │           
+           ╰────────────────────────────────────────────────────────────────────────────╯           

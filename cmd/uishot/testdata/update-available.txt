@@ -1,0 +1,54 @@
+=== 40x20 ===
+   ^__^                                 
+ _/(--)  out to pasture                 
+  \(__)                                 
+┌──────────────────────────────────────┐
+│  feature-auth                  🎫 ⬤  │
+│  bugfix-timeout                🔀 ⬤  │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+└──────────────────────────────────────┘
+                                        
+ ? help   v0.5.3 → v0.5.4 (u to update) 
+=== 100x32 ===
+   ^__^                                                                                             
+   (--)\_                                                                                           
+   (__)\ )                                                                                          
+┌──────────────────────────────────────────┐┌──────────────────────────────────────────────────────┐
+│ SESSIONS¹                                ││                                                      │
+│                                          ││                                                      │
+│  feature-auth                      🎫 ⬤  ││ project:   demo                                      │
+│  bugfix-timeout                    🔀 ⬤  ││ status:    ⬤  in the barn                            │
+│                                          ││ name:      feature-auth                              │
+│                                          ││ agent:     claude                                    │
+│                                          ││ ticket:    https://tracker.example/TICK-123          │
+│                                          ││ tmux:      moomux-feature-auth                       │
+│                                          ││ worktree:  /tmp/demo/feature-auth                    │
+│                                          ││ created:   just now                                  │
+│                                          ││ prompt:    add JWT-based auth to the login flow,     │
+│                                          ││            including refresh token rotation,         │
+│                                          ││            session revocation on logout, and…        │
+│                                          ││                                                      │
+│                                          ││                                                      │
+│                                          ││                                                      │
+│                                          ││                                                      │
+│                                          ││  ________________________________________            │
+│                                          ││ < out to pasture                         >           │
+│                                          ││  ----------------------------------------            │
+│                                          ││         \   ^__^                                     │
+│                                          ││          \  (--)\_______                             │
+│                                          ││             (__)\       )\/\                         │
+│                                          ││                 ||----w |                            │
+│                                          ││                 ||     ||                            │
+└──────────────────────────────────────────┘└──────────────────────────────────────────────────────┘
+                                                                                                    
+ ? help                                                               v0.5.3 → v0.5.4 (u to update) 
