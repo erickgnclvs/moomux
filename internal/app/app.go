@@ -636,7 +636,10 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 		}
 	}
 
-	if err := a.newTmuxSession(tmuxName, wt, cmd, name); err != nil {
+	a.cfgMu.RLock()
+	windowName := a.Cfg.ProjectEmoji(project) + " " + name
+	a.cfgMu.RUnlock()
+	if err := a.newTmuxSession(tmuxName, wt, cmd, windowName); err != nil {
 		slog.Error("tmux new-session failed", "name", tmuxName, "cwd", wt, "err", err)
 		return session.Session{}, "", fmt.Errorf("tmux new-session: %w", err)
 	}
@@ -923,6 +926,15 @@ func stripStatusGlyph(name string) string {
 	return name
 }
 
+// titleName returns s's display name prefixed with its project's emoji, the
+// base (unstatused) form titleGlyph and RenameSession build on.
+func (a *App) titleName(s session.Session) string {
+	a.cfgMu.RLock()
+	emoji := a.Cfg.ProjectEmoji(s.Project)
+	a.cfgMu.RUnlock()
+	return emoji + " " + s.Name
+}
+
 // titleGlyph prefixes name with a marker for the given status so terminals
 // tracking the tmux window name as their tab title (see
 // tmux.Client.ConfigureTitleTracking) show it at a glance.
@@ -948,7 +960,7 @@ func (a *App) SetSessionStatusTitle(id string, st watcher.State) error {
 	if !ok {
 		return nil
 	}
-	name := s.Name
+	name := a.titleName(s)
 	if current, err := a.Tmux.WindowName(s.TmuxSession); err == nil && current != "" {
 		name = stripStatusGlyph(current)
 	}
@@ -1032,8 +1044,10 @@ func (a *App) RenameSession(id, newName string) (session.Session, error) {
 	newTmux := TmuxSessionName(s.ID, newName)
 	if has, err := a.Tmux.HasSession(oldTmux); err == nil && has {
 		if current, err := a.Tmux.WindowName(oldTmux); err == nil {
-			if stripped := stripStatusGlyph(current); stripped == s.Name {
-				_ = a.Tmux.SetWindowName(oldTmux, current[:len(current)-len(stripped)]+newName)
+			if stripped := stripStatusGlyph(current); stripped == a.titleName(s) {
+				newS := s
+				newS.Name = newName
+				_ = a.Tmux.SetWindowName(oldTmux, current[:len(current)-len(stripped)]+a.titleName(newS))
 			}
 		}
 		if err := a.Tmux.RenameSession(oldTmux, newTmux); err != nil {
@@ -1161,12 +1175,12 @@ func (a *App) OpenSession(id string) (string, error) {
 			}
 			cmd = fmt.Sprintf("opencode --port %d", s.AgentPort)
 		}
-		if err := a.newTmuxSession(s.TmuxSession, s.WorktreePath, cmd, s.Name); err != nil {
+		if err := a.newTmuxSession(s.TmuxSession, s.WorktreePath, cmd, a.titleName(s)); err != nil {
 			slog.Error("NewSession failed", "id", id, "tmux_session", s.TmuxSession, "cwd", s.WorktreePath, "err", err)
 			return "", err
 		}
 	}
-	a.Tmux.ConfigureTitleTracking(s.TmuxSession, s.Name)
+	a.Tmux.ConfigureTitleTracking(s.TmuxSession, a.titleName(s))
 	var tabID, hint string
 	if browser.Remote() {
 		// Over SSH, the desktop terminal (iTerm/kitty/etc.) lives on a

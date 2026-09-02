@@ -41,6 +41,27 @@ type Project struct {
 
 func (p Project) IsPlain() bool { return p.Kind == "plain" }
 
+// ProjectEmojiPalette is the fallback set for projects that haven't chosen
+// their own emoji (Project.Emoji) — picked deterministically per project
+// name so the same project always gets the same glyph.
+var ProjectEmojiPalette = []string{"🐙", "🦊", "🚀", "🔥", "🌊", "🍀", "⚡", "🎯", "🐝", "🦉"}
+
+// ProjectEmoji returns project's configured emoji, falling back to a
+// deterministic pick from ProjectEmojiPalette if none is set.
+func (c *Config) ProjectEmoji(project string) string {
+	if e := c.Projects[project].Emoji; e != "" {
+		return e
+	}
+	var h int
+	for _, r := range project {
+		h = h*31 + int(r)
+	}
+	if h < 0 {
+		h = -h
+	}
+	return ProjectEmojiPalette[h%len(ProjectEmojiPalette)]
+}
+
 // UsesWorktree reports whether sessions for this project should each get
 // their own git worktree. False for plain projects and for git projects
 // that opted out via NoWorktree — both cases run every session directly in
