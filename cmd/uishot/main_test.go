@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -44,6 +45,13 @@ func TestRenderScreenUnknownScreen(t *testing.T) {
 // narrowest real-world client (see narrowWidthBreak in internal/tui) and the
 // default screenshot size.
 var sizes = [][2]int{{40, 20}, {100, 32}}
+
+// platformDependent screens deliberately render OS-specific content, so
+// their golden file only means anything on the platform it was captured on —
+// project-init-choice exists to show the macOS-only Files-and-Folders
+// warning (see internal/tui/tcc.go). The overflow checks still run
+// everywhere; only the golden comparison is limited.
+var platformDependent = map[string]string{"project-init-choice": "darwin"}
 
 // TestScreens is the automated half of the two UI rules in AGENTS.md, run
 // over every registered scenario at both geometries in one render pass:
@@ -96,6 +104,10 @@ func TestScreens(t *testing.T) {
 				fmt.Fprintf(&b, "=== %dx%d ===\n%s\n", cols, rows, strings.TrimRight(ansi.Strip(out), "\n"))
 			}
 
+			if os, ok := platformDependent[name]; ok && runtime.GOOS != os {
+				return
+			}
+
 			path := filepath.Join(testdata, name+".txt")
 			got := b.String()
 			if *update {
@@ -112,8 +124,28 @@ func TestScreens(t *testing.T) {
 				t.Fatalf("%v (run `go test ./cmd/uishot -update` to create it)", err)
 			}
 			if got != string(want) {
-				t.Errorf("screen %q no longer matches %s — inspect the change and re-run with -update if it is intended\n--- got ---\n%s", name, path, got)
+				t.Errorf("screen %q no longer matches %s — inspect the change and re-run with -update if it is intended\n%s", name, path, lineDiff(string(want), got))
 			}
 		})
 	}
+}
+
+// lineDiff renders the differing lines of two screens, so a golden failure
+// says what moved instead of dumping a whole screen to read by eye.
+func lineDiff(want, got string) string {
+	w, g := strings.Split(want, "\n"), strings.Split(got, "\n")
+	var b strings.Builder
+	for i := 0; i < max(len(w), len(g)); i++ {
+		var wl, gl string
+		if i < len(w) {
+			wl = w[i]
+		}
+		if i < len(g) {
+			gl = g[i]
+		}
+		if wl != gl {
+			fmt.Fprintf(&b, "line %d:\n  want %q\n  got  %q\n", i+1, wl, gl)
+		}
+	}
+	return b.String()
 }
