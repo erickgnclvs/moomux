@@ -4,8 +4,8 @@
 │                                      │
 │  Add project                         │
 │                                      │
-│  name:> uishot                       │
-│  repo:> ux/moo-hardness/cmd/uishot   │
+│  name:> name (e.g. eg_system)        │
+│  repo:> repo path (e.g. ~/Devel…     │
 │  base branch:> base branch (def…     │
 │  branch prefix:> branch prefix …     │
 │  emoji:‹ [auto] ›                    │
@@ -31,8 +31,8 @@
            │                                                                            │           
            │  Add project                                                               │           
            │                                                                            │           
-           │  name:          > uishot                                                   │           
-           │  repo:          > /moomux/worktrees/moomux/moo-hardness/cmd/uishot         │           
+           │  name:          > name (e.g. eg_system)                                    │           
+           │  repo:          > repo path (e.g. ~/Development/eg_system)                 │           
            │  base branch:   > base branch (default:…                                   │           
            │  branch prefix: > branch prefix (option…                                   │           
            │  emoji:         [auto]  🐙  🦊  🚀  🔥  🌊  🍀  ⚡  🎯  🐝  🦉             │           

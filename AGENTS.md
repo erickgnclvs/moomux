@@ -22,7 +22,9 @@ Two of those checks are automated now, over *every* scenario in the `screens` ma
 go test ./cmd/uishot -update
 ```
 
-and read the resulting testdata diff as part of your own review — it is the cheapest full-surface look at what a change did. The screenshots are still required: golden files strip styling, so colour, theming and emoji only show up in a PNG.
+`TestScreens` pins the working directory to `/` and `HOME` to `/home/moo` so the forms that prefill or expand a path render the same on every machine — a new scenario that shows some other host-specific value (a hostname, a real timestamp) needs the same treatment, or it will pass locally and fail in CI.
+
+Read the resulting testdata diff as part of your own review — it is the cheapest full-surface look at what a change did. The screenshots are still required: golden files strip styling, so colour, theming and emoji only show up in a PNG.
 
 Send the resulting PNG(s) to the user so they can see the change, the same way you'd report a code diff — surface it as a clickable `file://` link (e.g. `[all-sessions.png](file:///tmp/all-sessions.png)`) rather than just viewing it inline, since inline rendering isn't guaranteed to reach the user.
 

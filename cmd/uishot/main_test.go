@@ -60,6 +60,21 @@ var sizes = [][2]int{{40, 20}, {100, 32}}
 //     colour is what the screenshots are for, layout is what breaks
 //     silently. Update with `go test ./cmd/uishot -update` and read the diff.
 func TestScreens(t *testing.T) {
+	// The add-project form prefills name and repo from the working
+	// directory, which would otherwise bake this checkout's path into the
+	// golden files and fail on every other machine. "/" is the one absolute
+	// path that reads the same everywhere (and unlike a temp dir, macOS
+	// doesn't resolve it to somewhere else).
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	testdata := filepath.Join(dir, "testdata")
+	t.Chdir("/")
+	// Same reason: the project-init-choice scenario types a $HOME-relative
+	// path, and the form expands it for display.
+	t.Setenv("HOME", "/home/moo")
+
 	for name := range screens {
 		t.Run(name, func(t *testing.T) {
 			var b strings.Builder
@@ -81,10 +96,10 @@ func TestScreens(t *testing.T) {
 				fmt.Fprintf(&b, "=== %dx%d ===\n%s\n", cols, rows, strings.TrimRight(ansi.Strip(out), "\n"))
 			}
 
-			path := filepath.Join("testdata", name+".txt")
+			path := filepath.Join(testdata, name+".txt")
 			got := b.String()
 			if *update {
-				if err := os.MkdirAll("testdata", 0o755); err != nil {
+				if err := os.MkdirAll(testdata, 0o755); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
