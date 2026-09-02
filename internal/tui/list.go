@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
@@ -289,7 +290,7 @@ func renderRow(s session.Session, st watcher.State, width int, selected bool, pr
 // projectEmojiPalette is the fallback set for projects that haven't chosen
 // their own emoji (config.Project.Emoji) — picked deterministically per
 // project name so the same project always gets the same glyph.
-var projectEmojiPalette = []string{"🐙", "🦊", "🚀", "🔥", "🌊", "🍀", "⚡", "🎯", "🐝", "🦉"}
+var projectEmojiPalette = config.ProjectEmojiPalette
 
 // projectEmojiChoices is the project-form emoji selector's cycle order:
 // "auto" (index 0, the deterministic-pick sentinel) followed by the palette.
@@ -314,17 +315,7 @@ func cycleProjectEmojiIdx(choices []string, idx, delta int) int {
 // projectEmoji returns the project's configured emoji, falling back to a
 // deterministic pick from projectEmojiPalette if none is set.
 func (m *Model) projectEmoji(project string) string {
-	if e := m.cfg.Projects[project].Emoji; e != "" {
-		return e
-	}
-	var h int
-	for _, r := range project {
-		h = h*31 + int(r)
-	}
-	if h < 0 {
-		h = -h
-	}
-	return projectEmojiPalette[h%len(projectEmojiPalette)]
+	return m.cfg.ProjectEmoji(project)
 }
 
 func truncate(s string, n int) string {
