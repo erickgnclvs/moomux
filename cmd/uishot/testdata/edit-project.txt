@@ -1,0 +1,54 @@
+=== 40x20 ===
+                                        
+╭──────────────────────────────────────╮
+│                                      │
+│  Edit project                        │
+│                                      │
+│  name:demo (fixed)                   │
+│  repo:> /tmp/demo                    │
+│  base branch:> main                  │
+│  branch prefix:> feature             │
+│  emoji:‹ [auto] ›                    │
+│  agent:‹ [codex] ›                   │
+│  dangerous:[off]                     │
+│  worktrees:[on]                      │
+│                                      │
+│  repo path used by new sessions —    │
+│  existing worktrees stay put         │
+│  tab/↑↓  ←→ change  enter save  esc  │
+│                                      │
+╰──────────────────────────────────────╯
+                                        
+=== 100x32 ===
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+           ╭────────────────────────────────────────────────────────────────────────────╮           
+           │                                                                            │           
+           │  Edit project                                                              │           
+           │                                                                            │           
+           │  name:          demo (fixed)                                               │           
+           │  repo:          > /tmp/demo                                                │           
+           │  base branch:   > main                                                     │           
+           │  branch prefix: > feature                                                  │           
+           │  emoji:         [auto]  🐙  🦊  🚀  🔥  🌊  🍀  ⚡  🎯  🐝  🦉             │           
+           │  agent:         claude  [codex]  opencode  ask each time                   │           
+           │  dangerous:     [off]                                                      │           
+           │  worktrees:     [on]                                                       │           
+           │                                                                            │           
+           │  repo path used by new sessions — existing worktrees stay put              │           
+           │  tab/↑↓  ←→ change  enter save  esc cancel                                 │           
+           │                                                                            │           
+           ╰────────────────────────────────────────────────────────────────────────────╯           
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    

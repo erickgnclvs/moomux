@@ -1114,6 +1114,27 @@ func joinHints(a, b string) string {
 	}
 }
 
+// samePath reports whether two paths name the same directory, resolving
+// symlinks before comparing: tmux always reports a pane's cwd fully
+// resolved, so a worktree reached through a symlink (macOS /tmp and /var, or
+// a symlinked projects directory) compares unequal to the stored path even
+// though it is the same directory — which read as a cwd mismatch and killed
+// a perfectly live session, and the agent running in it, on every open.
+func samePath(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ra, err := filepath.EvalSymlinks(a)
+	if err != nil {
+		return false
+	}
+	rb, err := filepath.EvalSymlinks(b)
+	if err != nil {
+		return false
+	}
+	return ra == rb
+}
+
 func (a *App) OpenSession(id string) (string, error) {
 	s, ok := a.Store.Get(id)
 	if !ok {
@@ -1127,7 +1148,7 @@ func (a *App) OpenSession(id string) (string, error) {
 		return "", err
 	}
 	if has {
-		if cwd, err := a.Tmux.PaneCwd(s.TmuxSession); err == nil && cwd != s.WorktreePath {
+		if cwd, err := a.Tmux.PaneCwd(s.TmuxSession); err == nil && !samePath(cwd, s.WorktreePath) {
 			slog.Info("tmux session cwd mismatch, recreating", "tmux_session", s.TmuxSession, "pane_cwd", cwd, "want", s.WorktreePath)
 			if err := a.Tmux.KillSession(s.TmuxSession); err != nil {
 				slog.Error("KillSession failed", "id", id, "err", err)

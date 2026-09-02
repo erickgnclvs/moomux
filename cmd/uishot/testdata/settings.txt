@@ -1,0 +1,54 @@
+=== 40x20 ===
+                                        
+                                        
+                                        
+╭──────────────────────────────────────╮
+│                                      │
+│  SETTINGS                            │
+│                                      │
+│   ▸ sort mode    manual (shift+↑↓)   │
+│     theme & appear… default / auto   │
+│     auto-tmux                [off]   │
+│     auto-submit default      [off]   │
+│     compact detail view      [off]   │
+│                                      │
+│  esc close  enter change             │
+│                                      │
+╰──────────────────────────────────────╯
+                                        
+                                        
+                                        
+                                        
+=== 100x32 ===
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+           ╭────────────────────────────────────────────────────────────────────────────╮           
+           │                                                                            │           
+           │  SETTINGS                                                                  │           
+           │                                                                            │           
+           │   ▸ sort mode                                          manual (shift+↑↓)   │           
+           │     theme & appearance                                    default / auto   │           
+           │     auto-tmux                                                      [off]   │           
+           │     auto-submit default                                            [off]   │           
+           │     compact detail view                                            [off]   │           
+           │                                                                            │           
+           │  ↑↓ select  enter/←→ change  esc close                                     │           
+           │                                                                            │           
+           ╰────────────────────────────────────────────────────────────────────────────╯           
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    

@@ -1,0 +1,54 @@
+=== 40x20 ===
+   ^__^                                 
+ _/(--)  chewing the cud, nothing to …  
+  \(__)                                 
+┌──────────────────────────────────────┐
+│  session-00                       ⬤  │
+│  session-01                       ⬤  │
+│  session-02                       ⬤  │
+│  session-03                       ⬤  │
+│  session-04                       ⬤  │
+│  session-05                       ⬤  │
+│  session-06                       ⬤  │
+│  session-07                       ⬤  │
+│  session-08                       ⬤  │
+│  session-09                       ⬤  │
+│  session-10                       ⬤  │
+│  session-11                       ⬤  │
+│                  ⌄                   │
+└──────────────────────────────────────┘
+                                        
+ ? help                            vdev 
+=== 100x32 ===
+   ^__^                                                                                             
+   (--)\_                                                                                           
+   (__)\ )                                                                                          
+┌──────────────────────────────────────────┐┌──────────────────────────────────────────────────────┐
+│ SESSIONS                                 ││                                                      │
+│                                          ││                                                      │
+│  session-00                           ⬤  ││ project:   demo                                      │
+│  session-01                           ⬤  ││ status:    ⬤  in the barn                            │
+│  session-02                           ⬤  ││ name:      session-00                                │
+│  session-03                           ⬤  ││ agent:     claude                                    │
+│  session-04                           ⬤  ││ tmux:      moomux-session-00                         │
+│  session-05                           ⬤  ││ worktree:  /tmp/demo/session-00                      │
+│  session-06                           ⬤  ││ created:   just now                                  │
+│  session-07                           ⬤  ││                                                      │
+│  session-08                           ⬤  ││                                                      │
+│  session-09                           ⬤  ││                                                      │
+│  session-10                           ⬤  ││                                                      │
+│  session-11                           ⬤  ││                                                      │
+│  session-12                           ⬤  ││                                                      │
+│  session-13                           ⬤  ││                                                      │
+│  session-14                           ⬤  ││                                                      │
+│  session-15                           ⬤  ││  ________________________________________            │
+│  session-16                           ⬤  ││ < chewing the cud, nothing to see        >           │
+│  session-17                           ⬤  ││  ----------------------------------------            │
+│  session-18                           ⬤  ││         \   ^__^                                     │
+│  session-19                           ⬤  ││          \  (--)\_______                             │
+│  session-20                           ⬤  ││             (__)\       )\/\                         │
+│  session-21                           ⬤  ││                 ||----w |                            │
+│                    ⌄                     ││                 ||     ||                            │
+└──────────────────────────────────────────┘└──────────────────────────────────────────────────────┘
+                                                                                                    
+ ? help                                                                                        vdev 

@@ -1,0 +1,54 @@
+=== 40x20 ===
+                                        
+                                        
+╭──────────────────────────────────────╮
+│                                      │
+│  Delete session?                     │
+│                                      │
+│  name:     feature-auth              │
+│  branch:   feature/auth              │
+│  worktree: /tmp/demo/feature-auth    │
+│                                      │
+│  ⚠ 3 files changed, 2 commits unpu…  │
+│                                      │
+│  This kills the tmux session and re  │
+│  The branch is kept.                 │
+│                                      │
+│  y to confirm   n/esc to cancel      │
+│                                      │
+╰──────────────────────────────────────╯
+                                        
+                                        
+=== 100x32 ===
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                    ╭─────────────────────────────────────────────────────────╮                     
+                    │                                                         │                     
+                    │  Delete session?                                        │                     
+                    │                                                         │                     
+                    │  name:     feature-auth                                 │                     
+                    │  branch:   feature/auth                                 │                     
+                    │  worktree: /tmp/demo/feature-auth                       │                     
+                    │                                                         │                     
+                    │  ⚠ 3 files changed, 2 commits unpushed                  │                     
+                    │                                                         │                     
+                    │  This kills the tmux session and removes the worktree.  │                     
+                    │  The branch is kept.                                    │                     
+                    │                                                         │                     
+                    │  y to confirm you understand   n/esc to cancel          │                     
+                    │                                                         │                     
+                    ╰─────────────────────────────────────────────────────────╯                     
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    

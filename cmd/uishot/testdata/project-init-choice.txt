@@ -1,0 +1,54 @@
+=== 40x20 ===
+                                        
+                                        
+                                        
+╭──────────────────────────────────────╮
+│                                      │
+│  Path is not a git repository        │
+│                                      │
+│  path: /Users/alanfitzgerald/.local  │
+│                                      │
+│  How should moomux set this up?      │
+│                                      │
+│    i  init a new git repo here (mkd  │
+│    s  skip git — manage as a plain   │
+│                                      │
+│  b/esc to go back to the form        │
+│                                      │
+╰──────────────────────────────────────╯
+                                        
+                                        
+                                        
+=== 100x32 ===
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+           ╭────────────────────────────────────────────────────────────────────────────╮           
+           │                                                                            │           
+           │  Path is not a git repository                                              │           
+           │                                                                            │           
+           │  path: /Users/alanfitzgerald/.local/share/moomux/worktrees/moomux/moo-har  │           
+           │                                                                            │           
+           │  How should moomux set this up?                                            │           
+           │                                                                            │           
+           │    i  init a new git repo here (mkdir + git init + empty commit)           │           
+           │    s  skip git — manage as a plain folder, no worktrees/branches           │           
+           │                                                                            │           
+           │  b/esc to go back to the form                                              │           
+           │                                                                            │           
+           ╰────────────────────────────────────────────────────────────────────────────╯           
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    

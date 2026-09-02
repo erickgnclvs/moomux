@@ -1115,6 +1115,31 @@ func TestOpenSessionCwdMismatchRecreates(t *testing.T) {
 	}
 }
 
+// A worktree reached through a symlink is not a cwd mismatch: tmux reports
+// the pane's cwd resolved, so comparing it verbatim against the stored path
+// killed a live session (and its agent) on every open. Common on macOS,
+// where /tmp and /var are symlinks, and anywhere the projects directory is.
+func TestOpenSessionSymlinkedWorktreeIsNotAMismatch(t *testing.T) {
+	a, _, tm, _ := newTestApp(t, gitProject("/repo"))
+	real := filepath.Join(t.TempDir(), "real")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	_ = a.Store.Put(session.Session{ID: "demo:feat", Project: "demo", Name: "feat", TmuxSession: "moomux-feat", WorktreePath: link})
+	tm.out["list-panes -t =moomux-feat: -F #{pane_current_path}"] = real + "\n"
+
+	if _, err := a.OpenSession("demo:feat"); err != nil {
+		t.Fatal(err)
+	}
+	if tm.called("kill-session") {
+		t.Fatalf("live session killed over a symlinked worktree path; calls = %v", tm.calls)
+	}
+}
+
 func TestOpenSessionDeadRecreatesWithAgent(t *testing.T) {
 	a, _, tm, _ := newTestApp(t, gitProject("/repo"))
 	_ = a.Store.Put(session.Session{

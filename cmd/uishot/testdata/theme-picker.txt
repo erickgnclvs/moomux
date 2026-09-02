@@ -1,0 +1,54 @@
+=== 40x20 ===
+                                        
+                                        
+                                        
+╭──────────────────────────────────────╮
+│                                      │
+│  THEMES                              │
+│                                      │
+│  appearance: auto  (a to cycle)      │
+│                                      │
+│   ▸ default                          │
+│     terminal                         │
+│     gruvbox                          │
+│     catppuccin                       │
+│                                      │
+│  esc cancel  enter save              │
+│                                      │
+╰──────────────────────────────────────╯
+                                        
+                                        
+                                        
+=== 100x32 ===
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+           ╭────────────────────────────────────────────────────────────────────────────╮           
+           │                                                                            │           
+           │  THEMES                                                                    │           
+           │                                                                            │           
+           │  appearance: auto  (a to cycle)                                            │           
+           │                                                                            │           
+           │   ▸ default                                                                │           
+           │     terminal                                                               │           
+           │     gruvbox                                                                │           
+           │     catppuccin                                                             │           
+           │                                                                            │           
+           │  ↑↓ theme  a appearance  enter save  esc cancel                            │           
+           │                                                                            │           
+           ╰────────────────────────────────────────────────────────────────────────────╯           
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    

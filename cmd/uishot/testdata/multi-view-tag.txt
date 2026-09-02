@@ -1,0 +1,54 @@
+=== 40x20 ===
+                                        
+                                        
+                                        
+╭──────────────────────────────────────╮
+│                                      │
+│  Tag session                         │
+│                                      │
+│  ticket url:> ker.example/TICK-123   │
+│                                      │
+│  pr url:> pr url                     │
+│                                      │
+│  shown as a clickable ticket icon    │
+│  next to the session                 │
+│  tab/↑↓ fields  enter save  esc can  │
+│                                      │
+╰──────────────────────────────────────╯
+                                        
+                                        
+                                        
+                                        
+=== 100x32 ===
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+           ╭────────────────────────────────────────────────────────────────────────────╮           
+           │                                                                            │           
+           │  Tag session                                                               │           
+           │                                                                            │           
+           │  ticket url: > https://tracker.example/TICK-123                            │           
+           │                                                                            │           
+           │  pr url:     > pr url                                                      │           
+           │                                                                            │           
+           │  shown as a clickable ticket icon next to the session                      │           
+           │  tab/↑↓ fields  enter save  esc cancel                                     │           
+           │                                                                            │           
+           ╰────────────────────────────────────────────────────────────────────────────╯           
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
