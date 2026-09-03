@@ -51,6 +51,12 @@ func (w *DirWatcher) Run(ctx context.Context, out chan<- Snapshot) {
 	}
 	t.Stop()
 
+	// Catch up on anything created between the last poll and the watch
+	// being established (e.g. the dir and its first file both appearing
+	// before fsw.Add ever succeeds) — otherwise it's invisible until the
+	// next fsnotify event or the fallback tick.
+	w.tick(ctx, out)
+
 	fallback := time.NewTicker(fallbackInterval)
 	defer fallback.Stop()
 	var debounce *time.Timer
