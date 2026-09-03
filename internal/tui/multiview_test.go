@@ -465,7 +465,7 @@ func TestMultiViewTabSlidesWindowWhenFocusLeaves(t *testing.T) {
 		"gamma": {Repo: "/tmp/gamma"},
 	}}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 40, 24 // multiPanelMinWidth=34: only 1 panel fits
 	m.mode = ModeMultiView
 

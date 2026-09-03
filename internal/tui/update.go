@@ -525,7 +525,7 @@ func (m *Model) newFormApplyProjectDefaults() {
 	if p.PromptAgent {
 		m.newFormAgentIdx = -1
 	} else {
-		m.newFormAgentIdx = agentNameIndex(p.AgentName())
+		m.newFormAgentIdx = m.agentNameIndex(p.AgentName())
 		m.newFormDangerous = p.Dangerous
 	}
 }
@@ -686,7 +686,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = ModeEditSession
 			m.sessionDialogReturn = ModeList
 			m.resetOverlayViewport()
-			m.sessionForm = newSessionForm(s.ID, s.Project, s.Name, agentNameIndex(s.AgentName()), s.Dangerous)
+			m.sessionForm = newSessionForm(s.ID, s.Project, s.Name, m.agentNameIndex(s.AgentName()), s.Dangerous)
 			m.resizeFormInputs()
 		}
 	case key.Matches(msg, m.keys.ProjectPicker):
@@ -938,9 +938,9 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.newFormAgentIdx < 0 {
 				m.newFormAgentIdx = 0
 			} else if key.Matches(msg, m.keys.Left) {
-				m.newFormAgentIdx = (m.newFormAgentIdx - 1 + len(agentNames)) % len(agentNames)
+				m.newFormAgentIdx = (m.newFormAgentIdx - 1 + len(m.agentNames())) % len(m.agentNames())
 			} else {
-				m.newFormAgentIdx = (m.newFormAgentIdx + 1) % len(agentNames)
+				m.newFormAgentIdx = (m.newFormAgentIdx + 1) % len(m.agentNames())
 			}
 			// Each agent has its own model list (or, for opencode, a
 			// free-text field) and thinking-level list; a stale choice from a
@@ -954,14 +954,14 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.newFormFocus == newFormModelFocus {
 			agent := ""
 			if m.newFormAgentIdx >= 0 {
-				agent = agentNames[m.newFormAgentIdx]
+				agent = m.agentNames()[m.newFormAgentIdx]
 			}
 			if agent == "opencode" {
 				// Free-text field: leave ←→ to the text input's own cursor
 				// movement, handled by the default routing below.
 				break
 			}
-			names := modelNamesFor(agent)
+			names := m.modelNamesFor(agent)
 			if key.Matches(msg, m.keys.Left) {
 				m.newFormModelIdx = (m.newFormModelIdx - 1 + len(names)) % len(names)
 			} else {
@@ -972,9 +972,9 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.newFormFocus == newFormThinkingFocus {
 			agent := ""
 			if m.newFormAgentIdx >= 0 {
-				agent = agentNames[m.newFormAgentIdx]
+				agent = m.agentNames()[m.newFormAgentIdx]
 			}
-			names := thinkingNamesFor(agent)
+			names := m.thinkingNamesFor(agent)
 			if key.Matches(msg, m.keys.Left) {
 				m.newFormThinkingIdx = (m.newFormThinkingIdx - 1 + len(names)) % len(names)
 			} else {
@@ -1020,12 +1020,12 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.newFormErr = ""
 		proj := m.projects[m.newFormProjIdx]
-		agent := agentNames[m.newFormAgentIdx]
+		agent := m.agentNames()[m.newFormAgentIdx]
 		model := m.newFormModelInput.Value()
 		if agent != "opencode" {
-			model = modelNamesFor(agent)[m.newFormModelIdx]
+			model = m.modelNamesFor(agent)[m.newFormModelIdx]
 		}
-		thinking := thinkingNamesFor(agent)[m.newFormThinkingIdx]
+		thinking := m.thinkingNamesFor(agent)[m.newFormThinkingIdx]
 		dangerous := m.newFormDangerous
 		openTerminal := !m.newFormOpenInBackground
 		m.mode = m.sessionDialogReturn
@@ -1042,7 +1042,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				// session creation if the config write fails.
 				_ = m.backend.SetAutoSubmitDefault(autoSubmit)
 			}
-			s, hint, err := m.backend.CreateSession(proj, name, agent, branch, ticket, openTerminal, dangerous, baseBranch, model, thinking)
+			s, hint, err := m.backend.CreateSession(proj, name, agent, branch, ticket, openTerminal, &dangerous, baseBranch, model, thinking)
 			if err != nil {
 				return CreateFailedMsg{Err: err}
 			}
@@ -1096,7 +1096,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case 6:
 		m.prInput, cmd = m.prInput.Update(msg)
 	case newFormModelFocus:
-		if m.newFormAgentIdx >= 0 && agentNames[m.newFormAgentIdx] == "opencode" {
+		if m.newFormAgentIdx >= 0 && m.agentNames()[m.newFormAgentIdx] == "opencode" {
 			m.newFormModelInput, cmd = m.newFormModelInput.Update(msg)
 		}
 	}
@@ -1180,7 +1180,7 @@ func (m *Model) newFormFocusInput() {
 	case 6:
 		m.prInput.Focus()
 	case newFormModelFocus:
-		if m.newFormAgentIdx >= 0 && agentNames[m.newFormAgentIdx] == "opencode" {
+		if m.newFormAgentIdx >= 0 && m.agentNames()[m.newFormAgentIdx] == "opencode" {
 			m.newFormModelInput.Focus()
 		}
 	}
@@ -1243,14 +1243,15 @@ func cycleFormFocus(inputs []textinput.Model, focus *int, total int, forward boo
 // cycleProjectAgentIdx moves idx (a projectForm.agentIdx, possibly
 // askAgentIdx) by delta across agentNames plus the trailing "ask each
 // time" entry, wrapping in both directions.
-func cycleProjectAgentIdx(idx, delta int) int {
+func (m *Model) cycleProjectAgentIdx(idx, delta int) int {
+	names := m.agentNames()
 	pos := idx
 	if pos == askAgentIdx {
-		pos = len(agentNames)
+		pos = len(names)
 	}
-	n := len(agentNames) + 1
+	n := len(names) + 1
 	pos = (pos + delta + n) % n
-	if pos == len(agentNames) {
+	if pos == len(names) {
 		return askAgentIdx
 	}
 	return pos
@@ -1266,7 +1267,7 @@ func (m *Model) adjustProjFormField(delta int) bool {
 	case projFormInputCount:
 		m.projForm.emojiIdx = cycleProjectEmojiIdx(m.projForm.emojiChoices, m.projForm.emojiIdx, delta)
 	case projFormInputCount + 1:
-		m.projForm.agentIdx = cycleProjectAgentIdx(m.projForm.agentIdx, delta)
+		m.projForm.agentIdx = m.cycleProjectAgentIdx(m.projForm.agentIdx, delta)
 	case projFormInputCount + 2:
 		m.projForm.dangerous = !m.projForm.dangerous
 	case projFormInputCount + 3:
@@ -1280,11 +1281,11 @@ func (m *Model) adjustProjFormField(delta int) bool {
 // projectAgentFields returns the Agent, Dangerous and PromptAgent values a
 // submitted project form should store, given its agentIdx (possibly
 // askAgentIdx) and its independent dangerous toggle.
-func projectAgentFields(agentIdx int, dangerous bool) (agent string, dangerousOut, promptAgent bool) {
+func (m *Model) projectAgentFields(agentIdx int, dangerous bool) (agent string, dangerousOut, promptAgent bool) {
 	if agentIdx == askAgentIdx {
 		return "", false, true
 	}
-	return agentNames[agentIdx], dangerous, false
+	return m.agentNames()[agentIdx], dangerous, false
 }
 
 func (m *Model) updateNewProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1319,7 +1320,7 @@ func (m *Model) updateNewProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if base == "" {
 			base = "main"
 		}
-		agent, dangerous, promptAgent := projectAgentFields(m.projForm.agentIdx, m.projForm.dangerous)
+		agent, dangerous, promptAgent := m.projectAgentFields(m.projForm.agentIdx, m.projForm.dangerous)
 		p := config.Project{Repo: repo, BaseBranch: base, BranchPrefix: prefix, Emoji: emoji, Agent: agent, Dangerous: dangerous, PromptAgent: promptAgent, NoWorktree: m.projForm.noWorktree}
 		return m, func() tea.Msg {
 			err := m.backend.AddProject(name, p)
@@ -1363,9 +1364,9 @@ func (m *Model) updateEditSession(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch m.sessionForm.focus {
 		case sessionFormAgentFocus:
 			if key.Matches(msg, m.keys.Left) {
-				m.sessionForm.agentIdx = (m.sessionForm.agentIdx - 1 + len(agentNames)) % len(agentNames)
+				m.sessionForm.agentIdx = (m.sessionForm.agentIdx - 1 + len(m.agentNames())) % len(m.agentNames())
 			} else {
-				m.sessionForm.agentIdx = (m.sessionForm.agentIdx + 1) % len(agentNames)
+				m.sessionForm.agentIdx = (m.sessionForm.agentIdx + 1) % len(m.agentNames())
 			}
 		case sessionFormDangerousFocus:
 			m.sessionForm.dangerous = !m.sessionForm.dangerous
@@ -1377,7 +1378,7 @@ func (m *Model) updateEditSession(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Enter):
 		id := m.sessionForm.id
 		newName := m.sessionForm.nameInput.Value()
-		agent := agentNames[m.sessionForm.agentIdx]
+		agent := m.agentNames()[m.sessionForm.agentIdx]
 		dangerous := m.sessionForm.dangerous
 		m.busy = true
 		m.sessionForm.err = ""
@@ -1457,7 +1458,7 @@ func (m *Model) updateEditProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Enter):
 		project.Repo = m.projForm.inputs[1].Value()
 		project.Emoji = projectEmojiFieldValue(m.projForm.emojiChoices, m.projForm.emojiIdx)
-		project.Agent, project.Dangerous, project.PromptAgent = projectAgentFields(m.projForm.agentIdx, m.projForm.dangerous)
+		project.Agent, project.Dangerous, project.PromptAgent = m.projectAgentFields(m.projForm.agentIdx, m.projForm.dangerous)
 		if !project.IsPlain() {
 			project.BaseBranch = m.projForm.inputs[2].Value()
 			project.BranchPrefix = m.projForm.inputs[3].Value()
@@ -1707,7 +1708,7 @@ func (m *Model) updateProjectPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.projects) > 0 && !m.busy {
 			name := m.projects[m.pickerCursor]
 			m.editProjectName = name
-			m.projForm = editProjectForm(name, m.cfg.Projects[name])
+			m.projForm = m.editProjectForm(name, m.cfg.Projects[name])
 			m.activateProject(name) // keeps m.sessions/m.cursor in sync — see the delete case above
 			m.projectDialogReturn = ModeProjectPicker
 			m.mode = ModeEditProject

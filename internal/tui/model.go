@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -34,7 +35,11 @@ type Backend interface {
 	// CreateSession's hint, when non-empty, is a user-facing instruction
 	// (e.g. "run: tmux attach -t ...") to show alongside success — it is
 	// not an error.
-	CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch, model, thinking string) (s session.Session, hint string, err error)
+	// dangerous is a pointer so the TUI can leave it unset to mean "use the
+	// project's own default"; in practice it always computes and passes an
+	// explicit value (see openNewSessionForm), same as before this was a
+	// pointer.
+	CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (s session.Session, hint string, err error)
 	// StartFirstPrompt waits for a freshly created session's agent pane to
 	// be ready, then types prompt into it, and — if autoSubmit is true —
 	// presses Enter to start the agent working on it. No-op if prompt is
@@ -112,57 +117,65 @@ const (
 	ModeSettings
 )
 
-// agentNames lists the agent CLIs a session/project can run. Every form
-// pairs a selector over this list with its own independent "dangerous"
-// toggle row, rather than a single combined "codex (dangerous)"-style list
-// — opencode has no permission-skipping flag (see dangerousFlag in
-// internal/app), so its toggle is simply a no-op.
-var agentNames = []string{"claude", "codex", "opencode"}
-
-// modelNamesByAgent is the new-session form's model selector, one list per
-// agentNames entry since each CLI names its own models. "default" omits the
-// --model flag entirely, leaving the agent's own default in place. opencode
-// has no entry — it has no small fixed model list worth hardcoding, so its
-// form row is a free-text input (newFormModelInput) instead of a selector.
-var modelNamesByAgent = map[string][]string{
-	"claude": {"default", "sonnet", "opus", "fable"},
-	"codex":  {"default", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"},
+// agentNames lists the agent CLIs a session/project can run, in the core's
+// order. Every form pairs a selector over this list with its own independent
+// "dangerous" toggle row, rather than a single combined "codex (dangerous)"
+// -style list — opencode has no permission-skipping flag (see dangerousFlag
+// in internal/app), so its toggle is simply a no-op.
+//
+// Sourced from m.agentOptions, fetched from the backend once at startup
+// (App.AgentOptions, served remotely by internal/ipc) — this used to be a
+// hardcoded copy here that could silently drift from what the core actually
+// launches; now the TUI and any other front end read the same table.
+func (m *Model) agentNames() []string {
+	names := make([]string, len(m.agentOptions))
+	for i, o := range m.agentOptions {
+		names[i] = o.Name
+	}
+	return names
 }
 
-// modelNamesFor returns modelNamesByAgent[agent], defaulting to claude's list
-// for an unrecognized agent so the selector always has at least "default".
-// Never called for "opencode" — see modelNamesByAgent.
-func modelNamesFor(agent string) []string {
-	if names, ok := modelNamesByAgent[agent]; ok {
-		return names
+// modelNamesFor returns agent's model choices, defaulting to claude's list
+// for an unrecognized agent (or one with none of its own) so the selector
+// always has at least "default". Never called for "opencode" — its form row
+// is a free-text input (newFormModelInput) instead of a selector, since it
+// has no small fixed model list worth hardcoding.
+func (m *Model) modelNamesFor(agent string) []string {
+	var fallback []string
+	for _, o := range m.agentOptions {
+		if o.Name == agent && len(o.Models) > 0 {
+			return o.Models
+		}
+		if o.Name == "claude" {
+			fallback = o.Models
+		}
 	}
-	return modelNamesByAgent["claude"]
+	return fallback
 }
 
-// thinkingNames is the new-session form's thinking-level selector for
-// claude and opencode. Neither has a launch-time reasoning-effort flag, so
-// these are prepended as a phrase to the first prompt instead (see
-// thinkingPromptPrefix in update.go); "default" means no prefix.
-var thinkingNames = []string{"default", "think", "think hard", "think harder", "ultrathink"}
-
-// codexThinkingNames is codex's thinking-level selector: real values for its
-// -c model_reasoning_effort flag (see reasoningEffortFlag in internal/app),
-// not a prompt phrase.
-var codexThinkingNames = []string{"default", "minimal", "low", "medium", "high", "xhigh"}
-
-// thinkingNamesFor returns codexThinkingNames for codex, thinkingNames
-// otherwise.
-func thinkingNamesFor(agent string) []string {
-	if agent == "codex" {
-		return codexThinkingNames
+// thinkingNamesFor returns agent's thinking/reasoning-level choices. Claude
+// and opencode share a list of prompt phrases prepended to the first prompt
+// (see thinkingPromptPrefix in update.go) — neither has a launch-time
+// reasoning-effort flag; codex's are real values for its
+// -c model_reasoning_effort flag (see reasoningEffortFlag in internal/app).
+// "default" always means "pass/prepend nothing".
+func (m *Model) thinkingNamesFor(agent string) []string {
+	var fallback []string
+	for _, o := range m.agentOptions {
+		if o.Name == agent {
+			return o.Thinking
+		}
+		if o.Name == "claude" {
+			fallback = o.Thinking
+		}
 	}
-	return thinkingNames
+	return fallback
 }
 
 // agentNameIndex finds agent's position in agentNames, defaulting to 0
 // (claude) if it's unrecognized.
-func agentNameIndex(agent string) int {
-	for i, a := range agentNames {
+func (m *Model) agentNameIndex(agent string) int {
+	for i, a := range m.agentNames() {
 		if a == agent {
 			return i
 		}
@@ -261,7 +274,11 @@ func newTagForm(ticket, pr string) tagForm {
 type Model struct {
 	cfg     *config.Config
 	backend Backend
-	keys    KeyMap
+	// agentOptions is the core's agent/model/thinking-level tables, fetched
+	// once at startup (see New) — the single source every form's agent,
+	// model and thinking selectors read from instead of a copy of their own.
+	agentOptions []config.AgentOption
+	keys         KeyMap
 	// Version is shown in the bottom-right corner of the footer; empty hides it.
 	Version string
 	// UpdateVersion is the latest GitHub release, set by checkUpdateCmd once
@@ -538,7 +555,7 @@ func (m *Model) linkAt(x, y int) (string, bool) {
 	return "", false
 }
 
-func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, cancel context.CancelFunc) *Model {
+func New(cfg *config.Config, backend Backend, agentOptions []config.AgentOption, statusCh <-chan watcher.Snapshot, cancel context.CancelFunc) *Model {
 	ti := textinput.New()
 	ti.Placeholder = "session name (optional if branch set)"
 	ti.CharLimit = 64
@@ -594,6 +611,7 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 	m := &Model{
 		cfg:               cfg,
 		backend:           backend,
+		agentOptions:      agentOptions,
 		keys:              DefaultKeyMap(),
 		states:            map[string]watcher.State{},
 		titleState:        map[string]watcher.State{},
@@ -777,10 +795,23 @@ func fetchGitStatusCmd(backend Backend, ids []string) tea.Cmd {
 	return func() tea.Msg {
 		now := time.Now()
 		status := make(map[string]gitStatusInfo, len(ids))
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		// Each id is its own `git status`/`rev-list` call — over a socket
+		// backend that's also its own dial+encode+decode round trip — so
+		// fetching them one at a time makes a stale-session sweep's latency
+		// scale with session count instead of with the slowest single one.
 		for _, id := range ids {
-			dirty, unpushed, ok := backend.WorktreeStatus(id)
-			status[id] = gitStatusInfo{dirty: dirty, unpushed: unpushed, ok: ok, checkedAt: now}
+			wg.Add(1)
+			go func(id string) {
+				defer wg.Done()
+				dirty, unpushed, ok := backend.WorktreeStatus(id)
+				mu.Lock()
+				status[id] = gitStatusInfo{dirty: dirty, unpushed: unpushed, ok: ok, checkedAt: now}
+				mu.Unlock()
+			}(id)
 		}
+		wg.Wait()
 		return GitStatusMsg{Status: status}
 	}
 }
@@ -848,10 +879,22 @@ func fetchPRStatusCmd(backend Backend, ids []string) tea.Cmd {
 	return func() tea.Msg {
 		now := time.Now()
 		status := make(map[string]prStatusInfo, len(ids))
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		// See fetchGitStatusCmd: each id is its own network-bound `gh pr
+		// view`, fanned out rather than chained so N sessions cost one
+		// round trip's worth of latency instead of N.
 		for _, id := range ids {
-			info, ok := backend.PRStatus(id)
-			status[id] = prStatusInfo{info: info, ok: ok, checkedAt: now}
+			wg.Add(1)
+			go func(id string) {
+				defer wg.Done()
+				info, ok := backend.PRStatus(id)
+				mu.Lock()
+				status[id] = prStatusInfo{info: info, ok: ok, checkedAt: now}
+				mu.Unlock()
+			}(id)
 		}
+		wg.Wait()
 		return PRStatusMsg{Status: status}
 	}
 }
@@ -934,7 +977,7 @@ func newProjectForm() projectForm {
 	return pf
 }
 
-func editProjectForm(name string, p config.Project) projectForm {
+func (m *Model) editProjectForm(name string, p config.Project) projectForm {
 	pf := newProjectForm()
 	pf.inputs[0].SetValue(name)
 	pf.inputs[1].SetValue(p.Repo)
@@ -961,7 +1004,7 @@ func editProjectForm(name string, p config.Project) projectForm {
 	if p.PromptAgent {
 		pf.agentIdx = askAgentIdx
 	} else {
-		pf.agentIdx = agentNameIndex(p.AgentName())
+		pf.agentIdx = m.agentNameIndex(p.AgentName())
 		pf.dangerous = p.Dangerous
 	}
 	pf.noWorktree = p.NoWorktree

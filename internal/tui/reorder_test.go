@@ -20,7 +20,7 @@ import (
 func newTestModel(be *fakeBackend) *Model {
 	cfg := &config.Config{Projects: map[string]config.Project{"demo": {Repo: "/tmp/demo"}}}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 	return m
@@ -32,7 +32,7 @@ func newMultiProjectTestModel(be *fakeBackend) *Model {
 		"beta":  {Repo: "/tmp/beta"},
 	}}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 	return m

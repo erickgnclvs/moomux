@@ -77,22 +77,19 @@ func (c *Client) call(method string, a Args) (Result, error) {
 // mutates — so over a socket that pointer would freeze at connect time and
 // a newly added project would never appear. Refreshing it in place mirrors
 // what config.Reload does locally.
+//
+// The server attaches its post-mutation config snapshot to the same
+// response (see Server.mutResult) specifically so this doesn't need a
+// second "Config" round trip — every settings toggle would otherwise dial,
+// encode and decode the whole Projects map twice.
 func (c *Client) mut(method string, a Args) error {
-	if err := c.err0(method, a); err != nil {
+	r, err := c.call(method, a)
+	if err != nil {
 		return err
 	}
-	return c.refreshConfig()
-}
-
-func (c *Client) refreshConfig() error {
-	if c.cfg == nil {
-		return nil
+	if c.cfg != nil && r.Cfg != nil {
+		*c.cfg = *r.Cfg
 	}
-	fresh, err := c.Config()
-	if err != nil || fresh == nil {
-		return err
-	}
-	*c.cfg = *fresh
 	return nil
 }
 
@@ -131,6 +128,17 @@ func (c *Client) Config() (*config.Config, error) {
 // Bind makes cfg the config this client keeps refreshed — see mut.
 func (c *Client) Bind(cfg *config.Config) { c.cfg = cfg }
 
+// AgentOptions fetches the server's agent/model/thinking-level tables. Not
+// part of tui.Backend — like Config, the TUI fetches it once at startup
+// rather than on every render.
+func (c *Client) AgentOptions() ([]config.AgentOption, error) {
+	r, err := c.call("AgentOptions", Args{})
+	if err != nil {
+		return nil, err
+	}
+	return r.Agents, nil
+}
+
 func (c *Client) Sessions() []session.Session {
 	r, err := c.call("Sessions", Args{})
 	c.mu.Lock()
@@ -164,7 +172,7 @@ func (c *Client) TmuxAliveAll() map[string]bool {
 	return r.Alive
 }
 
-func (c *Client) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch, model, thinking string) (session.Session, string, error) {
+func (c *Client) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
 	r, err := c.call("CreateSession", Args{
 		Project: project, Name: name, Agent: agent, Branch: existingBranch, Ticket: ticket,
 		OpenTerminal: openTerminal, Dangerous: dangerous, BaseBranch: baseBranch,
@@ -229,7 +237,7 @@ func (c *Client) SetSessionPrompt(id, prompt string) (session.Session, error) {
 }
 
 func (c *Client) SetSessionAgent(id, agent string, dangerous bool) (session.Session, error) {
-	return c.sess("SetSessionAgent", Args{ID: id, Agent: agent, Dangerous: dangerous})
+	return c.sess("SetSessionAgent", Args{ID: id, Agent: agent, AgentDangerous: dangerous})
 }
 
 func (c *Client) RenameSession(id, newName string) (session.Session, error) {

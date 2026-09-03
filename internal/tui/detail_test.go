@@ -21,7 +21,7 @@ func TestDetailTruncatesLongTicketURLButKeepsItClickable(t *testing.T) {
 		{ID: "demo:one", Project: "demo", Name: "one", Ticket: longURL},
 	}}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 
 	frame, hits := m.renderDetail(80-2, 24-2)
@@ -113,7 +113,7 @@ func TestDetailShowsPRStatusRowOnlyWhenCached(t *testing.T) {
 		{ID: "demo:one", Project: "demo", Name: "one", PR: "https://github.com/example/repo/pull/1"},
 	}}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 
 	frame, _ := m.renderDetail(80-2, 24-2)
@@ -149,7 +149,7 @@ func TestCompactDetailTrimsFieldsAndShortensPR(t *testing.T) {
 		},
 	}}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 
 	frame, _ := m.renderDetail(80-2, 24-2)
@@ -208,7 +208,7 @@ func TestCompactDetailHidesCowOnNarrowLayout(t *testing.T) {
 		{ID: "demo:one", Project: "demo", Name: "one"},
 	}}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 
 	m.width, m.height = narrowWidthBreak, 24
 	if frame, _ := m.renderDetail(narrowWidthBreak-2, 24-2); !strings.Contains(frame, "^__^") {

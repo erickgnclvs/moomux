@@ -15,6 +15,23 @@ import (
 	"github.com/erickgnclvs/moomux/internal/atomicfile"
 )
 
+// AgentOption describes one agent CLI moomux can launch: its name, and the
+// model/thinking-level choices worth offering a user for it. Sourced from
+// internal/app, which is the package that actually builds each agent's
+// launch command — see App.AgentOptions. Lives here, not in internal/app or
+// internal/tui, so both the TUI and internal/ipc (which serves it to a
+// second front end, e.g. a native app) can reference the type without a
+// package cycle.
+type AgentOption struct {
+	Name string `json:"name"`
+	// Models is nil for an agent with no fixed list worth hardcoding (a
+	// free-text field is more honest than a stale one).
+	Models []string `json:"models,omitempty"`
+	// Thinking is the thinking/reasoning-level choices for this agent;
+	// "default" always means "pass nothing".
+	Thinking []string `json:"thinking,omitempty"`
+}
+
 type Project struct {
 	Kind         string `toml:"kind,omitempty"` // "git" (default) or "plain"
 	Repo         string `toml:"repo"`

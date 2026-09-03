@@ -27,8 +27,12 @@ type Server struct {
 	// mutates it under its own lock, and handing out the pointer would put
 	// every reader here in a race with AddProject. app.App.ConfigSnapshot
 	// satisfies this.
-	Config  func() config.Config
-	Watcher watcher.Watcher // optional; powers the "Watch" stream
+	Config func() config.Config
+	// AgentOptions returns the agent/model/thinking-level tables a
+	// new-session picker offers, served the same way as Config so a client
+	// never keeps its own copy. app.App.AgentOptions satisfies this.
+	AgentOptions func() []config.AgentOption
+	Watcher      watcher.Watcher // optional; powers the "Watch" stream
 }
 
 // Listen removes any stale socket at path and starts listening on it.
@@ -148,6 +152,11 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		}
 		cfg := s.Config()
 		return Result{Cfg: &cfg}, nil
+	case "AgentOptions":
+		if s.AgentOptions == nil {
+			return Result{}, errors.New("server has no agent options")
+		}
+		return Result{Agents: s.AgentOptions()}, nil
 	case "Sessions":
 		return Result{Sessions: b.Sessions()}, nil
 	case "Projects":
@@ -186,7 +195,7 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 	case "SetSessionPrompt":
 		return sessionResult(b.SetSessionPrompt(a.ID, a.Prompt))
 	case "SetSessionAgent":
-		return sessionResult(b.SetSessionAgent(a.ID, a.Agent, a.Dangerous))
+		return sessionResult(b.SetSessionAgent(a.ID, a.Agent, a.AgentDangerous))
 	case "RenameSession":
 		return sessionResult(b.RenameSession(a.ID, a.Name))
 	case "SetSessionArchived":
@@ -194,29 +203,29 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 	case "MoveSession":
 		return Result{}, b.MoveSession(a.ID, a.Delta)
 	case "MoveProject":
-		return Result{}, b.MoveProject(a.Name, a.Delta)
+		return s.mutResult(b.MoveProject(a.Name, a.Delta))
 
 	case "AddProject":
-		return Result{}, b.AddProject(a.Name, a.Proj)
+		return s.mutResult(b.AddProject(a.Name, a.Proj))
 	case "InitProjectAndAdd":
-		return Result{}, b.InitProjectAndAdd(a.Name, a.Proj)
+		return s.mutResult(b.InitProjectAndAdd(a.Name, a.Proj))
 	case "AddPlainProject":
-		return Result{}, b.AddPlainProject(a.Name, a.Proj)
+		return s.mutResult(b.AddPlainProject(a.Name, a.Proj))
 	case "UpdateProject":
-		return Result{}, b.UpdateProject(a.Name, a.Proj)
+		return s.mutResult(b.UpdateProject(a.Name, a.Proj))
 	case "RemoveProject":
-		return Result{}, b.RemoveProject(a.Name)
+		return s.mutResult(b.RemoveProject(a.Name))
 
 	case "SetTheme":
-		return Result{}, b.SetTheme(a.Theme, a.Appearance)
+		return s.mutResult(b.SetTheme(a.Theme, a.Appearance))
 	case "SetAutoSubmitDefault":
-		return Result{}, b.SetAutoSubmitDefault(a.On)
+		return s.mutResult(b.SetAutoSubmitDefault(a.On))
 	case "SetSortRecentFirst":
-		return Result{}, b.SetSortRecentFirst(a.On)
+		return s.mutResult(b.SetSortRecentFirst(a.On))
 	case "SetAutoTmux":
-		return Result{}, b.SetAutoTmux(a.On)
+		return s.mutResult(b.SetAutoTmux(a.On))
 	case "SetCompactDetail":
-		return Result{}, b.SetCompactDetail(a.On)
+		return s.mutResult(b.SetCompactDetail(a.On))
 	}
 	return Result{}, fmt.Errorf("unknown method %q", method)
 }
@@ -225,4 +234,16 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 // (session.Session, error).
 func sessionResult(sess session.Session, err error) (Result, error) {
 	return Result{Session: &sess}, err
+}
+
+// mutResult adapts the config-mutating Backend methods (all bare error
+// returns) by attaching the post-mutation config snapshot to a successful
+// response — see Client.mut, which applies it in place instead of making a
+// second "Config" round trip for every settings change.
+func (s *Server) mutResult(err error) (Result, error) {
+	if err != nil || s.Config == nil {
+		return Result{}, err
+	}
+	cfg := s.Config()
+	return Result{Cfg: &cfg}, nil
 }

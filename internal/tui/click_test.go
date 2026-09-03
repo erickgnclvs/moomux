@@ -2,7 +2,9 @@ package tui
 
 import (
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -12,6 +14,16 @@ import (
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
+
+// testAgentOptions is the agent/model/thinking-level table every test Model
+// is constructed with — a fixture standing in for what App.AgentOptions
+// would serve in production, kept in lockstep with it by
+// TestAgentOptionsMatchesTUIFixture in agent_options_test.go.
+var testAgentOptions = []config.AgentOption{
+	{Name: "claude", Models: []string{"default", "sonnet", "opus", "fable"}, Thinking: []string{"default", "think", "think hard", "think harder", "ultrathink"}},
+	{Name: "codex", Models: []string{"default", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}, Thinking: []string{"default", "minimal", "low", "medium", "high", "xhigh"}},
+	{Name: "opencode", Thinking: []string{"default", "think", "think hard", "think harder", "ultrathink"}},
+}
 
 type fakeBackend struct {
 	sessions []session.Session
@@ -78,10 +90,18 @@ type fakeBackend struct {
 	setCompactDetailCalls []bool
 	setCompactDetailErr   error
 
+	// statusMu guards worktreeStatusCalls/prStatusCalls: fetchGitStatusCmd
+	// and fetchPRStatusCmd fan their per-id backend calls out concurrently,
+	// so appends to these from WorktreeStatus/PRStatus need a lock.
+	statusMu sync.Mutex
+
 	// worktreeStatus, keyed by session id, backs WorktreeStatus. A missing
 	// entry means "unknown" (ok=false) rather than "clean".
 	worktreeStatus      map[string]gitStatusInfo
 	worktreeStatusCalls []string
+	// worktreeStatusDelay, when set, makes WorktreeStatus sleep before
+	// answering — for timing a concurrent fan-out against a sequential one.
+	worktreeStatusDelay time.Duration
 
 	// changeSummary, keyed by session id, backs ChangeSummary. A missing
 	// entry means "unknown" (ok=false).
@@ -92,6 +112,8 @@ type fakeBackend struct {
 	// "unknown" (ok=false), mirroring worktreeStatus.
 	prStatus      map[string]prStatusInfo
 	prStatusCalls []string
+	// prStatusDelay mirrors worktreeStatusDelay, for PRStatus.
+	prStatusDelay time.Duration
 
 	// tmuxAlive backs TmuxAliveAll; nil (the zero value) reads as "nothing
 	// alive", same as the map[string]bool{} every other test relies on.
@@ -102,7 +124,8 @@ type setThemeCall struct{ theme, appearance string }
 
 type createCall struct {
 	project, name, agent, branch, ticket string
-	openTerminal, dangerous              bool
+	openTerminal                         bool
+	dangerous                            *bool
 	baseBranch, model, thinking          string
 }
 type sendPromptCall struct {
@@ -134,7 +157,7 @@ type moveProjectCall struct {
 	delta int
 }
 
-func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch, model, thinking string) (session.Session, string, error) {
+func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
 	f.createCalls = append(f.createCalls, createCall{project, name, agent, existingBranch, ticket, openTerminal, dangerous, baseBranch, model, thinking})
 	if f.createErr != nil {
 		return session.Session{}, "", f.createErr
@@ -143,7 +166,7 @@ func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket
 	if label == "" {
 		label = existingBranch
 	}
-	s := session.Session{ID: session.MakeID(project, label), Project: project, Name: label, Agent: agent, Dangerous: dangerous, Ticket: ticket}
+	s := session.Session{ID: session.MakeID(project, label), Project: project, Name: label, Agent: agent, Dangerous: dangerous != nil && *dangerous, Ticket: ticket}
 	f.sessions = append(f.sessions, s)
 	return s, f.createHint, nil
 }
@@ -168,7 +191,12 @@ func (f *fakeBackend) DeleteSession(id string) (string, error) {
 	return "", f.deleteErr
 }
 func (f *fakeBackend) WorktreeStatus(id string) (dirty, unpushed, ok bool) {
+	if f.worktreeStatusDelay > 0 {
+		time.Sleep(f.worktreeStatusDelay)
+	}
+	f.statusMu.Lock()
 	f.worktreeStatusCalls = append(f.worktreeStatusCalls, id)
+	f.statusMu.Unlock()
 	st, present := f.worktreeStatus[id]
 	if !present {
 		return false, false, false
@@ -184,7 +212,12 @@ func (f *fakeBackend) ChangeSummary(id string) (filesChanged, unpushedCommits in
 	return st.filesChanged, st.unpushedCommits, st.ok
 }
 func (f *fakeBackend) PRStatus(id string) (prstatus.Info, bool) {
+	if f.prStatusDelay > 0 {
+		time.Sleep(f.prStatusDelay)
+	}
+	f.statusMu.Lock()
 	f.prStatusCalls = append(f.prStatusCalls, id)
+	f.statusMu.Unlock()
 	st, present := f.prStatus[id]
 	if !present {
 		return prstatus.Info{}, false
@@ -324,7 +357,7 @@ func TestLinkHitsResolveClicks(t *testing.T) {
 		{ID: "demo:one", Project: "demo", Name: "one", Ticket: "https://ticket.example/1", PR: "https://pr.example/1"},
 	}}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 
 	frame := m.View()
@@ -367,7 +400,7 @@ func TestTruncatedDetailURLsRemainClickable(t *testing.T) {
 			PR:      prURL,
 		},
 	}}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 
 	frame := m.View()
@@ -435,7 +468,7 @@ func TestLinkClickOverSSHCopiesInsteadOfOpening(t *testing.T) {
 		{ID: "demo:one", Project: "demo", Name: "one", Ticket: "https://ticket.example/1"},
 	}}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.View() // populate m.linkHits
 
@@ -471,7 +504,7 @@ func TestSessionRowClickSelectsWithoutOpening(t *testing.T) {
 		openHint: "run: tmux attach -t moomux-two",
 	}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList // exercising the plain-list click path, not multi-view's
 	m.View()          // populate m.rowHits
@@ -505,7 +538,7 @@ func TestSessionRowClickOutsideListDoesNotSelect(t *testing.T) {
 		{ID: "demo:one", Project: "demo", Name: "one"},
 	}}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.View()
 
@@ -555,7 +588,7 @@ func TestRemoteLinksToggleOverridesAutoDetection(t *testing.T) {
 	cfg := &config.Config{Projects: map[string]config.Project{"demo": {Repo: "/tmp/demo"}}}
 	be := &fakeBackend{}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 
 	// No SSH env set and not forced: isRemote() says false.
 	if m.isRemote() {
@@ -591,7 +624,7 @@ func TestTmuxRowClickAlwaysCopies(t *testing.T) {
 		{ID: "demo:one", Project: "demo", Name: "one", TmuxSession: "moomux-one"},
 	}}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.View() // populate m.linkHits
 

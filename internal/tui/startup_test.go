@@ -25,7 +25,7 @@ func TestNewSelectsFirstProjectWithActiveSessions(t *testing.T) {
 		{ID: "other:work", Project: "other", Name: "work"},
 	}}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 
 	if got := m.projects[m.activeProj]; got != "other" {
 		t.Fatalf("active project = %q, want %q (the one with an active session)", got, "other")
@@ -45,7 +45,7 @@ func TestNewFallsBackToFirstProjectWhenNoneHaveActiveSessions(t *testing.T) {
 	}
 	be := &fakeBackend{}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 
 	if got := m.projects[m.activeProj]; got != "moomux" {
 		t.Fatalf("active project = %q, want %q (fallback to first)", got, "moomux")

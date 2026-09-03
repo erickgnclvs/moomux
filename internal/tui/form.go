@@ -281,7 +281,7 @@ func (m *Model) renderNewFormAgentSelector() string {
 		return warnStyle.Render("choose an agent (←→)")
 	}
 	return renderSelector(
-		agentNames, m.newFormAgentIdx, m.newFormFocus == newFormAgentFocus,
+		m.agentNames(), m.newFormAgentIdx, m.newFormFocus == newFormAgentFocus,
 		m.overlayWidth(formHintWidth)-lipgloss.Width("agent:  "),
 	)
 }
@@ -289,13 +289,13 @@ func (m *Model) renderNewFormAgentSelector() string {
 func (m *Model) renderNewFormModelSelector() string {
 	agent := ""
 	if m.newFormAgentIdx >= 0 {
-		agent = agentNames[m.newFormAgentIdx]
+		agent = m.agentNames()[m.newFormAgentIdx]
 	}
 	if agent == "opencode" {
 		return m.newFormModelInput.View()
 	}
 	return renderSelector(
-		modelNamesFor(agent), m.newFormModelIdx, m.newFormFocus == newFormModelFocus,
+		m.modelNamesFor(agent), m.newFormModelIdx, m.newFormFocus == newFormModelFocus,
 		m.overlayWidth(formHintWidth)-lipgloss.Width("model:  "),
 	)
 }
@@ -306,7 +306,7 @@ func (m *Model) renderNewFormModelSelector() string {
 // -c model_reasoning_effort flag) than for claude/opencode (a phrase
 // prepended to the first prompt).
 func (m *Model) newFormFieldHint() string {
-	if m.newFormFocus == newFormThinkingFocus && m.newFormAgentIdx >= 0 && agentNames[m.newFormAgentIdx] == "codex" {
+	if m.newFormFocus == newFormThinkingFocus && m.newFormAgentIdx >= 0 && m.agentNames()[m.newFormAgentIdx] == "codex" {
 		return "optional — passed to codex as -c model_reasoning_effort; \"default\" omits it"
 	}
 	return newFormFieldHints[m.newFormFocus]
@@ -315,10 +315,10 @@ func (m *Model) newFormFieldHint() string {
 func (m *Model) renderNewFormThinkingSelector() string {
 	agent := ""
 	if m.newFormAgentIdx >= 0 {
-		agent = agentNames[m.newFormAgentIdx]
+		agent = m.agentNames()[m.newFormAgentIdx]
 	}
 	return renderSelector(
-		thinkingNamesFor(agent), m.newFormThinkingIdx, m.newFormFocus == newFormThinkingFocus,
+		m.thinkingNamesFor(agent), m.newFormThinkingIdx, m.newFormFocus == newFormThinkingFocus,
 		m.overlayWidth(formHintWidth)-lipgloss.Width("thinking:  "),
 	)
 }
@@ -358,7 +358,7 @@ func (m *Model) renderEditSession() string {
 
 func (m *Model) renderSessionAgentSelector() string {
 	return renderSelector(
-		agentNames, m.sessionForm.agentIdx,
+		m.agentNames(), m.sessionForm.agentIdx,
 		m.sessionForm.focus == sessionFormAgentFocus,
 		m.overlayWidth(formHintWidth)-lipgloss.Width("agent:  "),
 	)
@@ -483,15 +483,17 @@ func (m *Model) renderProjectDangerousToggle() string {
 // projectAgentChoices is the project form's agent selector: the real agents,
 // plus a trailing "ask each time" entry (index askAgentIdx maps to it) that
 // defers the choice to each new-session form instead of fixing one here.
-var projectAgentChoices = append(append([]string{}, agentNames...), "ask each time")
+func (m *Model) projectAgentChoices() []string {
+	return append(append([]string{}, m.agentNames()...), "ask each time")
+}
 
 func (m *Model) renderAgentSelector() string {
 	selectedIdx := m.projForm.agentIdx
 	if selectedIdx == askAgentIdx {
-		selectedIdx = len(agentNames)
+		selectedIdx = len(m.agentNames())
 	}
 	return renderSelector(
-		projectAgentChoices, selectedIdx,
+		m.projectAgentChoices(), selectedIdx,
 		m.projForm.focus == projFormInputCount+1,
 		m.overlayWidth(formHintWidth)-m.formLabelWidth("agent", 15),
 	)

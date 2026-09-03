@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +19,10 @@ import (
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
+
+// boolPtr is CreateSession's dangerous argument: non-nil forces the value
+// regardless of the project's own Dangerous setting.
+func boolPtr(b bool) *bool { return &b }
 
 // fakeBackend records what it was called with and returns canned values, so
 // a round trip can assert both directions of the wire.
@@ -30,6 +35,7 @@ type fakeBackend struct {
 	addProjectErr error
 	onAddProject  func(string, config.Project)
 	cfg           *config.Config
+	agentOptions  []config.AgentOption
 	mu            sync.Mutex
 }
 
@@ -46,7 +52,7 @@ func (f *fakeBackend) TmuxAliveAll() map[string]bool {
 	return map[string]bool{"moomux:a": true, "moomux:b": false}
 }
 
-func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch, model, thinking string) (session.Session, string, error) {
+func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
 	f.created = Args{
 		Project: project, Name: name, Agent: agent, Branch: existingBranch, Ticket: ticket,
 		OpenTerminal: openTerminal, Dangerous: dangerous, BaseBranch: baseBranch,
@@ -100,11 +106,19 @@ func (f *fakeBackend) InitProjectAndAdd(string, config.Project) error { return n
 func (f *fakeBackend) AddPlainProject(string, config.Project) error   { return nil }
 func (f *fakeBackend) UpdateProject(string, config.Project) error     { return nil }
 func (f *fakeBackend) RemoveProject(string) error                     { return nil }
-func (f *fakeBackend) SetTheme(string, string) error                  { return nil }
-func (f *fakeBackend) SetAutoSubmitDefault(bool) error                { return nil }
-func (f *fakeBackend) SetSortRecentFirst(bool) error                  { return nil }
-func (f *fakeBackend) SetAutoTmux(bool) error                         { return nil }
-func (f *fakeBackend) SetCompactDetail(bool) error                    { return nil }
+func (f *fakeBackend) SetTheme(theme, appearance string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.cfg != nil {
+		f.cfg.Theme = theme
+		f.cfg.Appearance = appearance
+	}
+	return nil
+}
+func (f *fakeBackend) SetAutoSubmitDefault(bool) error { return nil }
+func (f *fakeBackend) SetSortRecentFirst(bool) error   { return nil }
+func (f *fakeBackend) SetAutoTmux(bool) error          { return nil }
+func (f *fakeBackend) SetCompactDetail(bool) error     { return nil }
 
 type fakeWatcher struct{ snaps []watcher.Snapshot }
 
@@ -132,7 +146,7 @@ func start(t *testing.T, b *fakeBackend, cfg *config.Config, w watcher.Watcher) 
 	ln := &trackingListener{Listener: raw}
 	t.Cleanup(func() { ln.kill(); os.RemoveAll(dir) })
 	b.cfg = cfg
-	srv := &Server{Backend: b, Config: snapshotter(b, cfg), Watcher: w}
+	srv := &Server{Backend: b, Config: snapshotter(b, cfg), AgentOptions: func() []config.AgentOption { return b.agentOptions }, Watcher: w}
 	go srv.Serve(ln)
 	return &Client{Socket: sock}, ln
 }
@@ -171,6 +185,13 @@ func (l *trackingListener) Accept() (net.Conn, error) {
 	return c, err
 }
 
+// connCount reports how many connections have been accepted so far.
+func (l *trackingListener) connCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.conns)
+}
+
 // kill drops the listener and every connection it handed out.
 func (l *trackingListener) kill() {
 	l.Listener.Close()
@@ -198,10 +219,26 @@ func serveOn(t *testing.T, sock string, b *fakeBackend, cfg *config.Config, w wa
 
 func TestRoundTrip(t *testing.T) {
 	created := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
-	b := &fakeBackend{sessions: []session.Session{
-		{ID: "moomux:a", Project: "moomux", Name: "a", Branch: "alan/a", CreatedAt: created, Agent: "codex", Dangerous: true, Order: 42},
-	}}
+	b := &fakeBackend{
+		sessions: []session.Session{
+			{ID: "moomux:a", Project: "moomux", Name: "a", Branch: "alan/a", CreatedAt: created, Agent: "codex", Dangerous: true, Order: 42},
+		},
+		agentOptions: []config.AgentOption{
+			{Name: "claude", Models: []string{"default", "sonnet"}, Thinking: []string{"default", "think"}},
+			{Name: "opencode", Thinking: []string{"default", "think"}},
+		},
+	}
 	c, _ := start(t, b, &config.Config{Theme: "dracula"}, nil)
+
+	t.Run("agent options survive the wire", func(t *testing.T) {
+		got, err := c.AgentOptions()
+		if err != nil {
+			t.Fatalf("AgentOptions: %v", err)
+		}
+		if !reflect.DeepEqual(got, b.agentOptions) {
+			t.Fatalf("AgentOptions() = %+v, want %+v", got, b.agentOptions)
+		}
+	})
 
 	t.Run("sessions survive the wire", func(t *testing.T) {
 		got := c.Sessions()
@@ -211,7 +248,7 @@ func TestRoundTrip(t *testing.T) {
 	})
 
 	t.Run("args reach the backend", func(t *testing.T) {
-		s, hint, err := c.CreateSession("moomux", "feat", "claude", "", "T-1", true, true, "main", "opus", "high")
+		s, hint, err := c.CreateSession("moomux", "feat", "claude", "", "T-1", true, boolPtr(true), "main", "opus", "high")
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
@@ -219,9 +256,31 @@ func TestRoundTrip(t *testing.T) {
 			t.Fatalf("got (%+v, %q)", s, hint)
 		}
 		want := Args{Project: "moomux", Name: "feat", Agent: "claude", Ticket: "T-1",
-			OpenTerminal: true, Dangerous: true, BaseBranch: "main", Model: "opus", Thinking: "high"}
-		if b.created != want {
+			OpenTerminal: true, Dangerous: boolPtr(true), BaseBranch: "main", Model: "opus", Thinking: "high"}
+		// Args now carries a *bool (Dangerous), so a plain != would compare
+		// pointer identity instead of the pointed-to value.
+		if !reflect.DeepEqual(b.created, want) {
 			t.Fatalf("backend saw %+v, want %+v", b.created, want)
+		}
+	})
+
+	t.Run("SetSessionAgent's dangerous survives the wire as a plain bool", func(t *testing.T) {
+		// Unlike CreateSession's Dangerous, SetSessionAgent's is never
+		// "unset" — it has its own Args field (AgentDangerous) rather than
+		// sharing CreateSession's *bool.
+		s, err := c.SetSessionAgent("moomux:a", "codex", true)
+		if err != nil {
+			t.Fatalf("SetSessionAgent: %v", err)
+		}
+		if !s.Dangerous {
+			t.Fatalf("SetSessionAgent(true) round-tripped as %+v, want Dangerous=true", s)
+		}
+		s, err = c.SetSessionAgent("moomux:a", "codex", false)
+		if err != nil {
+			t.Fatalf("SetSessionAgent: %v", err)
+		}
+		if s.Dangerous {
+			t.Fatalf("SetSessionAgent(false) round-tripped as %+v, want Dangerous=false", s)
 		}
 	})
 
@@ -250,6 +309,29 @@ func TestRoundTrip(t *testing.T) {
 			t.Fatalf("Config() = %+v, %v", cfg, err)
 		}
 	})
+}
+
+// TestMutMakesOneRoundTripNotTwo guards against a config-mutating call (here
+// SetTheme) dialing twice — once for the mutation, once more to re-fetch
+// Config — instead of the server attaching its post-mutation snapshot to the
+// same response. Every settings toggle paid for a second dial+encode+decode
+// of the whole Projects map before this.
+func TestMutMakesOneRoundTripNotTwo(t *testing.T) {
+	cfg := &config.Config{Theme: "dracula"}
+	b := &fakeBackend{}
+	c, ln := start(t, b, cfg, nil)
+	c.Bind(cfg)
+
+	before := ln.connCount()
+	if err := c.SetTheme("gruvbox", ""); err != nil {
+		t.Fatalf("SetTheme: %v", err)
+	}
+	if got := ln.connCount() - before; got != 1 {
+		t.Fatalf("SetTheme made %d connections, want 1", got)
+	}
+	if cfg.Theme != "gruvbox" {
+		t.Fatalf("cfg.Theme = %q, want the mutation's own response to have refreshed it", cfg.Theme)
+	}
 }
 
 func TestWatchStreams(t *testing.T) {

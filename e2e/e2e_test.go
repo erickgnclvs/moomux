@@ -29,6 +29,10 @@ type noopOpener struct{}
 
 func (noopOpener) OpenSession(tmuxSession, title string) (string, error) { return "", nil }
 
+// boolPtr is CreateSession's dangerous argument: non-nil forces the value
+// regardless of the project's own Dangerous setting.
+func boolPtr(b bool) *bool { return &b }
+
 // newTestApp builds an App with real Tmux/Git clients rooted at an isolated
 // temp dir, and registers cleanup that kills any tmux sessions the test
 // leaves behind (whether or not the test itself deleted them).
@@ -131,7 +135,7 @@ func TestCreateSession_GitProject_NewBranch(t *testing.T) {
 		t.Fatalf("AddProject: %v", err)
 	}
 
-	s, hint, err := a.CreateSession("demo", "feature-x", "", "", "TICK-1", true, false, "", "", "")
+	s, hint, err := a.CreateSession("demo", "feature-x", "", "", "TICK-1", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -197,7 +201,7 @@ func TestCreateSession_ExistingBranch_DeleteKeepsBranch(t *testing.T) {
 		t.Fatalf("AddProject: %v", err)
 	}
 
-	s, _, err := a.CreateSession("demo", "", "", "feature-y", "", true, false, "", "", "")
+	s, _, err := a.CreateSession("demo", "", "", "feature-y", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -236,7 +240,7 @@ func TestCreateSession_NameCollisionAutoSuffix(t *testing.T) {
 		t.Fatalf("AddProject: %v", err)
 	}
 
-	s1, _, err := a.CreateSession("demo", "", "", "feature/login", "", true, false, "", "", "")
+	s1, _, err := a.CreateSession("demo", "", "", "feature/login", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession 1: %v", err)
 	}
@@ -244,7 +248,7 @@ func TestCreateSession_NameCollisionAutoSuffix(t *testing.T) {
 		t.Fatalf("s1 name = %q, want login", s1.Name)
 	}
 
-	s2, _, err := a.CreateSession("demo", "", "", "hotfix/login", "", true, false, "", "", "")
+	s2, _, err := a.CreateSession("demo", "", "", "hotfix/login", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession 2: %v", err)
 	}
@@ -264,7 +268,7 @@ func TestCreateSession_PlainProject(t *testing.T) {
 		t.Fatalf("AddPlainProject: %v", err)
 	}
 
-	s, _, err := a.CreateSession("scratch", "work", "", "", "", true, false, "", "", "")
+	s, _, err := a.CreateSession("scratch", "work", "", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -296,10 +300,10 @@ func TestCreateSession_Errors(t *testing.T) {
 		t.Fatalf("AddProject: %v", err)
 	}
 
-	if _, _, err := a.CreateSession("missing-project", "x", "", "", "", true, false, "", "", ""); err == nil {
+	if _, _, err := a.CreateSession("missing-project", "x", "", "", "", true, boolPtr(false), "", "", ""); err == nil {
 		t.Fatalf("expected error for unknown project")
 	}
-	if _, _, err := a.CreateSession("demo", "", "", "", "", true, false, "", "", ""); err == nil {
+	if _, _, err := a.CreateSession("demo", "", "", "", "", true, boolPtr(false), "", "", ""); err == nil {
 		t.Fatalf("expected error when name and existingBranch are both empty")
 	}
 }
@@ -311,7 +315,7 @@ func TestCreateSession_OpenCodePortAllocation(t *testing.T) {
 		t.Fatalf("AddProject: %v", err)
 	}
 
-	s1, _, err := a.CreateSession("demo", "oc1", "opencode", "", "", true, false, "", "", "")
+	s1, _, err := a.CreateSession("demo", "oc1", "opencode", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession 1: %v", err)
 	}
@@ -319,7 +323,7 @@ func TestCreateSession_OpenCodePortAllocation(t *testing.T) {
 		t.Fatalf("s1 port = %d, want 4096", s1.AgentPort)
 	}
 
-	s2, _, err := a.CreateSession("demo", "oc2", "opencode", "", "", true, false, "", "", "")
+	s2, _, err := a.CreateSession("demo", "oc2", "opencode", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession 2: %v", err)
 	}
@@ -334,7 +338,7 @@ func TestOpenSession_RecreatesKilledSession(t *testing.T) {
 	if err := a.AddProject("demo", config.Project{Repo: repo, BaseBranch: "main"}); err != nil {
 		t.Fatalf("AddProject: %v", err)
 	}
-	s, _, err := a.CreateSession("demo", "feature", "", "", "", true, false, "", "", "")
+	s, _, err := a.CreateSession("demo", "feature", "", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -363,7 +367,7 @@ func TestOpenSession_RecreatesOnCwdMismatch(t *testing.T) {
 	if err := a.AddProject("demo", config.Project{Repo: repo, BaseBranch: "main"}); err != nil {
 		t.Fatalf("AddProject: %v", err)
 	}
-	s, _, err := a.CreateSession("demo", "feature", "", "", "", true, false, "", "", "")
+	s, _, err := a.CreateSession("demo", "feature", "", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -393,7 +397,7 @@ func TestKillTmux_PreservesStoreAndWorktree(t *testing.T) {
 	if err := a.AddProject("demo", config.Project{Repo: repo, BaseBranch: "main"}); err != nil {
 		t.Fatalf("AddProject: %v", err)
 	}
-	s, _, err := a.CreateSession("demo", "feature", "", "", "", true, false, "", "", "")
+	s, _, err := a.CreateSession("demo", "feature", "", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -425,11 +429,11 @@ func TestTmuxAliveAll(t *testing.T) {
 	if err := a.AddProject("demo", config.Project{Repo: repo, BaseBranch: "main"}); err != nil {
 		t.Fatalf("AddProject: %v", err)
 	}
-	s1, _, err := a.CreateSession("demo", "alive", "", "", "", true, false, "", "", "")
+	s1, _, err := a.CreateSession("demo", "alive", "", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession 1: %v", err)
 	}
-	s2, _, err := a.CreateSession("demo", "dead", "", "", "", true, false, "", "", "")
+	s2, _, err := a.CreateSession("demo", "dead", "", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession 2: %v", err)
 	}
@@ -452,7 +456,7 @@ func TestSessionTagsAndArchive(t *testing.T) {
 	if err := a.AddProject("demo", config.Project{Repo: repo, BaseBranch: "main"}); err != nil {
 		t.Fatalf("AddProject: %v", err)
 	}
-	s, _, err := a.CreateSession("demo", "feature", "", "", "", true, false, "", "", "")
+	s, _, err := a.CreateSession("demo", "feature", "", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -493,11 +497,11 @@ func TestMoveSessionAndMoveProject(t *testing.T) {
 		t.Fatalf("AddPlainProject other: %v", err)
 	}
 
-	sA, _, err := a.CreateSession("demo", "a", "", "", "", true, false, "", "", "")
+	sA, _, err := a.CreateSession("demo", "a", "", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession a: %v", err)
 	}
-	sB, _, err := a.CreateSession("demo", "b", "", "", "", true, false, "", "", "")
+	sB, _, err := a.CreateSession("demo", "b", "", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession b: %v", err)
 	}
@@ -539,7 +543,7 @@ func TestDeleteSession_GitProject_RemovesWorktreeAndBranch(t *testing.T) {
 	if err := a.AddProject("demo", config.Project{Repo: repo, BaseBranch: "main"}); err != nil {
 		t.Fatalf("AddProject: %v", err)
 	}
-	s, _, err := a.CreateSession("demo", "feature", "", "", "", true, false, "", "", "")
+	s, _, err := a.CreateSession("demo", "feature", "", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -573,7 +577,7 @@ func TestRemoveProject_ActiveSessionsBlocked(t *testing.T) {
 	if err := a.AddProject("demo", config.Project{Repo: repo, BaseBranch: "main"}); err != nil {
 		t.Fatalf("AddProject: %v", err)
 	}
-	s, _, err := a.CreateSession("demo", "feature", "", "", "", true, false, "", "", "")
+	s, _, err := a.CreateSession("demo", "feature", "", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -649,15 +653,15 @@ func TestFullLifecycle_EndToEnd(t *testing.T) {
 		t.Fatalf("AddPlainProject: %v", err)
 	}
 
-	claudeS, _, err := a.CreateSession("backend", "auth", "claude", "", "TICK-1", true, false, "", "", "")
+	claudeS, _, err := a.CreateSession("backend", "auth", "claude", "", "TICK-1", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession claude: %v", err)
 	}
-	codexS, _, err := a.CreateSession("backend", "billing", "codex", "", "", true, false, "", "", "")
+	codexS, _, err := a.CreateSession("backend", "billing", "codex", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession codex: %v", err)
 	}
-	plainS, _, err := a.CreateSession("scripts", "cleanup", "", "", "", true, false, "", "", "")
+	plainS, _, err := a.CreateSession("scripts", "cleanup", "", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("CreateSession plain: %v", err)
 	}

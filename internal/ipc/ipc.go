@@ -62,43 +62,53 @@ func codeFor(err error) string {
 // if the surface doubles or two methods ever want the same field to mean
 // different things.
 type Args struct {
-	ID           string         `json:"id,omitempty"`
-	Name         string         `json:"name,omitempty"`
-	Project      string         `json:"project,omitempty"`
-	Agent        string         `json:"agent,omitempty"`
-	Branch       string         `json:"branch,omitempty"`
-	BaseBranch   string         `json:"base_branch,omitempty"`
-	Ticket       string         `json:"ticket,omitempty"`
-	PR           string         `json:"pr,omitempty"`
-	Prompt       string         `json:"prompt,omitempty"`
-	Model        string         `json:"model,omitempty"`
-	Thinking     string         `json:"thinking,omitempty"`
-	Theme        string         `json:"theme,omitempty"`
-	Appearance   string         `json:"appearance,omitempty"`
-	TmuxSession  string         `json:"tmux_session,omitempty"`
-	Delta        int            `json:"delta,omitempty"`
-	State        watcher.State  `json:"state,omitempty"`
-	Dangerous    bool           `json:"dangerous,omitempty"`
-	OpenTerminal bool           `json:"open_terminal,omitempty"`
-	AutoSubmit   bool           `json:"auto_submit,omitempty"`
-	On           bool           `json:"on,omitempty"` // archived / recentFirst / compact / autoTmux
-	Proj         config.Project `json:"proj,omitempty"`
+	ID          string        `json:"id,omitempty"`
+	Name        string        `json:"name,omitempty"`
+	Project     string        `json:"project,omitempty"`
+	Agent       string        `json:"agent,omitempty"`
+	Branch      string        `json:"branch,omitempty"`
+	BaseBranch  string        `json:"base_branch,omitempty"`
+	Ticket      string        `json:"ticket,omitempty"`
+	PR          string        `json:"pr,omitempty"`
+	Prompt      string        `json:"prompt,omitempty"`
+	Model       string        `json:"model,omitempty"`
+	Thinking    string        `json:"thinking,omitempty"`
+	Theme       string        `json:"theme,omitempty"`
+	Appearance  string        `json:"appearance,omitempty"`
+	TmuxSession string        `json:"tmux_session,omitempty"`
+	Delta       int           `json:"delta,omitempty"`
+	State       watcher.State `json:"state,omitempty"`
+	// Dangerous is CreateSession's dangerous, and only CreateSession's: it's
+	// a pointer so the caller can leave it unset (nil, simply omitted on the
+	// wire) to mean "use the project's own default" — a plain bool can't
+	// express that, since an explicit false and an absent field would be
+	// indistinguishable. SetSessionAgent's dangerous is always an explicit
+	// choice with no such case, so it gets its own plain-bool field
+	// (AgentDangerous) rather than making every caller of this one carry a
+	// pointer it never needed.
+	Dangerous      *bool          `json:"dangerous,omitempty"`
+	AgentDangerous bool           `json:"agent_dangerous,omitempty"`
+	OpenTerminal   bool           `json:"open_terminal,omitempty"`
+	AutoSubmit     bool           `json:"auto_submit,omitempty"`
+	On             bool           `json:"on,omitempty"` // archived / recentFirst / compact / autoTmux
+	Proj           config.Project `json:"proj,omitempty"`
 }
 
 // Result is the matching union of every return shape. Same trade as Args.
 type Result struct {
-	Session  *session.Session  `json:"session,omitempty"`
-	Sessions []session.Session `json:"sessions,omitempty"`
-	Strings  []string          `json:"strings,omitempty"`
-	Alive    map[string]bool   `json:"alive,omitempty"`
-	PR       *prstatus.Info    `json:"pr,omitempty"`
-	Cfg      *config.Config    `json:"cfg,omitempty"`
-	Hint     string            `json:"hint,omitempty"`
-	Dirty    bool              `json:"dirty,omitempty"`
-	Unpushed bool              `json:"unpushed,omitempty"`
-	OK       bool              `json:"ok,omitempty"`
-	Files    int               `json:"files,omitempty"`
-	Commits  int               `json:"commits,omitempty"`
+	Session  *session.Session     `json:"session,omitempty"`
+	Sessions []session.Session    `json:"sessions,omitempty"`
+	Strings  []string             `json:"strings,omitempty"`
+	Alive    map[string]bool      `json:"alive,omitempty"`
+	PR       *prstatus.Info       `json:"pr,omitempty"`
+	Cfg      *config.Config       `json:"cfg,omitempty"`
+	Agents   []config.AgentOption `json:"agents,omitempty"`
+	Hint     string               `json:"hint,omitempty"`
+	Dirty    bool                 `json:"dirty,omitempty"`
+	Unpushed bool                 `json:"unpushed,omitempty"`
+	OK       bool                 `json:"ok,omitempty"`
+	Files    int                  `json:"files,omitempty"`
+	Commits  int                  `json:"commits,omitempty"`
 }
 
 // snapshotWire carries a watcher.Snapshot over JSON; Snapshot.Err is an

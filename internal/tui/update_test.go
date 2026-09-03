@@ -62,8 +62,8 @@ func TestNewSessionFormFlow(t *testing.T) {
 		press(m, tea.KeyTab) // branch -> base branch -> prompt -> ticket -> PR -> agent selector
 	}
 	press(m, tea.KeyRight) // claude -> codex
-	if agentNames[m.newFormAgentIdx] != "codex" {
-		t.Fatalf("agent = %q", agentNames[m.newFormAgentIdx])
+	if m.agentNames()[m.newFormAgentIdx] != "codex" {
+		t.Fatalf("agent = %q", m.agentNames()[m.newFormAgentIdx])
 	}
 	press(m, tea.KeyLeft)     // back to claude
 	press(m, tea.KeyShiftTab) // agent -> PR
@@ -478,7 +478,7 @@ func TestNewSessionCreateErrorKeepsForm(t *testing.T) {
 func TestNewSessionNoProjectsFlashesError(t *testing.T) {
 	cfg := &config.Config{Projects: map[string]config.Project{}}
 	be := &fakeBackend{}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList // New() opens the project form when no projects exist
 	m.Update(keyRune("n"))
@@ -1064,8 +1064,8 @@ func TestNewProjectFlow(t *testing.T) {
 	// walk focus to the agent selector and worktree toggle
 	m.projForm.focus = projFormInputCount + 1
 	press(m, tea.KeyRight) // agent claude -> codex
-	if agentNames[m.projForm.agentIdx] != "codex" {
-		t.Fatalf("agent = %q", agentNames[m.projForm.agentIdx])
+	if m.agentNames()[m.projForm.agentIdx] != "codex" {
+		t.Fatalf("agent = %q", m.agentNames()[m.projForm.agentIdx])
 	}
 	m.projForm.focus = projFormInputCount + 3
 	press(m, tea.KeyLeft) // toggle no-worktree on
@@ -1135,7 +1135,7 @@ func TestEditSessionFlow(t *testing.T) {
 	if m.mode != ModeEditSession {
 		t.Fatalf("mode = %v", m.mode)
 	}
-	if got := agentNames[m.sessionForm.agentIdx]; got != "codex" {
+	if got := m.agentNames()[m.sessionForm.agentIdx]; got != "codex" {
 		t.Fatalf("prefilled agent = %q", got)
 	}
 	if view := m.View(); !strings.Contains(view, "Edit session") ||
@@ -1215,7 +1215,7 @@ func TestEditProjectFlow(t *testing.T) {
 		},
 	}}
 	be := &fakeBackend{}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 100, 32
 
 	m.Update(slashKey())
@@ -1226,7 +1226,7 @@ func TestEditProjectFlow(t *testing.T) {
 	if m.projForm.inputs[1].Value() != "/tmp/demo" ||
 		m.projForm.inputs[2].Value() != "main" ||
 		m.projForm.inputs[3].Value() != "old" ||
-		agentNames[m.projForm.agentIdx] != "codex" {
+		m.agentNames()[m.projForm.agentIdx] != "codex" {
 		t.Fatalf("project form = %+v", m.projForm)
 	}
 	if view := m.View(); !strings.Contains(view, "Edit project") ||
@@ -1264,7 +1264,7 @@ func TestEditProjectArrowsMoveTextCursor(t *testing.T) {
 		"demo": {Kind: "git", Repo: "/tmp/demo", BaseBranch: "main"},
 	}}
 	be := &fakeBackend{}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 100, 32
 
 	m.Update(slashKey())
@@ -1308,7 +1308,7 @@ func TestEditPlainProjectShowsOnlyRepoAndAgent(t *testing.T) {
 		"notes": {Kind: "plain", Repo: "/tmp/notes", Agent: "claude"},
 	}}
 	be := &fakeBackend{}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 
 	m.Update(slashKey())
@@ -1327,7 +1327,7 @@ func TestEditPlainProjectShowsOnlyRepoAndAgent(t *testing.T) {
 	if m.projForm.focus != projFormInputCount+1 {
 		t.Fatalf("focus = %d, want agent selector", m.projForm.focus)
 	}
-	m.projForm.agentIdx = agentNameIndex("codex")
+	m.projForm.agentIdx = m.agentNameIndex("codex")
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(be.updateProjectCalls) != 1 {
 		t.Fatalf("updateProjectCalls = %v", be.updateProjectCalls)
@@ -1347,7 +1347,7 @@ func TestEditProjectPreservesOutOfPaletteEmoji(t *testing.T) {
 		"notes": {Kind: "git", Repo: "/tmp/notes", BaseBranch: "main", Emoji: "😀"},
 	}}
 	be := &fakeBackend{}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 
 	m.Update(slashKey())
@@ -1526,7 +1526,7 @@ func TestDeleteProjectWithSessionsIsBlocked(t *testing.T) {
 func TestDeleteProjectWithNoProjectsFlashesError(t *testing.T) {
 	cfg := &config.Config{Projects: map[string]config.Project{}}
 	be := &fakeBackend{}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 	m.Update(keyRune("D"))
@@ -1619,7 +1619,7 @@ func TestNavigationAndProjectSwitching(t *testing.T) {
 		{ID: "alpha:b", Project: "alpha", Name: "b"},
 		{ID: "beta:c", Project: "beta", Name: "c"},
 	}}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 
@@ -1661,7 +1661,7 @@ func TestProjectCyclingSkipsEmptyProjects(t *testing.T) {
 		{ID: "alpha:a", Project: "alpha", Name: "a"},
 		{ID: "beta:c", Project: "beta", Name: "c"},
 	}}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 
@@ -1703,7 +1703,7 @@ func TestProjectCyclingStaysWhenOnlyActiveHasSessions(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{
 		{ID: "alpha:a", Project: "alpha", Name: "a"},
 	}}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 
 	press(m, tea.KeyTab)
@@ -1733,7 +1733,7 @@ func TestProjectCyclingSkipsProjectsWithOnlyArchivedSessions(t *testing.T) {
 		{ID: "archived-only:z", Project: "archived-only", Name: "z", Archived: true},
 		{ID: "beta:c", Project: "beta", Name: "c"},
 	}}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 
@@ -1759,7 +1759,7 @@ func TestPlainLetterAlternatesForChordedKeys(t *testing.T) {
 		{ID: "alpha:b", Project: "alpha", Name: "b"},
 		{ID: "beta:c", Project: "beta", Name: "c"},
 	}}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 
