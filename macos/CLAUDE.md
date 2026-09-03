@@ -253,10 +253,11 @@ to fix in Go, not a reason to link the core.
 
 ## Things that will bite you
 
-- **The Go core spells its JSON keys two different ways.** `session.Session` has `json:"..."` tags
-  and is snake_case; `config.Config` and `config.Project` have only *TOML* tags, so Go's encoder
-  falls back to the Go **field names** (`Projects`, `BranchPrefix`). One `keyDecodingStrategy`
-  cannot serve both, which is why every type in `Models.swift` declares explicit `CodingKeys`. If a
+- **`prstatus.Info` still spells its JSON keys differently from everything else.** It has no json
+  tags, so Go's encoder falls back to the Go field names (`State`, `CI`) instead of snake_case.
+  `session.Session`, `config.Config` and `config.Project` all carry `json:"..."` tags now. Every
+  type in `Models.swift` still declares explicit `CodingKeys` rather than a shared
+  `keyDecodingStrategy`, so `PRInfo` alone needs the capitalized mapping. If a
   decode starts returning nils, check the Go struct's tags first.
 - **Watcher snapshots must be merged, never assigned.** `watcher.MultiWatcher` fans out one
   snapshot per sub-watcher, each carrying only its own agent's paths, so replacing wholesale wipes

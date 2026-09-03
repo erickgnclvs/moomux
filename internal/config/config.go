@@ -16,27 +16,27 @@ import (
 )
 
 type Project struct {
-	Kind         string `toml:"kind,omitempty"` // "git" (default) or "plain"
-	Repo         string `toml:"repo"`
-	BranchPrefix string `toml:"branch_prefix,omitempty"`
-	BaseBranch   string `toml:"base_branch,omitempty"`
-	Agent        string `toml:"agent,omitempty"` // "claude" (default), "codex", "opencode"
+	Kind         string `toml:"kind,omitempty" json:"kind,omitempty"` // "git" (default) or "plain"
+	Repo         string `toml:"repo" json:"repo"`
+	BranchPrefix string `toml:"branch_prefix,omitempty" json:"branch_prefix,omitempty"`
+	BaseBranch   string `toml:"base_branch,omitempty" json:"base_branch,omitempty"`
+	Agent        string `toml:"agent,omitempty" json:"agent,omitempty"` // "claude" (default), "codex", "opencode"
 	// Dangerous, when true, runs Agent with its permission-skipping flag
 	// (claude: --dangerously-skip-permissions, codex: --yolo); no-op for
 	// opencode. Applies as the default for new sessions of this project.
-	Dangerous bool `toml:"dangerous,omitempty"`
+	Dangerous bool `toml:"dangerous,omitempty" json:"dangerous,omitempty"`
 	// PromptAgent, when true, skips preselecting Agent as the default in the
 	// new-session form — the user must explicitly pick an agent before the
 	// form can be submitted.
-	PromptAgent bool `toml:"prompt_agent,omitempty"`
+	PromptAgent bool `toml:"prompt_agent,omitempty" json:"prompt_agent,omitempty"`
 	// NoWorktree, when true on a "git" project, keeps every session in Repo
 	// itself instead of giving each one its own worktree/branch — the same
 	// single-folder behavior as a "plain" project, but for a real git repo.
-	NoWorktree bool `toml:"no_worktree,omitempty"`
+	NoWorktree bool `toml:"no_worktree,omitempty" json:"no_worktree,omitempty"`
 	// Emoji is a short, user-set glyph shown in place of the project name in
 	// compact views (e.g. the all-projects session list). Empty means no
 	// glyph has been chosen — callers fall back to a deterministic pick.
-	Emoji string `toml:"emoji,omitempty"`
+	Emoji string `toml:"emoji,omitempty" json:"emoji,omitempty"`
 }
 
 func (p Project) IsPlain() bool { return p.Kind == "plain" }
@@ -79,35 +79,35 @@ func (p Project) AgentName() string {
 }
 
 type Config struct {
-	Projects map[string]Project `toml:"projects"`
+	Projects map[string]Project `toml:"projects" json:"projects"`
 	// Order is the user's manual project ordering (front-to-back). Names not
 	// listed here (new projects, or configs written before this existed)
 	// sort alphabetically after the ordered ones.
-	Order []string `toml:"order,omitempty"`
+	Order []string `toml:"order,omitempty" json:"order,omitempty"`
 	// TmuxSetupAsked marks that the user has already been asked whether to
 	// add moomux's recommended ~/.tmux.conf settings, so the prompt only
 	// ever runs once regardless of their answer.
-	TmuxSetupAsked bool `toml:"tmux_setup_asked,omitempty"`
+	TmuxSetupAsked bool `toml:"tmux_setup_asked,omitempty" json:"tmux_setup_asked,omitempty"`
 	// AutoTmux, when true, relaunches moomux inside a dedicated tmux
 	// session ("moomux") on startup if it isn't already running inside one.
-	AutoTmux bool `toml:"auto_tmux,omitempty"`
+	AutoTmux bool `toml:"auto_tmux,omitempty" json:"auto_tmux,omitempty"`
 	// AutoTmuxAsked marks that the user has already been asked whether to
 	// enable AutoTmux, so the prompt only ever runs once.
-	AutoTmuxAsked bool `toml:"auto_tmux_asked,omitempty"`
+	AutoTmuxAsked bool `toml:"auto_tmux_asked,omitempty" json:"auto_tmux_asked,omitempty"`
 	// Theme selects the color palette ("default", "terminal", "gruvbox",
 	// "catppuccin"); empty (or unrecognized) means "default".
-	Theme string `toml:"theme,omitempty"`
+	Theme string `toml:"theme,omitempty" json:"theme,omitempty"`
 	// Appearance forces which half of every theme's light/dark color pairs
 	// renders ("light" or "dark"); empty means auto-detect from the terminal.
-	Appearance string `toml:"appearance,omitempty"`
+	Appearance string `toml:"appearance,omitempty" json:"appearance,omitempty"`
 	// AutoSubmitDefault is the initial state of the new-session form's
 	// auto-submit toggle, remembered from whatever the user last set it to.
-	AutoSubmitDefault bool `toml:"auto_submit_default,omitempty"`
+	AutoSubmitDefault bool `toml:"auto_submit_default,omitempty" json:"auto_submit_default,omitempty"`
 	// SortRecentFirst, when true, lists sessions most-recently-opened first
 	// instead of the manual Order set by shift+↑↓. The two don't compose —
 	// manual reordering is disabled while this is on, since every open would
 	// otherwise undo it.
-	SortRecentFirst bool `toml:"sort_recent_first,omitempty"`
+	SortRecentFirst bool `toml:"sort_recent_first,omitempty" json:"sort_recent_first,omitempty"`
 	// CompactDetail, when true, trims the detail panel to the fields most
 	// useful at a glance — dropping project/agent/ticket/worktree/created,
 	// shrinking the cowsay art down to a one-line quip and face (or omitting
@@ -115,7 +115,7 @@ type Config struct {
 	// and shortening the PR link to just its number (e.g. "#5478") — so the
 	// panel stays short even when a session has both a ticket and a PR
 	// attached. pr status (merged/CI state) is left alone either way.
-	CompactDetail bool `toml:"compact_detail,omitempty"`
+	CompactDetail bool `toml:"compact_detail,omitempty" json:"compact_detail,omitempty"`
 }
 
 func Load(path string) (*Config, error) {

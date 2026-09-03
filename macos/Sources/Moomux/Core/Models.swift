@@ -1,17 +1,14 @@
 import Foundation
 
-// The wire types for `moomux serve`. They mirror the Go core's JSON, and the
-// Go core spells its keys two different ways, which is the single most
-// surprising thing in this file:
+// The wire types for `moomux serve`. They mirror the Go core's JSON.
 //
-//   - `session.Session` carries `json:"..."` tags, so it is snake_case.
-//   - `config.Config` and `config.Project` carry only *TOML* tags, so Go's
-//     JSON encoder falls back to the Go **field names** — `Projects`,
-//     `BranchPrefix`, `NoWorktree`.
-//
-// One `keyDecodingStrategy` therefore cannot serve both, and every type below
-// declares explicit `CodingKeys` instead. If a decode starts coming back with
-// nil fields, check the Go struct's tags before anything else.
+// `session.Session`, `config.Config` and `config.Project` all carry
+// `json:"..."` tags now and are snake_case throughout. `prstatus.Info` is the
+// one holdout — it has no json tags, so it crosses the wire as Go's
+// capitalized field names (see the note on `PRInfo` below). Every type below
+// still declares explicit `CodingKeys` rather than a shared
+// `keyDecodingStrategy`, so a decode that starts coming back with nil fields
+// has one obvious place to check first.
 //
 // These structs are also deliberately *partial* — they decode the fields this
 // app shows and ignore the rest. That is safe in one direction only: nothing
@@ -121,16 +118,11 @@ public struct Project: Decodable, Hashable, Sendable {
     public var isPlain: Bool { kind == "plain" }
     public var usesWorktree: Bool { !isPlain && !noWorktree }
 
-    // Go field names, not TOML keys — see the note at the top of this file.
     enum CodingKeys: String, CodingKey {
-        case kind = "Kind"
-        case repo = "Repo"
-        case branchPrefix = "BranchPrefix"
-        case baseBranch = "BaseBranch"
-        case agent = "Agent"
-        case dangerous = "Dangerous"
-        case noWorktree = "NoWorktree"
-        case emoji = "Emoji"
+        case kind, repo, agent, dangerous, emoji
+        case branchPrefix = "branch_prefix"
+        case baseBranch = "base_branch"
+        case noWorktree = "no_worktree"
     }
 
     public init(from decoder: Decoder) throws {
@@ -156,10 +148,7 @@ public struct Config: Decodable, Sendable {
     public var appearance: String?
 
     enum CodingKeys: String, CodingKey {
-        case projects = "Projects"
-        case order = "Order"
-        case theme = "Theme"
-        case appearance = "Appearance"
+        case projects, order, theme, appearance
     }
 
     public init(from decoder: Decoder) throws {
@@ -180,8 +169,8 @@ public struct Config: Decodable, Sendable {
 
 // MARK: - Pull request
 
-/// `prstatus.Info`. No json tags on the Go side, so Go field names again — and
-/// `CI` is spelled exactly that.
+/// `prstatus.Info`. No json tags on the Go side, so it crosses the wire as
+/// Go's capitalized field names — and `CI` is spelled exactly that.
 public struct PRInfo: Decodable, Equatable, Sendable {
     /// OPEN, MERGED, CLOSED
     public var state: String
@@ -319,11 +308,10 @@ public enum Wire {
         assert(!s.hasBeenOpened, "the Go zero time must read as never opened")
         assert(s.createdAt > goZeroTimeCutoff)
 
-        // Config: Go field names, because config.Config has no json tags.
         let configJSON = """
-        {"Projects":{"moomux":{"Repo":"/src/moomux","Agent":"codex","Emoji":"🐮"},
-                     "site":{"Repo":"/src/site","Kind":"plain"}},
-         "Order":["site","moomux"],"Theme":"gruvbox"}
+        {"projects":{"moomux":{"repo":"/src/moomux","agent":"codex","emoji":"🐮"},
+                     "site":{"repo":"/src/site","kind":"plain"}},
+         "order":["site","moomux"],"theme":"gruvbox"}
         """
         let cfg = try! decoder.decode(Config.self, from: Data(configJSON.utf8))
         assert(cfg.projects["moomux"]?.repo == "/src/moomux")
@@ -333,7 +321,7 @@ public enum Wire {
         assert(cfg.orderedProjectNames == ["site", "moomux"], "Order must win over alphabetical")
         // A project missing from Order sorts alphabetically, after the ordered ones.
         let extraJSON = """
-        {"Projects":{"b":{"Repo":"/b"},"a":{"Repo":"/a"},"z":{"Repo":"/z"}},"Order":["z"]}
+        {"projects":{"b":{"repo":"/b"},"a":{"repo":"/a"},"z":{"repo":"/z"}},"order":["z"]}
         """
         let extra = try! decoder.decode(Config.self, from: Data(extraJSON.utf8))
         assert(extra.orderedProjectNames == ["z", "a", "b"])
