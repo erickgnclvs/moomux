@@ -23,6 +23,12 @@ public final class TmuxControlClient {
         case exited(String?)
     }
 
+    /// Lines of tmux history pulled into a pane's scroll buffer on its first
+    /// paint. Pane views must be built with `TerminalOptions(scrollback:)` set
+    /// to this — anything past that cap is fed and silently discarded by
+    /// SwiftTerm's circular buffer, with no error anywhere.
+    public static let historyLines = 1000
+
     public private(set) var status: Status = .connecting {
         didSet { if status != oldValue { onStatusChange(status) } }
     }
@@ -43,6 +49,11 @@ public final class TmuxControlClient {
     /// in the order they arrive, so position is identity.
     private var pending: [([String], Bool) -> Void] = []
     private var views: [String: TerminalView] = [:]
+    /// Panes whose scrollback has already been streamed in. A repaint after a
+    /// resize is visible-only: re-sending a thousand lines per pane per frame
+    /// of a window drag is the cost, and tmux's rewrapped history would have to
+    /// be diffed against ours anyway.
+    private var historyPainted: Set<String> = []
     private var windowID: String?
     private var size: (cols: Int, rows: Int)
     /// (0, 0) until the first `refresh-client -C` goes out.
@@ -276,18 +287,70 @@ public final class TmuxControlClient {
     /// A pane producing output recovers on its own and hides the bug; an idle
     /// shell pane just stays black, which is how this was found.
     ///
-    /// Scrollback is not recovered, only the visible screen, and a full-screen
-    /// program repaints itself on its next draw anyway.
+    /// The first paint of a pane also restores `historyLines` of scrollback, so
+    /// SwiftTerm's own wheel and trackpad scrolling has something to scroll
+    /// through. Later repaints are visible-only — see `historyPainted`.
     public func paint(_ pane: String) {
         guard views[pane] != nil else { return }
-        send("capture-pane -p -e -t \(pane)") { [weak self, pane] lines, isError in
-            guard let view = self?.views[pane], !isError else { return }
-            let screen = "\u{1b}[H\u{1b}[2J" + lines.joined(separator: "\r\n")
-            view.feed(byteArray: Array(screen.utf8)[...])
+        // Where the cursor is and whether the pane is on the alternate screen
+        // both decide the shape of the feed, so ask before capturing.
+        send("display-message -p -t \(pane) \"#{cursor_x} #{cursor_y} #{alternate_on}\"") {
+            [weak self] lines, isError in
+            guard let self, !isError else { return }
+            let f = (lines.first ?? "").split(separator: " ").compactMap { Int($0) }
+            let cursor = f.count == 3 ? (x: f[0], y: f[1]) : (x: 0, y: 0)
+            // Neither tmux nor SwiftTerm keeps scrollback for the alternate
+            // screen, so history fed there would trash a full-screen program's
+            // display and then be thrown away on the next 1049 switch.
+            let history = f.count == 3 && f[2] == 0 && !self.historyPainted.contains(pane)
+            // No `-J`: plain `capture-pane` returns screen rows already wrapped
+            // to the pane width, one entry per row, which is what makes the
+            // arithmetic in `paintSequence` exact. `-J` would join them.
+            self.send("capture-pane -p -e\(history ? " -S -\(Self.historyLines)" : "") -t \(pane)") {
+                [weak self] lines, isError in
+                guard let self, let view = self.views[pane], !isError else { return }
+                if history { self.historyPainted.insert(pane) }
+                let bytes = Self.paintSequence(lines: lines, cursor: cursor,
+                                               clearScrollback: history).utf8
+                view.feed(byteArray: Array(bytes)[...])
+            }
         }
+    }
+
+    /// The bytes that turn a `capture-pane` reply into a painted pane.
+    ///
+    /// Feeding H history lines plus the pane's R screen rows from home into an
+    /// R-row terminal leaves exactly H lines in the scroll buffer and tmux's
+    /// screen visible: R-1 of the H+R-1 newlines fill the screen, the other H
+    /// scroll. `ESC[3J` drops any scrollback from an earlier paint, so a
+    /// repaint cannot stack two copies of the history.
+    ///
+    /// The trailing CUP is a fix folded in, not decoration: `capture-pane`
+    /// returns the pane's full height including the blank rows below the
+    /// cursor, so without it the local cursor sits at the bottom while tmux's
+    /// is up at the prompt, and the first byte of new output scrolls the whole
+    /// restored screen away.
+    nonisolated static func paintSequence(lines: [String], cursor: (x: Int, y: Int),
+                                          clearScrollback: Bool) -> String {
+        (clearScrollback ? "\u{1b}[3J" : "")
+            + "\u{1b}[H\u{1b}[2J"
+            + lines.joined(separator: "\r\n")
+            + "\u{1b}[\(cursor.y + 1);\(cursor.x + 1)H"
     }
 
     public func unregister(_ pane: String) {
         views.removeValue(forKey: pane)
+        // A view torn down and rebuilt (window resize, detach/attach) is a
+        // fresh, empty scroll buffer, so it has to be filled again.
+        historyPainted.remove(pane)
+    }
+
+    nonisolated static func demo() {
+        let first = paintSequence(lines: ["a", "b"], cursor: (3, 7), clearScrollback: true)
+        assert(first.hasPrefix("\u{1b}[3J\u{1b}[H\u{1b}[2J"))
+        assert(first.contains("a\r\nb"))
+        assert(first.hasSuffix("\u{1b}[8;4H"), "CUP is 1-based: \(first.debugDescription)")
+        // A repaint must not drop the scrollback the first paint restored.
+        assert(!paintSequence(lines: [], cursor: (0, 0), clearScrollback: false).contains("[3J"))
     }
 }

@@ -322,6 +322,15 @@ to fix in Go, not a reason to link the core.
   10-char row plain, and as one 50-char line under `-J`. So a wrap in a repainted pane is usually
   tmux's own rather than a layout bug — count the characters against the pane width before believing
   it is ours. (An hour went into talking myself out of a wrap that was fine.)
+  It also returns the pane's **full height**, blank rows below the cursor included — never trimmed —
+  which is what makes `paintSequence`'s "H history lines + R screen rows into an R-row terminal"
+  arithmetic exact.
+- **Copy-mode is invisible to a control-mode client.** Entering it and scrolling emits
+  `%pane-mode-changed` and `%window-renamed` and **zero** `%output` bytes: tmux renders copy-mode
+  client-side for a normal client and sends a `-CC` client nothing to draw. Measured against a
+  scratch session (`#{pane_in_mode}` was 1 throughout, so tmux really was in the mode). That is why
+  scrollback is a `capture-pane` problem and not a scroll-gesture-proxying one — proxying would
+  still need the capture, plus a mode to get stuck in and the user's own copy-mode fighting ours.
 - **SwiftTerm marks its overrides `public`, not `open`.** `keyDown` and friends cannot be overridden
   from this module — the compiler says "overriding non-open instance method outside of its defining
   module". `viewDidMoveToWindow` is fine because it comes from `NSView`.
@@ -373,8 +382,18 @@ Decisions, not oversights. Don't "fix" these without being asked.
 - **Control mode shows one window's panes, not tabs.** tmux windows exist in the protocol
   (`%window-add`, `%window-close`) and are not surfaced; switching windows inside tmux follows
   along, but there is no tab bar.
-- **No scrollback in control-mode panes.** The initial paint is `capture-pane` of the visible
-  screen only; tmux's copy-mode still works through the keyboard.
+- **Scrollback is restored once, on a pane's first paint, and never refreshed.** `capture-pane -S
+  -1000` feeds history plus the visible screen into SwiftTerm's own scroll buffer; later repaints
+  (every `sizeChanged`, i.e. every frame of a window drag) are visible-only, because re-streaming
+  ~110KB per pane per frame is the cost and tmux's rewrapped history would have to be diffed
+  against ours anyway. So after a resize the restored history keeps its **pre-resize wrapping**.
+  There is no lazy paging past 1000 lines — the pane is a monitor, not an archive, and both the
+  plain attach and the user's own terminal have full copy-mode. A pane on the alternate screen
+  (vim, less) gets no history, because neither tmux nor SwiftTerm keeps any for it.
+- **No visible scrollbar in control-mode panes**, and there cannot be one: `NoScrollerTerminalView`
+  has to keep the scroller hidden for the column-width reason above. Wheel and trackpad scrolling
+  are unaffected — `MacTerminalView.scrollWheel` calls `scrollUp`/`scrollDown` directly and never
+  goes through the `NSScroller`.
 - **No mouse reporting or drag-to-resize panes in control mode.** Clicking selects a pane; that is
   all. Resizing goes through tmux's own keys.
 - **No terminal settings** — font, size, colours and cursor are all SwiftTerm's defaults.

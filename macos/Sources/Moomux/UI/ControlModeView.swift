@@ -117,10 +117,15 @@ private struct PaneView: NSViewRepresentable {
     let paneID: String
 
     func makeNSView(context: Context) -> TerminalView {
-        let view = PaneTerminalView(frame: .init(x: 0, y: 0, width: 400, height: 300))
+        // Built with the scrollback up front: SwiftTerm's default cap is 500
+        // lines, half of what the first paint restores, and the excess would be
+        // fed and silently dropped.
+        let view = PaneTerminalView(
+            frame: .init(x: 0, y: 0, width: 400, height: 300),
+            font: .monospacedSystemFont(ofSize: 12, weight: .regular),
+            options: TerminalOptions(scrollback: TmuxControlClient.historyLines))
         view.onFocused = { [weak client] in client?.selectPane(paneID) }
         view.terminalDelegate = context.coordinator
-        view.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         client.register(view, for: paneID)
         return view
     }
