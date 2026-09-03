@@ -18,6 +18,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/erickgnclvs/moomux/internal/app"
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/gitwt"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
@@ -230,7 +231,7 @@ type fakeBackend struct {
 	createErr error
 }
 
-func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch, model, thinking string) (session.Session, string, error) {
+func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
 	return session.Session{}, "", f.createErr
 }
 func (f *fakeBackend) StartFirstPrompt(tmuxSession, prompt string, autoSubmit bool) error {
@@ -489,7 +490,7 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 	statusCh := make(chan watcher.Snapshot)
 	close(statusCh)
 	tui.ApplySettings(cfg)
-	m := tui.New(cfg, be, statusCh, func() {})
+	m := tui.New(cfg, be, (&app.App{}).AgentOptions(), statusCh, func() {})
 	m.Version = "dev"
 	if screenName == "update-available" {
 		m.Version = "0.5.3"

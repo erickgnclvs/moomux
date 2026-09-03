@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +19,10 @@ import (
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
+
+// boolPtr is CreateSession's dangerous argument: non-nil forces the value
+// regardless of the project's own Dangerous setting.
+func boolPtr(b bool) *bool { return &b }
 
 // fakeBackend records what it was called with and returns canned values, so
 // a round trip can assert both directions of the wire.
@@ -30,6 +35,7 @@ type fakeBackend struct {
 	addProjectErr error
 	onAddProject  func(string, config.Project)
 	cfg           *config.Config
+	agentOptions  []config.AgentOption
 	mu            sync.Mutex
 }
 
@@ -46,7 +52,7 @@ func (f *fakeBackend) TmuxAliveAll() map[string]bool {
 	return map[string]bool{"moomux:a": true, "moomux:b": false}
 }
 
-func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch, model, thinking string) (session.Session, string, error) {
+func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
 	f.created = Args{
 		Project: project, Name: name, Agent: agent, Branch: existingBranch, Ticket: ticket,
 		OpenTerminal: openTerminal, Dangerous: dangerous, BaseBranch: baseBranch,
@@ -132,7 +138,7 @@ func start(t *testing.T, b *fakeBackend, cfg *config.Config, w watcher.Watcher) 
 	ln := &trackingListener{Listener: raw}
 	t.Cleanup(func() { ln.kill(); os.RemoveAll(dir) })
 	b.cfg = cfg
-	srv := &Server{Backend: b, Config: snapshotter(b, cfg), Watcher: w}
+	srv := &Server{Backend: b, Config: snapshotter(b, cfg), AgentOptions: func() []config.AgentOption { return b.agentOptions }, Watcher: w}
 	go srv.Serve(ln)
 	return &Client{Socket: sock}, ln
 }
@@ -198,10 +204,26 @@ func serveOn(t *testing.T, sock string, b *fakeBackend, cfg *config.Config, w wa
 
 func TestRoundTrip(t *testing.T) {
 	created := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
-	b := &fakeBackend{sessions: []session.Session{
-		{ID: "moomux:a", Project: "moomux", Name: "a", Branch: "alan/a", CreatedAt: created, Agent: "codex", Dangerous: true, Order: 42},
-	}}
+	b := &fakeBackend{
+		sessions: []session.Session{
+			{ID: "moomux:a", Project: "moomux", Name: "a", Branch: "alan/a", CreatedAt: created, Agent: "codex", Dangerous: true, Order: 42},
+		},
+		agentOptions: []config.AgentOption{
+			{Name: "claude", Models: []string{"default", "sonnet"}, Thinking: []string{"default", "think"}},
+			{Name: "opencode", Thinking: []string{"default", "think"}},
+		},
+	}
 	c, _ := start(t, b, &config.Config{Theme: "dracula"}, nil)
+
+	t.Run("agent options survive the wire", func(t *testing.T) {
+		got, err := c.AgentOptions()
+		if err != nil {
+			t.Fatalf("AgentOptions: %v", err)
+		}
+		if !reflect.DeepEqual(got, b.agentOptions) {
+			t.Fatalf("AgentOptions() = %+v, want %+v", got, b.agentOptions)
+		}
+	})
 
 	t.Run("sessions survive the wire", func(t *testing.T) {
 		got := c.Sessions()
@@ -211,7 +233,7 @@ func TestRoundTrip(t *testing.T) {
 	})
 
 	t.Run("args reach the backend", func(t *testing.T) {
-		s, hint, err := c.CreateSession("moomux", "feat", "claude", "", "T-1", true, true, "main", "opus", "high")
+		s, hint, err := c.CreateSession("moomux", "feat", "claude", "", "T-1", true, boolPtr(true), "main", "opus", "high")
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
@@ -219,9 +241,31 @@ func TestRoundTrip(t *testing.T) {
 			t.Fatalf("got (%+v, %q)", s, hint)
 		}
 		want := Args{Project: "moomux", Name: "feat", Agent: "claude", Ticket: "T-1",
-			OpenTerminal: true, Dangerous: true, BaseBranch: "main", Model: "opus", Thinking: "high"}
-		if b.created != want {
+			OpenTerminal: true, Dangerous: boolPtr(true), BaseBranch: "main", Model: "opus", Thinking: "high"}
+		// Args now carries a *bool (Dangerous), so a plain != would compare
+		// pointer identity instead of the pointed-to value.
+		if !reflect.DeepEqual(b.created, want) {
 			t.Fatalf("backend saw %+v, want %+v", b.created, want)
+		}
+	})
+
+	t.Run("SetSessionAgent's dangerous survives the wire as a plain bool", func(t *testing.T) {
+		// Unlike CreateSession's Dangerous, SetSessionAgent's is never
+		// "unset" — it has its own Args field (AgentDangerous) rather than
+		// sharing CreateSession's *bool.
+		s, err := c.SetSessionAgent("moomux:a", "codex", true)
+		if err != nil {
+			t.Fatalf("SetSessionAgent: %v", err)
+		}
+		if !s.Dangerous {
+			t.Fatalf("SetSessionAgent(true) round-tripped as %+v, want Dangerous=true", s)
+		}
+		s, err = c.SetSessionAgent("moomux:a", "codex", false)
+		if err != nil {
+			t.Fatalf("SetSessionAgent: %v", err)
+		}
+		if s.Dangerous {
+			t.Fatalf("SetSessionAgent(false) round-tripped as %+v, want Dangerous=false", s)
 		}
 	})
 

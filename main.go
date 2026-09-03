@@ -350,12 +350,23 @@ func runSpawn(args []string) error {
 		return fmt.Errorf("spawn: -project is required (run 'moomux spawn -list' to see configured projects)")
 	}
 
+	// -dangerous is a pointer to CreateSession so an unset flag leaves the
+	// project's own Dangerous setting in effect, instead of forcing every
+	// spawned session non-dangerous the way flag.Bool's default false would.
+	var dangerousOverride *bool
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "dangerous" {
+			v := *dangerous
+			dangerousOverride = &v
+		}
+	})
+
 	a, err := newApp()
 	if err != nil {
 		return err
 	}
 
-	s, hint, err := a.CreateSession(*project, *name, *agent, *branch, *ticket, false, *dangerous, "", *model, *thinking)
+	s, hint, err := a.CreateSession(*project, *name, *agent, *branch, *ticket, false, dangerousOverride, "", *model, *thinking)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}
@@ -604,18 +615,18 @@ func run() error {
 	}
 
 	home, _ := os.UserHomeDir()
-	return runProgram(cfg, a, buildWatcher(home))
+	return runProgram(cfg, a, a.AgentOptions(), buildWatcher(home))
 }
 
 // runProgram drives the TUI against any backend + watcher, so the local
 // (*app.App) path and the socket-backed (*ipc.Client) path share one setup.
-func runProgram(cfg *config.Config, b tui.Backend, w watcher.Watcher) error {
+func runProgram(cfg *config.Config, b tui.Backend, agentOptions []config.AgentOption, w watcher.Watcher) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	statusCh := make(chan watcher.Snapshot, 4)
 	go w.Run(ctx, statusCh)
 
 	tui.ApplySettings(cfg)
-	m := tui.New(cfg, b, statusCh, cancel)
+	m := tui.New(cfg, b, agentOptions, statusCh, cancel)
 	m.Version = version
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
@@ -653,7 +664,7 @@ func runServe(args []string) error {
 	}
 	defer ln.Close()
 	fmt.Fprintln(os.Stderr, "moomux: serving on", *sock)
-	return (&ipc.Server{Backend: a, Config: a.ConfigSnapshot, Watcher: buildWatcher(home)}).Serve(ln)
+	return (&ipc.Server{Backend: a, Config: a.ConfigSnapshot, AgentOptions: a.AgentOptions, Watcher: buildWatcher(home)}).Serve(ln)
 }
 
 // runRemote implements `moomux ui -socket`: the same TUI, driven entirely
@@ -675,7 +686,11 @@ func runRemote(args []string) error {
 	// the run; Bind lets the client refresh it in place after any change,
 	// the way App mutating its own a.Cfg does locally.
 	c.Bind(cfg)
-	return runProgram(cfg, c, c)
+	agentOptions, err := c.AgentOptions()
+	if err != nil {
+		return fmt.Errorf("connect %s: %w (is `moomux serve` running?)", *sock, err)
+	}
+	return runProgram(cfg, c, agentOptions, c)
 }
 
 func buildWatcher(home string) watcher.Watcher {

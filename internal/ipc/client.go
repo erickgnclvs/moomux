@@ -131,6 +131,17 @@ func (c *Client) Config() (*config.Config, error) {
 // Bind makes cfg the config this client keeps refreshed — see mut.
 func (c *Client) Bind(cfg *config.Config) { c.cfg = cfg }
 
+// AgentOptions fetches the server's agent/model/thinking-level tables. Not
+// part of tui.Backend — like Config, the TUI fetches it once at startup
+// rather than on every render.
+func (c *Client) AgentOptions() ([]config.AgentOption, error) {
+	r, err := c.call("AgentOptions", Args{})
+	if err != nil {
+		return nil, err
+	}
+	return r.Agents, nil
+}
+
 func (c *Client) Sessions() []session.Session {
 	r, err := c.call("Sessions", Args{})
 	c.mu.Lock()
@@ -164,7 +175,7 @@ func (c *Client) TmuxAliveAll() map[string]bool {
 	return r.Alive
 }
 
-func (c *Client) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch, model, thinking string) (session.Session, string, error) {
+func (c *Client) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
 	r, err := c.call("CreateSession", Args{
 		Project: project, Name: name, Agent: agent, Branch: existingBranch, Ticket: ticket,
 		OpenTerminal: openTerminal, Dangerous: dangerous, BaseBranch: baseBranch,
@@ -229,7 +240,7 @@ func (c *Client) SetSessionPrompt(id, prompt string) (session.Session, error) {
 }
 
 func (c *Client) SetSessionAgent(id, agent string, dangerous bool) (session.Session, error) {
-	return c.sess("SetSessionAgent", Args{ID: id, Agent: agent, Dangerous: dangerous})
+	return c.sess("SetSessionAgent", Args{ID: id, Agent: agent, AgentDangerous: dangerous})
 }
 
 func (c *Client) RenameSession(id, newName string) (session.Session, error) {

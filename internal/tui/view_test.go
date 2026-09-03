@@ -127,7 +127,7 @@ func TestNarrowProjectEditKeepsEndOfRepoInput(t *testing.T) {
 	project.Repo = "/Users/example/Development/moomux/repo-XYZ"
 	m.cfg.Projects["demo"] = project
 	m.editProjectName = "demo"
-	m.projForm = editProjectForm("demo", project)
+	m.projForm = m.editProjectForm("demo", project)
 	m.mode = ModeEditProject
 	m.resizeFormInputs()
 
@@ -150,7 +150,7 @@ func TestNarrowProjectEditShortRepoPreservesFrame(t *testing.T) {
 	project := m.cfg.Projects["demo"]
 	project.Repo = "/tmp/demo"
 	m.editProjectName = "demo"
-	m.projForm = editProjectForm("demo", project)
+	m.projForm = m.editProjectForm("demo", project)
 	m.mode = ModeEditProject
 	m.resizeFormInputs()
 
@@ -333,7 +333,7 @@ func TestOverlaysStayWithinKeyboardSizedViewport(t *testing.T) {
 			setup: func(m *Model) {
 				m.mode = ModeEditProject
 				m.editProjectName = "demo"
-				m.projForm = editProjectForm("demo", m.cfg.Projects["demo"])
+				m.projForm = m.editProjectForm("demo", m.cfg.Projects["demo"])
 			},
 		},
 	} {

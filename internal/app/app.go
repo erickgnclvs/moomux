@@ -116,6 +116,40 @@ func (a *App) dueForFetch(id string) bool {
 	return true
 }
 
+// agentOptionsTable is the single source of truth for which agents moomux
+// can launch and what's worth offering in a model/thinking-level picker for
+// each — both the TUI's new-session form and (over internal/ipc) a second
+// front end read this same table via AgentOptions, instead of each keeping
+// its own copy that silently drifts the next time an agent is added here.
+//
+// opencode has no Models entry: it has no small fixed model list worth
+// hardcoding, so a picker offers a free-text field instead of a selector.
+// Its Thinking list matches claude's — neither has a launch-time
+// reasoning-effort flag, so thinking level is expressed as a phrase
+// prepended to the first prompt instead (see thinkingPromptPrefix in
+// internal/tui), not a real flag like codex's -c model_reasoning_effort.
+var agentOptionsTable = []config.AgentOption{
+	{
+		Name:     "claude",
+		Models:   []string{"default", "sonnet", "opus", "fable"},
+		Thinking: []string{"default", "think", "think hard", "think harder", "ultrathink"},
+	},
+	{
+		Name:     "codex",
+		Models:   []string{"default", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"},
+		Thinking: []string{"default", "minimal", "low", "medium", "high", "xhigh"},
+	},
+	{
+		Name:     "opencode",
+		Thinking: []string{"default", "think", "think hard", "think harder", "ultrathink"},
+	},
+}
+
+// AgentOptions returns agentOptionsTable. A pure static lookup today, but a
+// method (not just an exported var) so a caller — in-process or, via
+// internal/ipc, over the socket — never has to care which.
+func (a *App) AgentOptions() []config.AgentOption { return agentOptionsTable }
+
 // agentCmd returns the CLI binary name for the given agent.
 func agentCmd(agent string) string {
 	switch agent {
@@ -497,6 +531,16 @@ func (a *App) tmuxSessionUsingWorktree(path string) (string, error) {
 	return "", nil
 }
 
+// newBranchBaseBranch returns the ref a freshly cut branch was actually
+// based on, for session.Session.BaseBranch — empty when there was no base to
+// record (a resumed branch, or a no-worktree project has no branch at all).
+func newBranchBaseBranch(proj config.Project, newBranch bool, baseBranchRef string) string {
+	if !proj.UsesWorktree() || !newBranch {
+		return ""
+	}
+	return baseBranchRef
+}
+
 // CreateSession's hint, when non-empty, is a user-facing instruction
 // (e.g. "run: tmux attach -t ...") to show alongside success — it is
 // not an error. When openTerminal is false, the tmux session is started
@@ -509,10 +553,18 @@ func (a *App) tmuxSessionUsingWorktree(path string) (string, error) {
 // reasoningEffortFlag); it has no effect for claude/opencode, which have no
 // launch-time reasoning-effort flag — the caller is expected to apply their
 // magic-word prompt prefix itself (see thinkingPromptPrefix in internal/tui).
-func (a *App) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool, baseBranch, model, thinking string) (session.Session, string, error) {
+// dangerous is a pointer so a caller can leave it unset: nil means "use the
+// project's own Dangerous setting", exactly like every other project-level
+// default here. A caller that wants to force it on or off regardless of the
+// project passes an explicit true/false.
+func (a *App) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
 	proj, ok := a.project(project)
 	if !ok {
 		return session.Session{}, "", fmt.Errorf("unknown project %q", project)
+	}
+	dangerousVal := proj.Dangerous
+	if dangerous != nil {
+		dangerousVal = *dangerous
 	}
 	if name == "" {
 		if existingBranch == "" {
@@ -626,7 +678,7 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 			slog.Warn("claude trust write failed", "path", wt, "err", err)
 		}
 	}
-	cmd := buildAgentCmd(agent, dangerous, model, thinking)
+	cmd := buildAgentCmd(agent, dangerousVal, model, thinking)
 	agentPort := 0
 	if agent == "opencode" {
 		agentPort = a.nextOpenCodePort()
@@ -673,11 +725,12 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 		Name:         name,
 		Branch:       branch,
 		NewBranch:    proj.UsesWorktree() && newBranch,
+		BaseBranch:   newBranchBaseBranch(proj, newBranch, baseBranchRef),
 		WorktreePath: wt,
 		TmuxSession:  tmuxName,
 		CreatedAt:    time.Now().UTC(),
 		Agent:        agent,
-		Dangerous:    dangerous,
+		Dangerous:    dangerousVal,
 		AgentPort:    agentPort,
 		Ticket:       ticket,
 		TermTabID:    tabID,

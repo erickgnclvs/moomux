@@ -42,7 +42,7 @@ func TestRenderNewFormAgentSelectorFollowsFocus(t *testing.T) {
 
 	m.newFormFocus = newFormProjFocus
 	unfocused := m.renderNewFormAgentSelector()
-	want := renderSelector(agentNames, 0, false, m.overlayWidth(formHintWidth)-lipgloss.Width("agent:  "))
+	want := renderSelector(m.agentNames(), 0, false, m.overlayWidth(formHintWidth)-lipgloss.Width("agent:  "))
 	if unfocused != want {
 		t.Fatalf("unfocused render = %q, want %q", unfocused, want)
 	}

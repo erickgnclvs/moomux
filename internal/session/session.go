@@ -32,6 +32,7 @@ type Session struct {
 	LastOpened   time.Time `json:"last_opened,omitempty"` // when OpenSession last attached to this session; zero if never opened
 	Archived     bool      `json:"archived,omitempty"`    // hidden from the default list, but not deleted
 	NewBranch    bool      `json:"new_branch,omitempty"`  // true if moomux created Branch fresh (vs. checking out an existing one); safe to delete on session delete
+	BaseBranch   string    `json:"base_branch,omitempty"` // the branch Branch was cut from, when NewBranch; empty for a resumed branch or a no-worktree project, where there is none to diff against
 	TermTabID    string    `json:"term_tab_id,omitempty"` // terminal-specific tab/window id this session was last opened in (currently only iTerm2 sets it); lets reopen jump back to it instead of creating a new tab
 	Prompt       string    `json:"prompt,omitempty"`      // first prompt typed into the agent at creation time, captured directly rather than relying on the agent's own log
 }
