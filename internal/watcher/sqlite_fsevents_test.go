@@ -66,3 +66,54 @@ func TestDarwinSQLiteWatcherMarkerIsEventDriven(t *testing.T) {
 		}
 	}
 }
+
+// TestDarwinSQLiteWatcherPollsUntilMarkerDirExists covers the fallback path
+// for MarkerDir specifically: it doesn't exist when Run starts (no hook has
+// fired yet), so the watch on it can't be established immediately. Run must
+// keep retrying tryWatch on each scheduled tick until MarkerDir appears, then
+// pick up filesystem events under it once the watch succeeds.
+func TestDarwinSQLiteWatcherPollsUntilMarkerDirExists(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	binDir := t.TempDir()
+	fake := filepath.Join(binDir, "sqlite3")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	dbDir := t.TempDir()
+	dbPath := filepath.Join(dbDir, "state.sqlite")
+	if err := os.WriteFile(dbPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base := t.TempDir()
+	markerDir := filepath.Join(base, "markers")
+
+	w := &SQLiteWatcher{DB: dbPath, Query: "irrelevant", MarkerDir: markerDir, Interval: 50 * time.Millisecond}
+	ch := make(chan Snapshot, 8)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	go w.Run(ctx, ch)
+
+	time.Sleep(150 * time.Millisecond)
+	if err := os.Mkdir(markerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeJSON(t, filepath.Join(markerDir, "sess.json"), map[string]any{
+		"cwd":    "/tmp/wt-c",
+		"status": "needs-input",
+	})
+
+	for {
+		select {
+		case snap := <-ch:
+			if snap.States["/tmp/wt-c"] == NeedsInput {
+				return
+			}
+		case <-ctx.Done():
+			t.Fatal("never observed marker after MarkerDir appeared")
+		}
+	}
+}
