@@ -167,7 +167,7 @@ func TestCompactDetailTrimsFieldsAndShortensPR(t *testing.T) {
 	// mode keeps that row instead of accidentally guarding it on !compact.
 	m.prStatus["demo:one"] = prStatusInfo{ok: true, info: prstatus.Info{State: "MERGED"}}
 
-	cfg.CompactDetail = true
+	m.cfg.CompactDetail = true
 	frame, hits := m.renderDetail(80-2, 24-2)
 	for _, unwanted := range []string{"project", "agent", "ticket", "worktree", "created", "||----w"} {
 		if strings.Contains(frame, unwanted) {

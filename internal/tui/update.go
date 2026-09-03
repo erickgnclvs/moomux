@@ -192,6 +192,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CreateFailedMsg:
+		if msg.Cfg != nil {
+			*m.cfg = *msg.Cfg
+		}
 		m.busy = false
 		m.flash, m.flashKind = "", ""
 		m.mode = ModeNewForm
@@ -200,6 +203,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case SessionCreatedMsg:
+		if msg.Cfg != nil {
+			*m.cfg = *msg.Cfg
+		}
 		m.busy = false
 		text := "created " + msg.Session.Name
 		if msg.Hint != "" {
@@ -298,6 +304,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ProjectAddedMsg:
+		if msg.Cfg != nil {
+			*m.cfg = *msg.Cfg
+		}
 		switch msg.Kind {
 		case "add":
 			if msg.Err == nil {
@@ -339,6 +348,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setError(msg.Err)
 			return m, nil
 		}
+		if msg.Cfg != nil {
+			*m.cfg = *msg.Cfg
+		}
 		// Re-anchor by name rather than index on both cursors: the active
 		// project (which may not be the one that just moved, when the
 		// reorder came from the picker) and, while the picker is open, its
@@ -373,6 +385,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.projForm.err = msg.Err.Error()
 			return m, nil
 		}
+		if msg.Cfg != nil {
+			*m.cfg = *msg.Cfg
+		}
 		m.activateProject(msg.Name)
 		m.mode = m.projectDialogReturn
 		m.setFlash("info", "updated project "+msg.Name)
@@ -384,6 +399,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setFlash("error", msg.Err.Error())
 			return m, nil
 		}
+		if msg.Cfg != nil {
+			*m.cfg = *msg.Cfg
+		}
 		m.refreshProjects()
 		m.cursor = 0
 		m.refreshSessions()
@@ -392,6 +410,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ThemeSetMsg:
+		if msg.Cfg != nil {
+			*m.cfg = *msg.Cfg
+		}
 		m.setFlash("info", "theme saved: "+msg.Theme+" / "+appearanceLabel(msg.Appearance))
 		return m, nil
 
@@ -855,8 +876,24 @@ func (m *Model) moveSessionCmd(id string, delta int) tea.Cmd {
 	return func() tea.Msg { return SessionMovedMsg{ID: id, Err: m.backend.MoveSession(id, delta)} }
 }
 
+// cfgSnapshotOnSuccess returns a fresh ConfigSnapshot for a mutation Msg's
+// Cfg field when err is nil, or nil when the mutation failed (nothing
+// changed, so Update() has nothing to apply). Only ever call this from
+// inside a tea.Cmd closure, right after the mutation call whose err it's
+// given — never from Update()/View() directly.
+func (m *Model) cfgSnapshotOnSuccess(err error) *config.Config {
+	if err != nil {
+		return nil
+	}
+	snap := m.backend.ConfigSnapshot()
+	return &snap
+}
+
 func (m *Model) moveProjectCmd(name string, delta int) tea.Cmd {
-	return func() tea.Msg { return ProjectMovedMsg{Name: name, Err: m.backend.MoveProject(name, delta)} }
+	return func() tea.Msg {
+		err := m.backend.MoveProject(name, delta)
+		return ProjectMovedMsg{Name: name, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
+	}
 }
 
 // openSessionCmd returns a Cmd that opens/attaches the given session, used
@@ -1036,15 +1073,21 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setFlash("info", "creating "+label+"…")
 		m.busy = true
 		autoSubmit := m.newFormAutoSubmit
+		// Captured here, on the Update goroutine, rather than read from
+		// m.cfg inside the closure below — that closure runs concurrently
+		// with Update()/View(), which is the exact race this whole Cfg
+		// plumbing exists to avoid (see New()'s doc comment on m.cfg).
+		autoSubmitDefault := m.cfg.AutoSubmitDefault
 		return m, func() tea.Msg {
-			if autoSubmit != m.cfg.AutoSubmitDefault {
+			var cfgSnap *config.Config
+			if autoSubmit != autoSubmitDefault {
 				// Best-effort: remembering the new default shouldn't block
 				// session creation if the config write fails.
-				_ = m.backend.SetAutoSubmitDefault(autoSubmit)
+				cfgSnap = m.cfgSnapshotOnSuccess(m.backend.SetAutoSubmitDefault(autoSubmit))
 			}
 			s, hint, err := m.backend.CreateSession(proj, name, agent, branch, ticket, openTerminal, &dangerous, baseBranch, model, thinking)
 			if err != nil {
-				return CreateFailedMsg{Err: err}
+				return CreateFailedMsg{Err: err, Cfg: cfgSnap}
 			}
 			// The session (worktree + tmux pane) already exists at this
 			// point — a PR-tag or first-prompt failure below must not
@@ -1076,7 +1119,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					hint = joinHint(hint, fmt.Sprintf("couldn't send first prompt: %v", err))
 				}
 			}
-			return SessionCreatedMsg{Session: s, Hint: hint}
+			return SessionCreatedMsg{Session: s, Hint: hint, Cfg: cfgSnap}
 		}
 	}
 	// Any other focus is a selector or toggle row, with no text input to type
@@ -1324,7 +1367,7 @@ func (m *Model) updateNewProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		p := config.Project{Repo: repo, BaseBranch: base, BranchPrefix: prefix, Emoji: emoji, Agent: agent, Dangerous: dangerous, PromptAgent: promptAgent, NoWorktree: m.projForm.noWorktree}
 		return m, func() tea.Msg {
 			err := m.backend.AddProject(name, p)
-			return ProjectAddedMsg{Kind: "add", Name: name, Project: p, Err: err}
+			return ProjectAddedMsg{Kind: "add", Name: name, Project: p, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
 		}
 	}
 	if m.projForm.focus < projFormInputCount {
@@ -1469,7 +1512,7 @@ func (m *Model) updateEditProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.projForm.err = ""
 		return m, func() tea.Msg {
 			err := m.backend.UpdateProject(name, project)
-			return ProjectUpdatedMsg{Name: name, Err: err}
+			return ProjectUpdatedMsg{Name: name, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
 		}
 	}
 	if m.projForm.focus < len(m.projForm.inputs) {
@@ -1559,14 +1602,14 @@ func (m *Model) updateProjectInitChoice(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		p := m.pending.p
 		return m, func() tea.Msg {
 			err := m.backend.InitProjectAndAdd(name, p)
-			return ProjectAddedMsg{Kind: "init", Name: name, Project: p, Err: err}
+			return ProjectAddedMsg{Kind: "init", Name: name, Project: p, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
 		}
 	case "s":
 		name := m.pending.name
 		p := m.pending.p
 		return m, func() tea.Msg {
 			err := m.backend.AddPlainProject(name, p)
-			return ProjectAddedMsg{Kind: "plain", Name: name, Project: p, Err: err}
+			return ProjectAddedMsg{Kind: "plain", Name: name, Project: p, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
 		}
 	case "esc", "b":
 		m.mode = ModeNewProject
@@ -1586,7 +1629,7 @@ func (m *Model) updateConfirmDeleteProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 		m.mode = m.projectDialogReturn
 		return m, func() tea.Msg {
 			err := m.backend.RemoveProject(name)
-			return ProjectRemovedMsg{Name: name, Err: err}
+			return ProjectRemovedMsg{Name: name, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
 		}
 	case "n", "esc":
 		m.mode = m.projectDialogReturn
@@ -1803,6 +1846,16 @@ func (m *Model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // persisting it through the backend (errors aren't surfaced — same as the O
 // key this replaces, config saves have no user-visible failure mode worth a
 // dialog), or — for the theme row — drilling into ModeThemePicker.
+//
+// row.set(m.cfg, ...) writes m.cfg directly rather than going through a
+// Msg's Cfg field like every other config mutation (see cfgSnapshotOnSuccess)
+// — safe only because row.persist below runs synchronously, still on the
+// Update() goroutine, unlike every other backend mutator which runs inside a
+// tea.Cmd closure on its own goroutine. If SetSortRecentFirst/SetAutoTmux/
+// SetCompactDetail/SetAutoSubmitDefault's blocking socket round trip
+// (ipc.Client.mut) is ever moved into a Cmd to stop it freezing the UI over a
+// slow connection, this direct write becomes racy too and needs the same
+// Msg.Cfg treatment as the rest.
 func (m *Model) applySettingsRow(i int) (tea.Model, tea.Cmd) {
 	row := settingsRows[i]
 	if row.kind == settingsRowDrill {
@@ -1849,7 +1902,8 @@ func (m *Model) updateThemePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if err := m.backend.SetTheme(theme, appearance); err != nil {
 				return ErrorMsg{Err: err}
 			}
-			return ThemeSetMsg{Theme: theme, Appearance: appearance}
+			snap := m.backend.ConfigSnapshot()
+			return ThemeSetMsg{Theme: theme, Appearance: appearance, Cfg: &snap}
 		}
 	}
 	return m, nil

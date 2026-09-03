@@ -682,10 +682,6 @@ func runRemote(args []string) error {
 	if err != nil {
 		return fmt.Errorf("connect %s: %w (is `moomux serve` running?)", *sock, err)
 	}
-	// The TUI reads projects and settings off this pointer for the rest of
-	// the run; Bind lets the client refresh it in place after any change,
-	// the way App mutating its own a.Cfg does locally.
-	c.Bind(cfg)
 	agentOptions, err := c.AgentOptions()
 	if err != nil {
 		return fmt.Errorf("connect %s: %w (is `moomux serve` running?)", *sock, err)

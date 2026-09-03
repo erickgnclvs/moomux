@@ -117,9 +117,10 @@ func TestNewSessionFormSendsFirstPrompt(t *testing.T) {
 }
 
 // TestNewSessionFormAutoSubmitToggle guards the auto-submit checkbox: toggling
-// it on with ←→ must flow through to StartFirstPrompt's autoSubmit arg, and
-// reopening the form must reset it back to off rather than carrying over the
-// previous session's choice.
+// it on with ←→ must flow through to StartFirstPrompt's autoSubmit arg and
+// persist as the new sticky default (see
+// TestNewSessionFormAutoSubmitDefaultsFromConfigAndOnlyPersistsOnChange), so
+// reopening the form must seed the toggle back on from that new default.
 func TestNewSessionFormAutoSubmitToggle(t *testing.T) {
 	be := &fakeBackend{}
 	m := newTestModel(be)
@@ -150,8 +151,8 @@ func TestNewSessionFormAutoSubmitToggle(t *testing.T) {
 	}
 
 	m.Update(keyRune("n")) // reopen
-	if m.newFormAutoSubmit {
-		t.Fatal("auto-submit carried over into the reopened form")
+	if !m.newFormAutoSubmit {
+		t.Fatal("reopened form did not seed auto-submit from the newly-persisted default")
 	}
 }
 
@@ -1759,6 +1760,7 @@ func TestPlainLetterAlternatesForChordedKeys(t *testing.T) {
 		{ID: "alpha:b", Project: "alpha", Name: "b"},
 		{ID: "beta:c", Project: "beta", Name: "c"},
 	}}
+	be.cfg = *cfg
 	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
@@ -1782,11 +1784,13 @@ func TestPlainLetterAlternatesForChordedKeys(t *testing.T) {
 		t.Fatalf("moveSessionCalls = %+v, want %+v", be.moveSessionCalls, want)
 	}
 
-	// "L" / "H" reorder the active project like shift+→ / shift+←.
+	// "L" / "H" reorder the active project like shift+→ / shift+←. The
+	// resulting ProjectMovedMsg re-anchors m.activeProj on "alpha" by name
+	// (see the ProjectMovedMsg handler), so it stays the active project
+	// across both moves without needing to be reselected.
 	run(m, keyRune("L"))
-	m.activeProj = 1
 	run(m, keyRune("H"))
-	wantProj := []moveProjectCall{{name: "alpha", delta: 1}, {name: "beta", delta: -1}}
+	wantProj := []moveProjectCall{{name: "alpha", delta: 1}, {name: "alpha", delta: -1}}
 	if len(be.moveProjectCalls) != 2 || be.moveProjectCalls[0] != wantProj[0] || be.moveProjectCalls[1] != wantProj[1] {
 		t.Fatalf("moveProjectCalls = %+v, want %+v", be.moveProjectCalls, wantProj)
 	}

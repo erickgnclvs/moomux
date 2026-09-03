@@ -118,6 +118,14 @@ type fakeBackend struct {
 	// tmuxAlive backs TmuxAliveAll; nil (the zero value) reads as "nothing
 	// alive", same as the map[string]bool{} every other test relies on.
 	tmuxAlive map[string]bool
+
+	// cfg backs ConfigSnapshot, and is actually mutated by the project/theme
+	// mutators below (mirroring what the real App does) — tests that
+	// exercise one of those flows and then check cfg-derived state
+	// (m.projects, m.cfg.Theme, ...) after the resulting Msg lands in
+	// Update() must seed this from whatever *config.Config they passed to
+	// New(), e.g. `be.cfg = *cfg`.
+	cfg config.Config
 }
 
 type setThemeCall struct{ theme, appearance string }
@@ -297,40 +305,96 @@ func (f *fakeBackend) MoveSession(id string, delta int) error {
 }
 func (f *fakeBackend) MoveProject(name string, delta int) error {
 	f.moveProjectCalls = append(f.moveProjectCalls, moveProjectCall{name: name, delta: delta})
-	return f.moveProjectErr
+	if f.moveProjectErr != nil {
+		return f.moveProjectErr
+	}
+	order := f.cfg.OrderedProjectNames()
+	idx := indexOfProject(order, name)
+	if idx < 0 {
+		return nil
+	}
+	j := idx + delta
+	if j < 0 || j >= len(order) {
+		return nil
+	}
+	order[idx], order[j] = order[j], order[idx]
+	f.cfg.Order = order
+	return nil
 }
 func (f *fakeBackend) TmuxAliveAll() map[string]bool { return f.tmuxAlive }
 func (f *fakeBackend) Sessions() []session.Session   { return f.sessions }
 func (f *fakeBackend) Projects() []string            { return nil }
+func (f *fakeBackend) ConfigSnapshot() config.Config { return f.cfg.Clone() }
 func (f *fakeBackend) AddProject(name string, p config.Project) error {
 	f.addProjectCalls = append(f.addProjectCalls, projectCall{name, p})
-	return f.addProjectErr
+	if f.addProjectErr != nil {
+		return f.addProjectErr
+	}
+	if f.cfg.Projects == nil {
+		f.cfg.Projects = map[string]config.Project{}
+	}
+	f.cfg.Projects[name] = p
+	return nil
 }
 func (f *fakeBackend) InitProjectAndAdd(name string, p config.Project) error {
 	f.initProjectCalls = append(f.initProjectCalls, projectCall{name, p})
-	return f.initProjectErr
+	if f.initProjectErr != nil {
+		return f.initProjectErr
+	}
+	if f.cfg.Projects == nil {
+		f.cfg.Projects = map[string]config.Project{}
+	}
+	f.cfg.Projects[name] = p
+	return nil
 }
 func (f *fakeBackend) AddPlainProject(name string, p config.Project) error {
 	f.plainCalls = append(f.plainCalls, projectCall{name, p})
-	return f.plainErr
+	if f.plainErr != nil {
+		return f.plainErr
+	}
+	if f.cfg.Projects == nil {
+		f.cfg.Projects = map[string]config.Project{}
+	}
+	f.cfg.Projects[name] = p
+	return nil
 }
 func (f *fakeBackend) UpdateProject(name string, p config.Project) error {
 	f.updateProjectCalls = append(f.updateProjectCalls, projectCall{name, p})
-	return f.updateProjectErr
+	if f.updateProjectErr != nil {
+		return f.updateProjectErr
+	}
+	if f.cfg.Projects == nil {
+		f.cfg.Projects = map[string]config.Project{}
+	}
+	f.cfg.Projects[name] = p
+	return nil
 }
 func (f *fakeBackend) RemoveProject(name string) error {
 	f.removeProjectCalls = append(f.removeProjectCalls, name)
-	return f.removeProjectErr
+	if f.removeProjectErr != nil {
+		return f.removeProjectErr
+	}
+	delete(f.cfg.Projects, name)
+	return nil
 }
 
 func (f *fakeBackend) SetTheme(theme, appearance string) error {
 	f.setThemeCalls = append(f.setThemeCalls, setThemeCall{theme, appearance})
-	return f.setThemeErr
+	if f.setThemeErr != nil {
+		return f.setThemeErr
+	}
+	f.cfg.Theme = theme
+	f.cfg.Appearance = appearance
+	return nil
 }
 
 func (f *fakeBackend) SetAutoSubmitDefault(autoSubmit bool) error {
 	f.setAutoSubmitDefaultCalls = append(f.setAutoSubmitDefaultCalls, autoSubmit)
-	return f.setAutoSubmitDefaultErr
+	if f.setAutoSubmitDefaultErr != nil {
+		return f.setAutoSubmitDefaultErr
+	}
+	f.cfg.AutoSubmitDefault = autoSubmit
+	return nil
 }
 
 func (f *fakeBackend) SetSortRecentFirst(recentFirst bool) error {

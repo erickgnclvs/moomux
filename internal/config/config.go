@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -154,6 +156,14 @@ type Config struct {
 	// panel stays short even when a session has both a ticket and a PR
 	// attached. pr status (merged/CI state) is left alone either way.
 	CompactDetail bool `toml:"compact_detail,omitempty"`
+}
+
+// Clone returns a copy of c safe to use independently of the original —
+// Projects and Order are copied so mutating one doesn't affect the other.
+func (c Config) Clone() Config {
+	c.Projects = maps.Clone(c.Projects)
+	c.Order = slices.Clone(c.Order)
+	return c
 }
 
 func Load(path string) (*Config, error) {
