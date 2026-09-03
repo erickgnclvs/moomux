@@ -107,6 +107,13 @@ public final class AppState {
         sessions.first { $0.worktreePath == path }
     }
 
+    /// `review(_:)` needs a live tmux session to add a window to, and something
+    /// to diff. A no-worktree git project still diffs fine, so the predicate is
+    /// `isPlain` and not `usesWorktree`.
+    public func canReview(_ session: Session) -> Bool {
+        isAlive(session) && config?.projects[session.project]?.isPlain != true
+    }
+
     /// Sessions the user should look at. The menu bar's whole reason to exist.
     public var needsInputCount: Int {
         visibleSessions.filter { state(for: $0) == .needsInput }.count
@@ -285,6 +292,19 @@ public final class AppState {
         states = merge(states, [:], live: ["/wt/a"])
         assert(states.keys.sorted() == ["/wt/a"])
 
+        // The review window's command line. Measured against a real worktree:
+        // the merge-base form catches committed *and* uncommitted work, the
+        // fallbacks fire on exit 128 from an unresolvable ref, and the status
+        // line is what makes an untracked file and a clean tree both visible.
+        let script = reviewScript(base: "main")
+        assert(script.hasPrefix("git diff --merge-base 'origin/main' 2>/dev/null"
+                                + " || git diff --merge-base 'main' 2>/dev/null"
+                                + " || git diff HEAD; git status --short --branch;"), script)
+        assert(script.hasSuffix(#"exec "${SHELL:-/bin/sh}""#), script)
+        // A branch name out of the user's config is interpolated into a shell
+        // command, so it is quoted rather than trusted.
+        assert(reviewScript(base: "a'b").contains(#"'origin/a'\''b'"#), reviewScript(base: "a'b"))
+
         // A mutation the server refuses is an answer, not a dead socket. It has
         // to reach the user as its own message and leave `connection` exactly
         // where the poll loop left it, or one declined action blanks the
@@ -371,6 +391,63 @@ public final class AppState {
         mutate("Open") { try $0.openSession(id: session.id) }
     }
 
+    /// Reviewing a session's changes opens `git diff` in a new tmux **window**
+    /// of that session, rather than rendering a patch natively — see the
+    /// "Deliberately not done" note for why there is no patch viewer here.
+    ///
+    /// Not through `mutate`: this never touches the socket. `tmux new-window`
+    /// from a second client is also the one path that works whether or not the
+    /// app is attached, so there is no branch on `controlClient`. Attached, the
+    /// window arrives as a tab; detached, it is waiting in the user's own
+    /// terminal, which is what the hint says.
+    public func review(_ session: Session) {
+        guard let tmux = ToolPath.find("tmux") else {
+            actionError = "Review failed: can't find a tmux binary."
+            return
+        }
+        let base = config?.projects[session.project]?.baseBranch ?? "main"
+        let args = ["new-window", "-t", session.tmuxSession,
+                    "-c", session.worktreePath,
+                    // -n also turns automatic-rename off for the window, so the
+                    // tab keeps saying "review" and not "zsh".
+                    "-n", "review", AppState.reviewScript(base: base)]
+        Task {
+            do {
+                try await withoutBlockingTheUI { try runTool(tmux, args) }
+                hint = "Opened a review window in \(session.tmuxSession)."
+            } catch {
+                failed("Review", error)
+            }
+        }
+    }
+
+    /// The shell line a review window runs.
+    ///
+    /// `git diff --merge-base` is everything not yet on the base branch —
+    /// commits since the merge base *and* uncommitted work — in one command.
+    /// `origin/` first because a local base branch goes stale in a worktree
+    /// checkout, then the local one, then a plain `HEAD` diff for a project
+    /// with neither. The `git status` line is not decoration: untracked files
+    /// are invisible to every diff, an agent's new files are usually untracked,
+    /// and `--branch` guarantees at least one line of output so a clean
+    /// worktree reads as "nothing to review" rather than as a window that
+    /// failed to run anything.
+    ///
+    /// No `--color` and no `| less`: output goes straight to a tty, so git
+    /// colours and pages it with the user's own pager — a configured `delta`
+    /// is honoured, which is most of the argument for reviewing here at all.
+    /// It ends in a shell so the window survives the pager and is somewhere to
+    /// run `git add -p` from.
+    nonisolated static func reviewScript(base: String) -> String {
+        let quoted = { (ref: String) in
+            "'" + ref.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
+        }
+        return "git diff --merge-base \(quoted("origin/" + base)) 2>/dev/null"
+            + " || git diff --merge-base \(quoted(base)) 2>/dev/null"
+            + " || git diff HEAD; git status --short --branch;"
+            + #" exec "${SHELL:-/bin/sh}""#
+    }
+
     public func rename(_ session: Session, to name: String) {
         mutate("Rename") { try $0.rename(id: session.id, to: name); return nil }
     }
@@ -416,4 +493,25 @@ private func withoutBlockingTheUI<T: Sendable>(
     _ work: @Sendable @escaping () throws -> T
 ) async throws -> T {
     try await Task.detached(priority: .userInitiated, operation: work).value
+}
+
+/// Runs a tool to completion and throws whatever it said on stderr, so a tmux
+/// refusal ("can't find session") reaches the alert in tmux's own words.
+/// `Failure.server` is just the one error type here that carries a message.
+private func runTool(_ path: String, _ args: [String]) throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: path)
+    process.arguments = args
+    let errors = Pipe()
+    process.standardError = errors
+    process.standardOutput = FileHandle.nullDevice
+    try process.run()
+    // Drained before the wait: a full pipe buffer would deadlock it.
+    let stderr = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+        throw MoomuxClient.Failure.server(
+            stderr.isEmpty ? "tmux exited \(process.terminationStatus)" : stderr)
+    }
 }

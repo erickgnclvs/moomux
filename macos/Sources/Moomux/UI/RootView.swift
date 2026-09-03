@@ -267,6 +267,8 @@ private struct SessionRow: View {
         // unselected row has to act on the row you clicked.
         .contextMenu {
             Button("Open in Terminal") { app.open(session) }
+            Button("Review Changes") { app.review(session) }
+                .disabled(!app.canReview(session))
             Button("Rename…") { app.sheet = .rename(session) }
             Button("Tags…") { app.sheet = .tags(session) }
             Divider()
@@ -406,6 +408,14 @@ private struct SessionInfo: View {
                             Label("Tags", systemImage: "tag")
                         }
                         .help("Set this session's ticket and pull request")
+
+                        Button {
+                            app.review(session)
+                        } label: {
+                            Label("Review", systemImage: "plus.forwardslash.minus")
+                        }
+                        .disabled(!app.canReview(session))
+                        .help("Open this worktree's diff in a new tmux window (⌘G)")
                     }
                     Toggle("Native panes", isOn: Binding(
                         get: { app.useControlMode },

@@ -9,9 +9,9 @@ Today it lists sessions, streams their live agent state, shows detail, banners a
 ones that start waiting on you, attaches a session's tmux inside the app — by default over tmux
 **control mode**, with each pane in its own native view and the session's windows as tabs, and
 optionally as one plain `tmux attach`
-— hands a session to the user's terminal, and creates, renames, tags, archives, reorders, kills and
-deletes them. Creating one here takes a project, a name and a first prompt; anything more unusual is
-still the TUI's dialog.
+— hands a session to the user's terminal, opens its diff for review in a tmux window of its own, and
+creates, renames, tags, archives, reorders, kills and deletes them. Creating one here takes a
+project, a name and a first prompt; anything more unusual is still the TUI's dialog.
 
 ## The environment decides more than you'd think
 
@@ -446,7 +446,19 @@ Decisions, not oversights. Don't "fix" these without being asked.
   between `~/Applications` and `.build/`. It is keyed by bundle identifier, not by signature.
 - **Config is re-fetched on every 2s poll** rather than only after a change. One extra socket
   round trip, and it keeps project order and emoji fresh with no invalidation logic.
-- **No diff review, no multi-window grid.** The remaining payoff features from the plan doc's §5.
+- **Review happens in a tmux window, not in a patch viewer.** "Review Changes" runs
+  `new-window -n review` in the session with `git diff --merge-base <base>` plus a
+  `git status --short --branch`, and leaves a shell behind (`AppState.reviewScript`). A native
+  viewer was designed and rejected: ~400 lines across two languages — a new `gitwt.Diff`, an
+  `App.Diff`, a `Patch` field on `ipc.Result`, a `Server` hook, a `main.go` line and a two-pane
+  SwiftUI sheet — to end up a *worse* pager than the shell pane this app already renders natively,
+  with no colour config, no word diff and no `delta`. Going through tmux costs one `Process` call,
+  and the tab bar is what makes it readable. The tradeoffs it keeps: no diff without a live tmux
+  session (`canReview`), the base branch comes from the *project*, not the session, so a session
+  created with an explicit `-base` diffs against the project default, and untracked files show as a
+  `git status` listing rather than as patches — `git add -N` would get them into the diff and is not
+  worth mutating a live worktree's index for.
+- **No multi-window grid.** The remaining payoff feature from the plan doc's §5.
 - **No notification actions, and no "Approve" button.** Tapping a banner selects the session and
   brings the app forward; that is the whole interaction. An action button would have to send keys
   into the agent's pane, and there is no write path for that. A banner already *is* an Open button.

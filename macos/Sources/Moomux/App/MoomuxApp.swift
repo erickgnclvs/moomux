@@ -104,6 +104,12 @@ struct SessionCommands: Commands {
         }
         CommandMenu("Session") {
             // ⌘R is Refresh and ⌘↩ is Attach, both already live here.
+            // ⌘G was the last free one, and Review is the action most often
+            // wanted while attached, where the SessionInfo button is off screen.
+            Button("Review Changes") { if let s = selected { app.review(s) } }
+                .keyboardShortcut("g", modifiers: .command)
+                .disabled(selected.map { !app.canReview($0) } ?? true)
+            Divider()
             Button("Rename…") { if let s = selected { app.sheet = .rename(s) } }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(selected == nil)
