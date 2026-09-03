@@ -230,7 +230,8 @@ func (c *Client) PressEnter(session string) error {
 //  2. Long text passed as a single argv argument can also just exceed
 //     tmux/exec argument-length limits, silently truncating the prompt.
 //
-// paste-buffer instead hands the terminal one atomic block, which tmux (and
+// paste-buffer instead hands the terminal one atomic block, delimited with
+// bracketed-paste markers when the other end asked for them, which tmux (and
 // any bracketed-paste-aware readline/TUI on the other end) delivers and
 // renders as a single paste — embedded newlines can't be mistaken for
 // separate Enter presses. Deliberately still not bundled with Enter: many
@@ -258,11 +259,33 @@ func (c *Client) PasteText(session, text string) error {
 	if _, err := c.Runner.Run("load-buffer", tmpPath); err != nil {
 		return err
 	}
+	// -p wraps the text in bracketed-paste control codes (ESC[200~ / ESC[201~)
+	// when the receiving application has asked for them, which is what makes
+	// the paste unambiguous: without it the agent CLI only sees a burst of
+	// ordinary input and has to guess it was a paste from arrival timing —
+	// guess wrong and a multi-line prompt's newlines each submit, so only the
+	// first line lands as the prompt. It's a no-op against an application that
+	// hasn't requested bracketed paste, so it's always safe to pass.
 	// -d deletes the buffer immediately after pasting, so it doesn't linger
 	// in tmux's paste-buffer stack (visible to, and reusable by, anything
 	// else in the session via prefix-]).
-	_, err = c.Runner.Run("paste-buffer", "-d", "-t", exactWindow(session))
+	_, err = c.Runner.Run("paste-buffer", "-p", "-d", "-t", exactWindow(session))
 	return err
+}
+
+// BracketedPaste reports whether session's active pane currently has
+// bracketed-paste mode enabled, i.e. whether the program on the other end
+// has told the terminal it wants pastes delimited. It's the closest thing
+// tmux exposes to "a TUI is up and reading input": an agent CLI's startup
+// (before its input layer is installed) has it off, and the shell turns it
+// off for the duration of a command it runs, so it flips back on only once
+// the agent itself is taking keystrokes. See App.StartFirstPrompt.
+func (c *Client) BracketedPaste(session string) (bool, error) {
+	out, err := c.Runner.Run("display-message", "-p", "-t", exactWindow(session), "#{bracket_paste_flag}")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) == "1", nil
 }
 
 // SetWindowName renames session's window. ConfigureTitleTracking already

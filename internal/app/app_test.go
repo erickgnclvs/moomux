@@ -74,6 +74,13 @@ func (f *fakeTmuxRunner) Run(args ...string) (string, error) {
 	if f.failOn[key] {
 		return "", exitErr{}
 	}
+	if _, ok := f.out[key]; !ok {
+		if _, seqOK := f.seq[key]; !seqOK && strings.HasSuffix(key, "#{bracket_paste_flag}") {
+			// Default panes to "ready for a paste" so tests that aren't
+			// about the readiness wait don't have to opt in to it.
+			return "1", nil
+		}
+	}
 	if vals, ok := f.seq[key]; ok && len(vals) > 0 {
 		if f.seqIdx == nil {
 			f.seqIdx = map[string]int{}
@@ -2367,7 +2374,7 @@ func TestStartFirstPromptWaitsForPaneThenPastesTextThenSeparateEnter(t *testing.
 	if !tm.called("load-buffer do the thing") {
 		t.Fatalf("did not stage the prompt via load-buffer: %v", tm.calls)
 	}
-	if !tm.called("paste-buffer -d -t =demo:x:") {
+	if !tm.called("paste-buffer -p -d -t =demo:x:") {
 		t.Fatalf("did not paste the staged buffer into the pane: %v", tm.calls)
 	}
 	// Enter must be a separate step from the paste — bundling it in is what a
@@ -2584,7 +2591,7 @@ func TestStartFirstPromptSkipsEnterWhenAutoSubmitFalse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !tm.called("load-buffer do the thing") || !tm.called("paste-buffer -d -t =demo:x:") {
+	if !tm.called("load-buffer do the thing") || !tm.called("paste-buffer -p -d -t =demo:x:") {
 		t.Fatalf("did not paste the prompt: %v", tm.calls)
 	}
 	if tm.called("send-keys -t =demo:x: Enter") {
@@ -2602,4 +2609,38 @@ func mustGit(t *testing.T, dir string, args ...string) {
 
 func runGit(dir string, args ...string) (string, error) {
 	return gitwt.ExecRunner().Run(dir, args...)
+}
+
+// TestStartFirstPromptWaitsForBracketedPasteBeforePasting guards the ordering
+// that keeps a prompt from half-landing: the pane can look "stable" during an
+// earlier phase of the agent's startup, and pasting then drops most of the
+// text on the floor, because nothing is reading the tty yet. The agent turning
+// bracketed paste on is the signal that it is, so no load-buffer/paste-buffer
+// may happen while the flag is still 0.
+func TestStartFirstPromptWaitsForBracketedPasteBeforePasting(t *testing.T) {
+	a, _, tm, _ := newTestApp(t, map[string]config.Project{})
+	tm.seq = map[string][]string{
+		"capture-pane -p -t =demo:x:": {"$ claude", "agent-idle", "agent-idle"},
+		// Off while the agent is still starting up, on once its input layer
+		// is installed.
+		"display-message -p -t =demo:x: #{bracket_paste_flag}": {"0", "0", "1"},
+	}
+
+	if err := a.StartFirstPrompt("demo:x", "do the thing", true); err != nil {
+		t.Fatal(err)
+	}
+
+	flagPolls := 0
+	for _, c := range tm.calls {
+		joined := strings.Join(c, " ")
+		if joined == "display-message -p -t =demo:x: #{bracket_paste_flag}" {
+			flagPolls++
+		}
+		if strings.HasPrefix(joined, "load-buffer") && flagPolls < 3 {
+			t.Fatalf("pasted after only %d bracketed-paste polls, before the pane was accepting input: %v", flagPolls, tm.calls)
+		}
+	}
+	if flagPolls == 0 {
+		t.Fatalf("never checked whether the pane was accepting a paste: %v", tm.calls)
+	}
 }
