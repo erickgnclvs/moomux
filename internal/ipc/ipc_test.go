@@ -120,6 +120,10 @@ func (f *fakeBackend) SetSortRecentFirst(bool) error   { return nil }
 func (f *fakeBackend) SetAutoTmux(bool) error          { return nil }
 func (f *fakeBackend) SetCompactDetail(bool) error     { return nil }
 
+// ConfigSnapshot satisfies tui.Backend; unused here — these tests exercise
+// the wire protocol (Client/Server), not tui.Update()'s Msg.Cfg handling.
+func (f *fakeBackend) ConfigSnapshot() config.Config { return config.Config{} }
+
 type fakeWatcher struct{ snaps []watcher.Snapshot }
 
 func (w *fakeWatcher) Run(ctx context.Context, out chan<- watcher.Snapshot) {
@@ -315,12 +319,15 @@ func TestRoundTrip(t *testing.T) {
 // SetTheme) dialing twice — once for the mutation, once more to re-fetch
 // Config — instead of the server attaching its post-mutation snapshot to the
 // same response. Every settings toggle paid for a second dial+encode+decode
-// of the whole Projects map before this.
+// of the whole Projects map before this. ConfigSnapshot (rather than a live
+// *config.Config the mutation refreshes in place) is what tui.Update() reads
+// the result from — see Client.mut and tui.Backend.ConfigSnapshot's doc
+// comments for why the client no longer keeps a shared pointer in sync
+// itself.
 func TestMutMakesOneRoundTripNotTwo(t *testing.T) {
 	cfg := &config.Config{Theme: "dracula"}
 	b := &fakeBackend{}
 	c, ln := start(t, b, cfg, nil)
-	c.Bind(cfg)
 
 	before := ln.connCount()
 	if err := c.SetTheme("gruvbox", ""); err != nil {
@@ -329,8 +336,8 @@ func TestMutMakesOneRoundTripNotTwo(t *testing.T) {
 	if got := ln.connCount() - before; got != 1 {
 		t.Fatalf("SetTheme made %d connections, want 1", got)
 	}
-	if cfg.Theme != "gruvbox" {
-		t.Fatalf("cfg.Theme = %q, want the mutation's own response to have refreshed it", cfg.Theme)
+	if got := c.ConfigSnapshot().Theme; got != "gruvbox" {
+		t.Fatalf("ConfigSnapshot().Theme = %q, want the mutation's own response to have cached it", got)
 	}
 }
 
@@ -395,30 +402,24 @@ func TestSentinelErrorSurvivesWire(t *testing.T) {
 	}
 }
 
-// TestConfigRefreshesAfterMutation covers the remote TUI rendering projects
-// from the *config.Config it was handed at connect time: without an in-place
-// refresh that snapshot is dead, and a newly added project never appears in
-// the list no matter how many times the server is asked.
-func TestConfigRefreshesAfterMutation(t *testing.T) {
+// TestConfigSnapshotReflectsMutation covers ConfigSnapshot — the TUI calls
+// this from a tea.Cmd closure right after a mutation, to hand Update() a
+// fresh post-mutation config to apply on its own goroutine (see
+// tui.Backend's doc comment on ConfigSnapshot). Without a real round trip
+// here, a newly added project would never reach the TUI's list no matter how
+// many times the server is asked.
+func TestConfigSnapshotReflectsMutation(t *testing.T) {
 	served := &config.Config{Projects: map[string]config.Project{"old": {Kind: "plain"}}}
 	b := &fakeBackend{onAddProject: func(name string, p config.Project) {
 		served.Projects[name] = p // what App.saveProject does to a.Cfg
 	}}
 	c, _ := start(t, b, served, nil)
 
-	cfg, err := c.Config()
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.Bind(cfg)
-
 	if err := c.AddProject("new", config.Project{Kind: "plain"}); err != nil {
 		t.Fatal(err)
 	}
-	// The TUI holds cfg and calls cfg.OrderedProjectNames() — it never
-	// re-reads through the client, so the pointer itself must be current.
-	if _, ok := cfg.Projects["new"]; !ok {
-		t.Errorf("cfg still %v after AddProject; the TUI's project list would be stale", cfg.Projects)
+	if snap := c.ConfigSnapshot(); snap.Projects["new"].Kind == "" {
+		t.Errorf("ConfigSnapshot() = %v after AddProject; the TUI's project list would be stale", snap.Projects)
 	}
 }
 

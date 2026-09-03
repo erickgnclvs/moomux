@@ -95,6 +95,14 @@ type Backend interface {
 	// SetCompactDetail persists whether the detail panel trims itself to the
 	// fields most useful at a glance.
 	SetCompactDetail(compact bool) error
+	// ConfigSnapshot returns the backend's current config. Only ever call
+	// this from inside a tea.Cmd closure, after the mutation it's reporting
+	// on — never from Update()/View() directly (it may do I/O, e.g. an IPC
+	// round trip). The result is handed back via a Msg's Cfg field for
+	// Update() to apply with *m.cfg = *msg.Cfg — see ProjectAddedMsg and
+	// friends in messages.go for why the model never touches the backend's
+	// live config directly.
+	ConfigSnapshot() config.Config
 }
 
 type Mode int
@@ -608,8 +616,17 @@ func New(cfg *config.Config, backend Backend, agentOptions []config.AgentOption,
 	// submit outside this field.
 	pi.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("enter", "ctrl+j", "ctrl+m"), key.WithHelp("enter", "newline"))
 
+	// own decouples m.cfg from cfg: locally cfg is the same *config.Config
+	// App itself mutates from tea.Cmd goroutines (see App.Cfg's doc
+	// comment), and over the socket ipc.Client used to keep it refreshed in
+	// place from a Cmd goroutine too — either way, Update()/View() read
+	// m.cfg's fields unlocked from the event-loop goroutine, so the model
+	// must own memory nothing else ever writes. Every config-mutating Cmd
+	// instead hands Update() a fresh snapshot via a Msg's Cfg field (see
+	// ProjectAddedMsg and friends), applied with *m.cfg = *msg.Cfg.
+	own := cfg.Clone()
 	m := &Model{
-		cfg:               cfg,
+		cfg:               &own,
 		backend:           backend,
 		agentOptions:      agentOptions,
 		keys:              DefaultKeyMap(),

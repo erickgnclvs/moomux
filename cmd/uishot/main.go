@@ -335,6 +335,13 @@ func (f *fakeBackend) SetAutoTmux(autoTmux bool) error {
 	return nil
 }
 
+func (f *fakeBackend) ConfigSnapshot() config.Config {
+	if f.cfg != nil {
+		return f.cfg.Clone()
+	}
+	return config.Config{}
+}
+
 func sampleSessions() []session.Session {
 	now := time.Now().UTC()
 	return []session.Session{

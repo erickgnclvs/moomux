@@ -9,7 +9,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -86,16 +85,15 @@ func (a *App) projectsSnapshot() map[string]config.Project {
 
 // ConfigSnapshot returns a copy of the live config, with the reference-typed
 // fields cloned so the caller neither races a concurrent write nor holds a
-// handle on App's own state. This is how anything outside App should read
-// Cfg; the local TUI is the exception, and aliases a.Cfg deliberately (see
-// runProgram) so config edits reach its render loop.
+// handle on App's own state. This is how everything outside App reads Cfg,
+// local TUI included: tui.New clones its own copy of whatever config it's
+// given at construction, and every later config-mutating call hands its
+// result back through a Msg's Cfg field (via this method) for Update() to
+// apply — see tui.Backend.ConfigSnapshot's doc comment.
 func (a *App) ConfigSnapshot() config.Config {
 	a.cfgMu.RLock()
 	defer a.cfgMu.RUnlock()
-	c := *a.Cfg
-	c.Projects = maps.Clone(a.Cfg.Projects)
-	c.Order = slices.Clone(a.Cfg.Order)
-	return c
+	return a.Cfg.Clone()
 }
 
 // gitFetchStaleAfter bounds how long WorktreeStatus trusts a session's

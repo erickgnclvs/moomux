@@ -23,10 +23,6 @@ import (
 type Client struct {
 	Socket string
 
-	// cfg, when set, is the *config.Config handed to the TUI; mut keeps it
-	// in sync with the server's after any config-changing call.
-	cfg *config.Config
-
 	// mu guards the last-good cache below. tui.Backend's Sessions/Projects/
 	// TmuxAliveAll have no error return — they're called from rendering
 	// paths, which have nowhere to put one — so a failed call would
@@ -39,6 +35,7 @@ type Client struct {
 	lastSessions []session.Session
 	lastProjects []string
 	lastAlive    map[string]bool
+	lastCfg      config.Config
 }
 
 var (
@@ -71,24 +68,21 @@ func (c *Client) call(method string, a Args) (Result, error) {
 	return res.Result, nil
 }
 
-// mut wraps the calls that change server-side config. The TUI reads projects
-// and settings straight off the *config.Config it was constructed with
-// (m.cfg.OrderedProjectNames()), which locally is the same pointer App
-// mutates — so over a socket that pointer would freeze at connect time and
-// a newly added project would never appear. Refreshing it in place mirrors
-// what config.Reload does locally.
-//
-// The server attaches its post-mutation config snapshot to the same
-// response (see Server.mutResult) specifically so this doesn't need a
-// second "Config" round trip — every settings toggle would otherwise dial,
-// encode and decode the whole Projects map twice.
+// mut wraps the calls that change server-side config. The server attaches
+// its post-mutation config snapshot to the same response (see
+// Server.mutResult), which mut caches into lastCfg for ConfigSnapshot to
+// hand back — that's the TUI's own job to apply, on its own Update()
+// goroutine (see tui.Backend.ConfigSnapshot's doc comment), so this must
+// never refresh a shared *config.Config pointer in place itself.
 func (c *Client) mut(method string, a Args) error {
 	r, err := c.call(method, a)
 	if err != nil {
 		return err
 	}
-	if c.cfg != nil && r.Cfg != nil {
-		*c.cfg = *r.Cfg
+	if r.Cfg != nil {
+		c.mu.Lock()
+		c.lastCfg = *r.Cfg
+		c.mu.Unlock()
 	}
 	return nil
 }
@@ -122,11 +116,26 @@ func (c *Client) Config() (*config.Config, error) {
 		// the TUI immediately dereferences.
 		return nil, errors.New("server returned no config")
 	}
+	// Cached here (not just in ConfigSnapshot) so main.go's initial fetch
+	// already seeds lastCfg — otherwise a transient failure on the very
+	// first post-mutation ConfigSnapshot call would fall back to a
+	// still-zero-value config and wipe every project/setting from the TUI.
+	c.mu.Lock()
+	c.lastCfg = *r.Cfg
+	c.mu.Unlock()
 	return r.Cfg, nil
 }
 
-// Bind makes cfg the config this client keeps refreshed — see mut.
-func (c *Client) Bind(cfg *config.Config) { c.cfg = cfg }
+// ConfigSnapshot implements tui.Backend — see that interface's doc comment.
+// Every mutator already caches the server's post-mutation config into
+// lastCfg via mut (see Server.mutResult) — that's the whole point of the
+// server attaching it to the same response, rather than requiring a second
+// "Config" round trip here — so this just hands that back.
+func (c *Client) ConfigSnapshot() config.Config {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastCfg
+}
 
 // AgentOptions fetches the server's agent/model/thinking-level tables. Not
 // part of tui.Backend — like Config, the TUI fetches it once at startup

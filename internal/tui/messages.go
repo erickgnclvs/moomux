@@ -51,7 +51,14 @@ type ErrorMsg struct{ Err error }
 // reopens the new-session form with everything still typed in it — the first
 // prompt can be several paragraphs of work, and dropping back to the list
 // with only a flash message threw it away.
-type CreateFailedMsg struct{ Err error }
+type CreateFailedMsg struct {
+	Err error
+	// Cfg, when set, is the backend's post-mutation config snapshot for
+	// Update() to apply via *m.cfg = *Cfg — set only when the failed create
+	// still persisted a new auto-submit default before failing; nil
+	// otherwise.
+	Cfg *config.Config
+}
 
 // UpdateAvailableMsg is delivered by checkUpdateCmd when GitHub Releases
 // reports a version newer than the one currently running.
@@ -78,6 +85,10 @@ type LinkOpenedMsg struct{ URL string }
 type SessionCreatedMsg struct {
 	Session session.Session
 	Hint    string
+	// Cfg, when set, is the backend's post-mutation config snapshot for
+	// Update() to apply via *m.cfg = *Cfg — set only when creating this
+	// session also persisted a new auto-submit default; nil otherwise.
+	Cfg *config.Config
 }
 
 // SessionDeletedMsg is the result of an async delete. NextID is whichever
@@ -121,17 +132,22 @@ type SessionMovedMsg struct {
 // ProjectAddedMsg is the result of an async project-add flow. Kind
 // distinguishes which backend call produced it ("add" for AddProject,
 // "init" for InitProjectAndAdd, "plain" for AddPlainProject) since each
-// flow reacts to errors differently in Update().
+// flow reacts to errors differently in Update(). Cfg, like every other
+// mutation Msg's Cfg field below, is the backend's post-mutation config
+// snapshot for Update() to apply via *m.cfg = *Cfg; nil means the mutation
+// failed and m.cfg should be left alone.
 type ProjectAddedMsg struct {
 	Kind    string
 	Name    string
 	Project config.Project
 	Err     error
+	Cfg     *config.Config
 }
 
 type ProjectRemovedMsg struct {
 	Name string
 	Err  error
+	Cfg  *config.Config
 }
 
 // ProjectMovedMsg is the result of an async reorder (MoveProject) call.
@@ -140,15 +156,18 @@ type ProjectRemovedMsg struct {
 type ProjectMovedMsg struct {
 	Name string
 	Err  error
+	Cfg  *config.Config
 }
 
 type ProjectUpdatedMsg struct {
 	Name string
 	Err  error
+	Cfg  *config.Config
 }
 
 // ThemeSetMsg is the result of an async SetTheme persist call.
 type ThemeSetMsg struct {
 	Theme      string
 	Appearance string
+	Cfg        *config.Config
 }
