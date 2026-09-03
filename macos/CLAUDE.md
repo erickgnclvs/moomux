@@ -126,6 +126,17 @@ The session record is hand-written on purpose: nothing has to exist for it but a
 tmux session of that name, so you can build any layout you want to test — four panes, two windows,
 a zoomed pane — in seconds. Tear down with `tmux kill-session -t cmtest && rm -rf /tmp/mmxtest`.
 
+Two things to know about that scratch home:
+
+- **`XDG_CONFIG_HOME` isolates more than moomux.** `gh` keeps its credentials in
+  `$XDG_CONFIG_HOME/gh`, so the core's `PRStatus` silently comes back "unknown" — the scratch home
+  has logged `gh` out. `ln -s ~/.config/gh /tmp/mmxtest/gh` fixes it. Anything else the core shells
+  out to that reads XDG will have the same problem.
+- **Give the worktree a real git repo** if you want the worktree rows to say anything:
+  `git init`, one commit, then dirty it. `WorktreeStatus` and `ChangeSummary` return `ok=false` for
+  a plain directory, which correctly renders as no row at all — indistinguishable from a bug you
+  did not write.
+
 If you ever do have to touch a real session, **type into the shell pane, never the agent pane** —
 text at a `zsh` prompt is harmless and erasable, text in an agent's prompt box is not. Select it
 first (`tmux select-pane -t $S.2`), check with `capture-pane`, clear the line with `C-u`, and put

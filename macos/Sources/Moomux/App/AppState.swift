@@ -29,6 +29,12 @@ public final class AppState {
     /// watcher observes; `state(for:)` does the join.
     public private(set) var states: [String: AgentState] = [:]
     public private(set) var config: Config?
+    /// Worktree and PR state, by session id, for sessions that have been
+    /// looked at. Deliberately **not** part of the poll loop: each entry costs
+    /// a `git status`, a `git log` and a `gh` call over the network, so filling
+    /// this for every session every two seconds would hammer the machine and
+    /// GitHub both. Fetched when a session is selected, and on refresh.
+    public private(set) var statuses: [Session.ID: MoomuxClient.SessionStatus] = [:]
 
     public private(set) var connection: Connection = .connecting
     /// Set when the status stream drops. Without it the last states keep
@@ -123,6 +129,20 @@ public final class AppState {
         }
     }
 
+    /// Loads (or reloads) worktree and PR state for one session.
+    public func loadStatus(for id: Session.ID, force: Bool = false) async {
+        guard force || statuses[id] == nil else { return }
+        do {
+            let status = try await withoutBlockingTheUI { [client] in
+                try client.status(id: id)
+            }
+            statuses[id] = status
+        } catch {
+            // Leave whatever was there; `connection` already carries the
+            // failure, and a missing status row is not worth a second alarm.
+        }
+    }
+
     public func refresh() async {
         do {
             let snapshot = try await withoutBlockingTheUI { [client] in
@@ -136,6 +156,10 @@ public final class AppState {
             alive = snapshot.alive
             config = snapshot.config
             connection = .connected
+            // Drop status for sessions that are gone, so the cache cannot grow
+            // forever or answer for a recreated id.
+            let live = Set(snapshot.sessions.map(\.id))
+            statuses = statuses.filter { live.contains($0.key) }
         } catch {
             // Deliberately leaves the last-good lists in place. A failed call
             // must never read as "everything was deleted" — the Go client

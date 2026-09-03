@@ -178,6 +178,48 @@ public struct Config: Decodable, Sendable {
     }
 }
 
+// MARK: - Pull request
+
+/// `prstatus.Info`. No json tags on the Go side, so Go field names again — and
+/// `CI` is spelled exactly that.
+public struct PRInfo: Decodable, Equatable, Sendable {
+    /// OPEN, MERGED, CLOSED
+    public var state: String
+    /// MERGEABLE, CONFLICTING, UNKNOWN
+    public var mergeable: String
+    /// PASSING, FAILING, PENDING, NONE
+    public var ci: String
+
+    enum CodingKeys: String, CodingKey {
+        case state = "State"
+        case mergeable = "Mergeable"
+        case ci = "CI"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        state = try c.decodeIfPresent(String.self, forKey: .state) ?? ""
+        mergeable = try c.decodeIfPresent(String.self, forKey: .mergeable) ?? ""
+        ci = try c.decodeIfPresent(String.self, forKey: .ci) ?? ""
+    }
+
+    /// A one-line summary, lower-cased the way the rest of the UI reads.
+    /// Empty when the core knew nothing, so the caller can hide the row.
+    public var summary: String {
+        var parts: [String] = []
+        if !state.isEmpty { parts.append(state.lowercased()) }
+        switch ci {
+        case "PASSING": parts.append("checks passing")
+        case "FAILING": parts.append("checks failing")
+        case "PENDING": parts.append("checks running")
+        default: break
+        }
+        // Only worth saying when it is a problem; MERGEABLE is the boring case.
+        if mergeable == "CONFLICTING" { parts.append("conflicts") }
+        return parts.joined(separator: " · ")
+    }
+}
+
 // MARK: - Status stream
 
 /// One tick of `watcher.Snapshot`: worktree path → state.
@@ -295,6 +337,20 @@ public enum Wire {
         """
         let extra = try! decoder.decode(Config.self, from: Data(extraJSON.utf8))
         assert(extra.orderedProjectNames == ["z", "a", "b"])
+
+        // prstatus.Info: Go field names, and CI is capitalised.
+        let pr = try! decoder.decode(
+            PRInfo.self,
+            from: Data(#"{"State":"OPEN","Mergeable":"CONFLICTING","CI":"FAILING"}"#.utf8))
+        assert(pr.state == "OPEN" && pr.ci == "FAILING" && pr.mergeable == "CONFLICTING")
+        assert(pr.summary == "open · checks failing · conflicts", pr.summary)
+        let merged = try! decoder.decode(
+            PRInfo.self, from: Data(#"{"State":"MERGED","Mergeable":"UNKNOWN","CI":"NONE"}"#.utf8))
+        assert(merged.summary == "merged", merged.summary)
+        // A struct Go could not fill in at all must read as "nothing to show",
+        // not as a row full of blanks.
+        let empty = try! decoder.decode(PRInfo.self, from: Data("{}".utf8))
+        assert(empty.summary.isEmpty)
 
         // Snapshot states are raw ints, and an unfamiliar one must not throw.
         let snapJSON = """

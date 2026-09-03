@@ -66,6 +66,42 @@ public final class MoomuxClient: Sendable {
         var cfg: Config?
         var hint: String?
         var ok: Bool?
+        var dirty: Bool?
+        var unpushed: Bool?
+        var files: Int?
+        var commits: Int?
+        var pr: PRInfo?
+    }
+
+    /// What the core can say about a session's worktree and its pull request.
+    ///
+    /// `known` is the `ok` the Go side returns from all three calls: false for
+    /// an unknown session, a plain (non-git) project, or a lookup that failed.
+    /// Kept as a flag rather than making the whole thing optional so "we asked
+    /// and the answer is nothing" is distinguishable from "we never asked".
+    public struct SessionStatus: Equatable, Sendable {
+        public var known = false
+        public var dirty = false
+        public var unpushed = false
+        public var filesChanged = 0
+        public var unpushedCommits = 0
+        public var pr: PRInfo?
+
+        /// Empty when the worktree is clean, so the row can be hidden.
+        public var changeSummary: String {
+            var parts: [String] = []
+            if filesChanged > 0 {
+                parts.append("\(filesChanged) file\(filesChanged == 1 ? "" : "s") changed")
+            } else if dirty {
+                parts.append("uncommitted changes")
+            }
+            if unpushedCommits > 0 {
+                parts.append("\(unpushedCommits) commit\(unpushedCommits == 1 ? "" : "s") unpushed")
+            } else if unpushed {
+                parts.append("unpushed commits")
+            }
+            return parts.joined(separator: ", ")
+        }
     }
 
     // MARK: - Calls
@@ -100,6 +136,32 @@ public final class MoomuxClient: Sendable {
     /// Session id → whether its tmux session is still alive.
     public func tmuxAliveAll() throws -> [String: Bool] {
         try call("TmuxAliveAll").alive ?? [:]
+    }
+
+    /// Worktree and PR state for one session.
+    ///
+    /// Three round trips, and every one of them shells out on the Go side —
+    /// `git status`, `git log`, and `gh` over the network for the PR. That is
+    /// why this is fetched for the selected session on demand rather than for
+    /// every session in the poll loop.
+    public func status(id: String) throws -> SessionStatus {
+        var status = SessionStatus()
+        let worktree = try call("WorktreeStatus", Args(id: id))
+        status.known = worktree.ok ?? false
+        status.dirty = worktree.dirty ?? false
+        status.unpushed = worktree.unpushed ?? false
+
+        let changes = try call("ChangeSummary", Args(id: id))
+        if changes.ok == true {
+            status.filesChanged = changes.files ?? 0
+            status.unpushedCommits = changes.commits ?? 0
+        }
+
+        // Only meaningful when a PR is attached; the core returns ok=false
+        // otherwise rather than an error.
+        let pr = try call("PRStatus", Args(id: id))
+        if pr.ok == true { status.pr = pr.pr }
+        return status
     }
 
     /// Attaches the session in the user's terminal. Returns the server's hint —
@@ -194,6 +256,22 @@ public final class MoomuxClient: Sendable {
         let response = try! Wire.decoder.decode(Response.self, from: Data(failed.utf8))
         assert(response.err == "tmux: no server running")
         assert(response.result?.sessions == nil)
+
+        // The status calls share one Result union, so an absent field must not
+        // read as a zero: `ok:false` with no counts means "don't know", which
+        // is different from "clean".
+        let statusJSON = #"{"result":{"dirty":true,"ok":true,"files":3,"commits":2}}"#
+        let st = try! Wire.decoder.decode(Response.self, from: Data(statusJSON.utf8))
+        assert(st.result?.dirty == true)
+        assert(st.result?.unpushed == nil, "omitempty means absent, not false")
+        assert(st.result?.files == 3 && st.result?.commits == 2)
+
+        var summary = SessionStatus(known: true, dirty: true, unpushed: true,
+                                    filesChanged: 3, unpushedCommits: 1)
+        assert(summary.changeSummary == "3 files changed, 1 commit unpushed", summary.changeSummary)
+        summary = SessionStatus(known: true, dirty: true, unpushed: false)
+        assert(summary.changeSummary == "uncommitted changes", summary.changeSummary)
+        assert(SessionStatus(known: true).changeSummary.isEmpty, "a clean worktree says nothing")
 
         let ok = """
         {"result":{"strings":["moomux","site"],"alive":{"a":true,"b":false}}}

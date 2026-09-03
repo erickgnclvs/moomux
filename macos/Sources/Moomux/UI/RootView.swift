@@ -40,7 +40,15 @@ struct RootView: View {
             }
             ToolbarItem {
                 Button {
-                    Task { await app.refresh() }
+                    Task {
+                        await app.refresh()
+                        // The expensive per-session state is only ever fetched
+                        // on demand, so an explicit refresh is the one place it
+                        // should be re-fetched rather than served from cache.
+                        if let id = app.selectedSessionID {
+                            await app.loadStatus(for: id, force: true)
+                        }
+                    }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
@@ -193,6 +201,7 @@ private struct SessionDetail: View {
         }
         // Selecting another session must not carry the attachment with it.
         .onChange(of: session.id) { _, _ in attached = false }
+        .task(id: session.id) { await app.loadStatus(for: session.id) }
     }
 }
 
@@ -248,6 +257,16 @@ private struct SessionInfo: View {
                     Field("Worktree", session.worktreePath)
                     Field("tmux", session.tmuxSession
                         + (app.isAlive(session) ? "" : "  (not running)"))
+                    if let status = app.statuses[session.id] {
+                        if !status.changeSummary.isEmpty {
+                            Field("Changes", status.changeSummary)
+                        } else if status.known {
+                            Field("Changes", "clean")
+                        }
+                        if let pr = status.pr, !pr.summary.isEmpty {
+                            Field("PR status", pr.summary)
+                        }
+                    }
                     Field("Created", session.createdAt.formatted(date: .abbreviated, time: .shortened))
                     if session.hasBeenOpened {
                         Field("Last opened", session.lastOpened.formatted(.relative(presentation: .named)))
