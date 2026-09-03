@@ -22,6 +22,7 @@ enum SelfTest {
         AppState.demo()
         Notifier.demo()
         TmuxControlClient.demo()
+        TmuxSnapshot.demo()
 
         print("selftest: ok")
         exit(0)

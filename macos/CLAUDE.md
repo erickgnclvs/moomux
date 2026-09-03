@@ -9,7 +9,8 @@ Today it lists sessions, streams their live agent state, shows detail, banners a
 ones that start waiting on you, attaches a session's tmux inside the app — by default over tmux
 **control mode**, with each pane in its own native view and the session's windows as tabs, and
 optionally as one plain `tmux attach`
-— hands a session to the user's terminal, opens its diff for review in a tmux window of its own, and
+— shows every live session at once as read-only snapshots, hands a session to the user's terminal,
+opens its diff for review in a tmux window of its own, and
 creates, renames, tags, archives, reorders, kills and deletes them. Creating one here takes a
 project, a name and a first prompt; anything more unusual is still the TUI's dialog.
 
@@ -233,6 +234,7 @@ App/SelfTest.swift       --selftest
 UI/RootView.swift        split view, rows, detail, inspector, menu-bar content
 UI/TerminalPane.swift    SwiftTerm hosting a plain `tmux attach`
 UI/ControlModeView.swift native panes over control mode
+UI/SessionGrid.swift     every live session at once, as capture-pane snapshots
 ```
 
 Both `Tmux/` parsers are pure and checked by `demo()` against output captured from a real
@@ -458,7 +460,22 @@ Decisions, not oversights. Don't "fix" these without being asked.
   created with an explicit `-base` diffs against the project default, and untracked files show as a
   `git status` listing rather than as patches — `git add -N` would get them into the diff and is not
   worth mutating a live worktree's index for.
-- **No multi-window grid.** The remaining payoff feature from the plan doc's §5.
+- **The session grid is snapshots, not live views, and that is the feature.** ⌘⇧G swaps the detail
+  column for a tile per live session, each one a `tmux capture-pane` fed into a read-only
+  `NoScrollerTerminalView` every five seconds. A grid of *attached* clients — the obvious reading of
+  "several sessions at once" — would be **destructive**: every tmux client on a session sets the
+  shared window size (see the bullet above; measured for plain attach, `-CC` and grouped sessions
+  alike), so six live tiles would letterbox six real sessions someone else is working in until the
+  grid closed. `capture-pane` attaches nothing. What that costs is one short-lived tmux process per
+  visible tile per tick, which is why the interval is 5s rather than the store's 2s and why the task
+  belongs to the tile, so closing the grid stops it; the upgrade if it ever bites is one invocation
+  with `;`-joined captures, never a client per tile. What it gives up: typing into a tile (the thing
+  the size problem makes unaffordable anyway — click one, then Attach), multi-pane tiles (the
+  session's active pane is the agent), zoom, and scrollback. `TmuxSnapshot.screen` **truncates** each
+  captured row to the tile's column count rather than letting it wrap: an agent pane is 150-210
+  columns and a tile is nearer 50, so wrapping shows the bottom quarter of the last few lines as
+  mush. It also drops the trailing blank rows `capture-pane` returns below the cursor, which would
+  otherwise scroll the content out of a short tile.
 - **No notification actions, and no "Approve" button.** Tapping a banner selects the session and
   brings the app forward; that is the whole interaction. An action button would have to send keys
   into the agent's pane, and there is no write path for that. A banner already *is* an Open button.

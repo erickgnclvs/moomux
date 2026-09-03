@@ -54,6 +54,12 @@ public final class AppState {
     /// hatch for anything control mode renders badly, and the two are one
     /// `if` apart in `SessionDetail`. Not persisted between runs yet.
     public var useControlMode = true
+    /// Replace the detail column with a read-only snapshot of every live
+    /// session. Snapshots and not clients: an attached client sizes the shared
+    /// tmux window for everyone, so a grid of six would letterbox six real
+    /// sessions. Clicking a tile selects it; Attach is still the full-size,
+    /// deliberate thing. No snapshot text lives in the store — see `SessionGrid`.
+    public var showGrid = false
     /// Whatever the last `OpenSession` told the user to do, if anything.
     public var hint: String?
     /// A mutation the server refused, until the user dismisses it. See

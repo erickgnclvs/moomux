@@ -26,7 +26,11 @@ struct RootView: View {
             SessionList()
                 .navigationSplitViewColumnWidth(min: 240, ideal: 300)
         } detail: {
-            if let session = app.visibleSessions.first(where: { $0.id == app.selectedSessionID }) {
+            // The grid replaces the detail column, not the window, so the
+            // sidebar and the toolbar keep working while it is up.
+            if app.showGrid {
+                SessionGrid()
+            } else if let session = app.visibleSessions.first(where: { $0.id == app.selectedSessionID }) {
                 SessionDetail(session: session)
             } else {
                 ContentUnavailableView("No session selected", systemImage: "square.split.2x1")
@@ -43,6 +47,12 @@ struct RootView: View {
                 // ⌘N lives on the File menu item, not here: two views claiming
                 // the same shortcut is ambiguous and only one of them wins.
                 .help("New session (⌘N)")
+            }
+            ToolbarItem {
+                Toggle(isOn: $app.showGrid) { Label("Grid", systemImage: "square.grid.2x2") }
+                    // ⌘G is Review Changes; the grid is the shifted one.
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+                    .help("Every live session at once, read-only. Click one to open it.")
             }
             ToolbarItem {
                 Toggle("Archived", isOn: $app.showArchived)

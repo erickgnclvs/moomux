@@ -171,6 +171,57 @@ public func hexKeys(_ bytes: some Sequence<UInt8>) -> String {
     bytes.map { String(format: "%02x", $0) }.joined(separator: " ")
 }
 
+/// A one-shot `capture-pane` of a session, framed as bytes a terminal can draw.
+///
+/// Nothing here attaches a client, which is the entire reason the session grid
+/// is snapshots: every tmux client on a session sets the shared window size, so
+/// a grid of live clients would letterbox that many real sessions down to tile
+/// size until it was closed.
+public enum TmuxSnapshot {
+
+    /// argv for capturing a session's active pane.
+    ///
+    /// No `-e`, unlike the control-mode repaint: `screen(from:columns:)` cuts
+    /// rows by character count, and SGR escapes are characters that occupy no
+    /// columns, so keeping colour would cut every coloured row short.
+    public static func captureArgv(session: String) -> [String] {
+        ["capture-pane", "-p", "-t", session]
+    }
+
+    /// Rows **truncated** to `columns`, framed with home+clear so a repaint
+    /// replaces the screen rather than appending, CRLF-joined because a bare LF
+    /// only moves down a row.
+    ///
+    /// Truncating rather than letting the terminal wrap is the whole legibility
+    /// of a tile: a real agent pane is 150-210 columns and a tile is nearer 50,
+    /// so wrapped rows would show the bottom quarter of the last few lines as
+    /// mush. `capture-pane` without `-J` hands back one entry per screen row,
+    /// so a row here really is a row there.
+    public static func screen(from lines: [String], columns: Int) -> String {
+        let width = max(0, columns)
+        var rows = lines.map { $0.count > width ? String($0.prefix(width)) : $0 }
+        // capture-pane returns the pane's full height, blank rows below the
+        // cursor included. Feeding those into a short tile scrolls the content
+        // away and leaves the tile showing the blanks.
+        while let last = rows.last, last.allSatisfy(\.isWhitespace) { rows.removeLast() }
+        return "\u{1b}[H\u{1b}[2J" + rows.joined(separator: "\r\n")
+    }
+
+    public static func demo() {
+        let s = screen(from: ["abcdef", "gh"], columns: 4)
+        assert(s.hasPrefix("\u{1b}[H\u{1b}[2J"), s.debugDescription)
+        assert(s.hasSuffix("abcd\r\ngh"), "rows are cut, never wrapped: \(s.debugDescription)")
+        assert(screen(from: [], columns: 4).hasSuffix("[2J"))
+        assert(screen(from: ["a", "   ", ""], columns: 9).hasSuffix("[2Ja"),
+               "the blank rows below a pane's cursor would scroll the tile empty")
+        // A tile whose terminal has not been sized yet must not trap.
+        assert(screen(from: ["ab"], columns: -1).hasSuffix("[2J"))
+        assert(captureArgv(session: "moomux-x-ab12")
+            == ["capture-pane", "-p", "-t", "moomux-x-ab12"],
+               "no -e: colour escapes would break the character count")
+    }
+}
+
 public enum TmuxProtocolChecks {
 
     public static func demo() {

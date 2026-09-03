@@ -238,8 +238,10 @@ Next, in the order they are worth doing:
    actually piggybacks on the `list-windows` call the layout code already made.
 2. ~~**Scrollback.**~~ Done: a pane's first paint restores `capture-pane -S -1000` into SwiftTerm's
    own scroll buffer. Later repaints stay visible-only.
-3. **Then §5's payoff features** — notifications (done), diff review, the multi-session grid —
-   which is the actual reason for any of this.
+3. ~~**Then §5's payoff features**~~ Done, two of the three not as described: notifications as
+   banners plus a dock badge; diff review as a `new-window -n review` rather than a native patch
+   viewer; the multi-session grid as periodic read-only `capture-pane` snapshots rather than live
+   views, because every tmux client on a session sets the shared window size.
 
 Concretely:
 
