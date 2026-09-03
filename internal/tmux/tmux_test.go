@@ -358,7 +358,7 @@ func TestPasteTextLoadsThenPastesExactBuffer(t *testing.T) {
 	// "=moomux-foo:" pins paste-buffer to an exact session match; a bare name
 	// falls back to prefix matching and could paste into moomux-foo-2 once
 	// moomux-foo is gone.
-	want2 := []string{"paste-buffer", "-d", "-t", "=moomux-foo:"}
+	want2 := []string{"paste-buffer", "-p", "-d", "-t", "=moomux-foo:"}
 	if !reflect.DeepEqual(fr.calls[1], want2) {
 		t.Fatalf("second call = %v, want %v", fr.calls[1], want2)
 	}
@@ -388,4 +388,28 @@ type alwaysFailRunner struct{ calls int }
 func (r *alwaysFailRunner) Run(args ...string) (string, error) {
 	r.calls++
 	return "", exitErr{code: 1}
+}
+
+// TestBracketedPaste checks the flag is read off the exact session's pane and
+// only "1" counts as enabled.
+func TestBracketedPaste(t *testing.T) {
+	for _, tc := range []struct {
+		out  string
+		want bool
+	}{{"1\n", true}, {"0\n", false}, {"", false}} {
+		key := "display-message -p -t =moomux-foo: #{bracket_paste_flag}"
+		r := &fakeRunner{out: map[string]string{key: tc.out}}
+		c := &Client{Runner: r}
+		got, err := c.BracketedPaste("moomux-foo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Fatalf("BracketedPaste(%q) = %v, want %v", tc.out, got, tc.want)
+		}
+		want := []string{"display-message", "-p", "-t", "=moomux-foo:", "#{bracket_paste_flag}"}
+		if len(r.calls) != 1 || strings.Join(r.calls[0], " ") != strings.Join(want, " ") {
+			t.Fatalf("calls = %v, want %v", r.calls, want)
+		}
+	}
 }

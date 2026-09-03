@@ -812,6 +812,30 @@ func (a *App) waitForPaneStable(tmuxSession, seed string, deadline time.Time) st
 	}
 }
 
+// waitForPaneAcceptingPaste blocks until tmuxSession's pane has bracketed
+// paste enabled, or paneReadyTimeout elapses. waitForPaneReady's "the pane
+// stopped changing" proxy for readiness can land on any plateau in a
+// multi-phase startup (splash, then MCP connect, then ready), and pasting
+// into one of those earlier plateaus is how a prompt half-lands: the agent's
+// input layer isn't reading yet, so the tty's own line buffer swallows most
+// of the text and only a tail of it shows up. The bracketed-paste flag is
+// the process's own statement that it is now reading keystrokes — the shell
+// clears it for the duration of the command it launched, so it going back on
+// means the agent, not the shell, is waiting for input. Best-effort: agents
+// that never enable it just fall through to the old timing-based behavior.
+func (a *App) waitForPaneAcceptingPaste(tmuxSession string) {
+	deadline := time.Now().Add(paneReadyTimeout)
+	for {
+		if on, err := a.Tmux.BracketedPaste(tmuxSession); err != nil || on {
+			return
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(paneStablePoll)
+	}
+}
+
 // StartFirstPrompt waits for a freshly created session's agent pane to
 // finish starting up and types prompt into it. If autoSubmit is true, it
 // waits for the pane to finish re-rendering the typed prompt (a fixed delay
@@ -826,6 +850,7 @@ func (a *App) StartFirstPrompt(tmuxSession, prompt string, autoSubmit bool) erro
 	if err := a.waitForPaneReady(tmuxSession); err != nil {
 		return err
 	}
+	a.waitForPaneAcceptingPaste(tmuxSession)
 	if err := a.Tmux.PasteText(tmuxSession, prompt); err != nil {
 		return err
 	}
