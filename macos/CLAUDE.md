@@ -158,9 +158,10 @@ Useful oracles that do not require reading the screen: `#{client_prefix}` goes t
 prefix key reaches our client, and `#{pane_in_mode}` goes to 1 in copy or clock mode. Both are
 unambiguous where a screenshot is a judgement call.
 
-**Count the characters before believing a wrap is wrong.** `capture-pane` returns *logical* lines,
-which can be far longer than the pane, so a repaint legitimately wraps where tmux would. Several
-rounds went into a one-column bug that did not exist; `python3 -c "print(len(line), repr(line[:56]))"`
+**Count the characters before believing a wrap is wrong.** A repainted pane can legitimately wrap
+where tmux already did: `capture-pane -p` hands back screen rows pre-wrapped to the pane's width, so
+a row that fills the pane exactly is tmux's wrap and not ours. Several rounds went into a
+one-column bug that did not exist; `python3 -c "print(len(line), repr(line[:56]))"`
 would have settled it immediately.
 
 ## Verification tricks that matter here
@@ -312,9 +313,12 @@ to fix in Go, not a reason to link the core.
   missing, silently giving you the wrong source.
 - **SwiftTerm marks most overrides `public`, not `open`** — `keyDown` cannot be overridden from
   this module, `mouseDown` and `viewDidMoveToWindow` can.
-- **`capture-pane` returns logical lines, not screen rows**, so a repainted pane wraps long lines
-  itself rather than reproducing tmux's exact screen. That is not a bug and cost an hour to talk
-  myself out of — count the characters before believing a wrap is wrong.
+- **`capture-pane -p` returns screen rows, not logical lines** — already wrapped to the pane's
+  width. `-J` is the flag that joins them back into logical lines, and the repaint does not pass it.
+  Measured on tmux 3.7c in a 40-column pane: a 50-character line comes back as a 40-char row plus a
+  10-char row plain, and as one 50-char line under `-J`. So a wrap in a repainted pane is usually
+  tmux's own rather than a layout bug — count the characters against the pane width before believing
+  it is ours. (An hour went into talking myself out of a wrap that was fine.)
 - **SwiftTerm marks its overrides `public`, not `open`.** `keyDown` and friends cannot be overridden
   from this module — the compiler says "overriding non-open instance method outside of its defining
   module". `viewDidMoveToWindow` is fine because it comes from `NSView`.
