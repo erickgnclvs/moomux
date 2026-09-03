@@ -34,10 +34,14 @@ test harness is `assert`-based `demo()` functions run through the real binary vi
 Take "scaffold the Xcode project" as "scaffold the Mac app" and build it this way; don't go looking
 for a project file that cannot exist. `macos/` and `~/tmp/mergeright` are both worked examples.
 
-The one rule that reaches back across the boundary: `internal/ipc` is a contract with a second
-client now. Changing a method's shape, or `session.Session`'s JSON tags, breaks the Swift side
-silently — it decodes into optionals. Grep `macos/Sources/Moomux/Core/Models.swift` when you touch
-either.
+Two rules reach back across the boundary:
+
+- `internal/ipc` is a contract with a second client now. Changing a method's shape, or
+  `session.Session`'s JSON tags, breaks the Swift side silently — it decodes into optionals. Grep
+  `macos/Sources/Moomux/Core/Models.swift` when you touch either.
+- The Mac app attaches sessions with `tmux -CC` (control mode) and parses tmux's line protocol, so
+  it depends on the *names* moomux gives tmux sessions and on nothing else about how the TUI drives
+  tmux. Renaming or restructuring `internal/tmux`'s session naming is a change the Swift side feels.
 
 ## Releases and commit messages
 

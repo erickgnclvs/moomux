@@ -39,10 +39,14 @@ public final class AppState {
 
     public var selectedSessionID: Session.ID?
     public var showArchived = false
-    /// Attach with tmux control mode (native panes) instead of a plain
-    /// `tmux attach`. Not persisted yet — control mode is new enough that
-    /// starting each run on the boring path is the right default.
-    public var useControlMode = false
+    /// Attach with tmux control mode (native panes) rather than a plain
+    /// `tmux attach`. The default, because it is the whole reason for a native
+    /// app: real per-pane selection and copy, and a layout the app can see.
+    ///
+    /// The plain attach stays reachable by turning this off — it is the escape
+    /// hatch for anything control mode renders badly, and the two are one
+    /// `if` apart in `SessionDetail`. Not persisted between runs yet.
+    public var useControlMode = true
     /// Whatever the last `OpenSession` told the user to do, if anything.
     public var hint: String?
 

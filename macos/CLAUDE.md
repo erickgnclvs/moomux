@@ -6,8 +6,8 @@ and not a rewrite. This file is for working on it; the Go side's `AGENTS.md` sti
 everything outside `macos/`.
 
 Today it lists sessions, streams their live agent state, shows detail, attaches a session's tmux
-inside the app — either as one plain `tmux attach` or, with "Native panes", over tmux **control
-mode** with each pane in its own view — and hands a session to the user's terminal. Every write
+inside the app — by default over tmux **control mode**, with each pane in its own native view, and
+optionally as one plain `tmux attach` — and hands a session to the user's terminal. Every write
 path beyond `OpenSession` is still missing.
 
 ## The environment decides more than you'd think
@@ -79,6 +79,48 @@ Two traps when checking by screenshot:
 - Other apps' menu-bar popovers float above ours and land in the shot. Retake rather than debug a
   layout that is not ours.
 
+## Verifying a terminal change
+
+A screenshot proves a terminal *drew* something. It does not prove keystrokes arrive, that the
+right pane got them, or that detaching left the session alone — and all three have broken here.
+tmux is the oracle for those, so ask it rather than squinting at pixels.
+
+```sh
+S=moomux-<session>-<hash>                       # from the session's Info pane
+tmux list-clients -t $S                         # ours is the one marked control-mode
+tmux list-panes  -t $S -F '#{pane_id} #{pane_width}x#{pane_height} active=#{pane_active}'
+tmux list-windows -t $S -F '#{window_width}x#{window_height} #{window_layout}'
+tmux display-message -t $S -p '#{pane_id}'      # which pane tmux thinks is active
+tmux capture-pane -p -t $S.2 | tail -3          # what a pane actually contains
+```
+
+**Type into the shell pane, never the agent pane.** Synthetic keystrokes land in a real session
+someone is using; text typed at a `zsh` prompt is harmless and erasable, text typed into an agent's
+prompt box is not. Select the shell pane first (`tmux select-pane -t $S.2`), type, check with
+`capture-pane`, then clear the line with `C-u` and put the active pane back. Leave the session as
+you found it.
+
+**Synthetic key events need a real event source.** `CGEvent(keyboardEventSource: nil, …)` silently
+drops modifier flags, so a scripted `C-b` arrives as a bare `b` and whatever you are testing looks
+broken when it is fine. Pass `CGEventSource(stateID: .hidSystemState)`. This cost an hour chasing a
+focus bug that had already been fixed.
+
+```swift
+let src = CGEventSource(stateID: .hidSystemState)
+let e = CGEvent(keyboardEventSource: src, virtualKey: 11, keyDown: true)!  // 'b'
+e.flags = .maskControl
+e.post(tap: .cghidEventTap)
+```
+
+Useful oracles that do not require reading the screen: `#{client_prefix}` goes to 1 after the tmux
+prefix key reaches our client, and `#{pane_in_mode}` goes to 1 in copy or clock mode. Both are
+unambiguous where a screenshot is a judgement call.
+
+**Count the characters before believing a wrap is wrong.** `capture-pane` returns *logical* lines,
+which can be far longer than the pane, so a repaint legitimately wraps where tmux would. Several
+rounds went into a one-column bug that did not exist; `python3 -c "print(len(line), repr(line[:56]))"`
+would have settled it immediately.
+
 ## Verification tricks that matter here
 
 **A warning count from an incremental build is meaningless.** `swift build` only re-emits
@@ -111,12 +153,9 @@ instantiates). It is the only dependency; keep it that way for as long as possib
 
 **`NSLog` does not reach `log show` / `log stream` from this bundle.** Two rounds of debugging went
 into a predicate that was never going to match. When you need to trace something inside the running
-app, append to a file from the code and `cat` it — crude, instant, and it actually works.
-
-**Synthetic key events need a real event source.** `CGEvent(keyboardEventSource: nil, …)` silently
-drops modifier flags, so a scripted `C-b` arrives as a bare `b` and the thing you are testing looks
-broken when it is fine. Pass `CGEventSource(stateID: .hidSystemState)`. This cost an hour chasing a
-focus bug that had already been fixed.
+app, append to a file from the code and `cat` it — crude, instant, and it actually works. Every
+non-obvious bug in the terminal work was found this way and by nothing else, usually by logging one
+number (a frame, a column count, a pending-command depth) rather than by reading harder.
 
 ## Architecture
 
@@ -247,8 +286,10 @@ to fix in Go, not a reason to link the core.
 
 Decisions, not oversights. Don't "fix" these without being asked.
 
-- **Control mode is opt-in and off by default.** The "Native panes" toggle picks it; the plain
-  attach stays the boring path while control mode earns trust. Not persisted between runs yet.
+- **Control mode is the default; the plain attach is the escape hatch.** The "Native panes" toggle
+  switches between them and is not persisted between runs. Keep the plain path working — it is one
+  `if` in `SessionDetail`, it costs nothing, and it is the fallback for anything control mode
+  renders badly.
 - **Control mode shows one window's panes, not tabs.** tmux windows exist in the protocol
   (`%window-add`, `%window-close`) and are not surfaced; switching windows inside tmux follows
   along, but there is no tab bar.

@@ -227,7 +227,7 @@ private struct SessionInfo: View {
                     Toggle("Native panes", isOn: Binding(
                         get: { app.useControlMode },
                         set: { app.useControlMode = $0 }))
-                        .help("Attach with tmux control mode: each pane in its own native view")
+                        .help("tmux control mode: each pane in its own native view. Turn off to attach the whole session as one terminal.")
                     if !app.isAlive(session) {
                         Text("No live tmux session — open it to start one.")
                             .foregroundStyle(.secondary)

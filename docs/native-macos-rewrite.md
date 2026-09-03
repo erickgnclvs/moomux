@@ -216,12 +216,31 @@ Two observations that matter more than the table:
 **Don't rewrite. Add a Mac front end on the existing core, over tmux control
 mode.**
 
-Concretely:
+Status: **1 and 2 are done, 3 has started.** `internal/ipc` / `moomux serve` / `moomux ui -socket`
+carry the boundary; `macos/` is a SwiftUI app on SwiftPM that lists sessions over the socket,
+streams live agent state, attaches a session's tmux over **control mode** with each pane in its own
+native view (plain `tmux attach` kept as a fallback), and already carries the menu-bar count from
+§5. See `macos/CLAUDE.md` for how to work on it.
 
-Status: **1 is done** (`internal/ipc`, `moomux serve`, `moomux ui -socket`), and **2 is
-scaffolded** — `macos/` is a SwiftUI app on SwiftPM that lists sessions over the socket, streams
-live agent state, and already carries the menu-bar count from §5. No terminal pane yet, which is
-the next real piece. See `macos/CLAUDE.md`.
+What the sizing table below got roughly right: the control-mode client landed near the bottom of
+its 2–3 week estimate, because the protocol is small once you stop guessing at it and read
+`man tmux`'s CONTROL MODE section. What it got wrong is where the time actually goes — not the
+parser (a day, and it is pure and test-covered) but the four undocumented behaviours around it,
+each of which presents as a rendering bug and none of which is in any documentation: the client
+ignoring its pty size, the unsolicited `%begin` block on attach, views painted before they have a
+frame being silently reset, and stale column counts from `getOptimalFrameSize`. Budget for that
+class of thing, not for the protocol.
+
+Next, in the order they are worth doing:
+
+1. **Windows as tabs.** `%window-add` / `%window-close` / `%window-renamed` already arrive and are
+   parsed; nothing surfaces them. This is the cheapest remaining win.
+2. **Scrollback.** Panes paint from `capture-pane` of the visible screen only. tmux's copy-mode
+   works through the keyboard, but native scrolling needs history.
+3. **Then §5's payoff features** — notifications, diff review, the multi-session grid — which is
+   the actual reason for any of this.
+
+Concretely:
 
 1. **Extract a headless core.** Move the TUI's calls to `internal/app` behind a
    JSON-RPC-over-unix-socket server (`moomux serve`). ~300 LOC. The existing
