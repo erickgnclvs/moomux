@@ -28,6 +28,7 @@ struct MoomuxApp: App {
             RootView().environment(app)
         }
         .defaultSize(width: 900, height: 620)
+        .commands { PaneCommands(app: app) }
 
         MenuBarExtra {
             MenuBarContent().environment(app)
@@ -38,5 +39,35 @@ struct MoomuxApp: App {
             if app.needsInputCount > 0 { Text("\(app.needsInputCount)") }
         }
         .menuBarExtraStyle(.window)
+    }
+}
+
+/// Pane navigation as real menu commands.
+///
+/// Not a nicety: in control mode tmux's prefix key **cannot** reach tmux.
+/// Keystrokes go to a pane through `send-keys`, so tmux never sees `C-b` and
+/// every `prefix`-based binding is dead — `C-b o` types a literal `o`. These
+/// commands are the replacement, and they are also the only reason a menu
+/// exists. iTerm2's tmux integration made the same trade.
+///
+/// Shortcuts follow iTerm2's, since that is the other app people drive tmux
+/// panes with. They do nothing outside control mode.
+struct PaneCommands: Commands {
+    let app: AppState
+
+    var body: some Commands {
+        CommandMenu("Pane") {
+            Button("Next Pane") { app.controlClient?.nextPane() }
+                .keyboardShortcut("]", modifiers: .command)
+            Button("Previous Pane") { app.controlClient?.previousPane() }
+                .keyboardShortcut("[", modifiers: .command)
+            Divider()
+            Button("Split Right") { app.controlClient?.splitRight() }
+                .keyboardShortcut("d", modifiers: .command)
+            Button("Split Down") { app.controlClient?.splitDown() }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+            Button("Zoom Pane") { app.controlClient?.toggleZoom() }
+                .keyboardShortcut(.return, modifiers: [.command, .shift])
+        }
     }
 }

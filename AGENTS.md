@@ -34,6 +34,10 @@ test harness is `assert`-based `demo()` functions run through the real binary vi
 Take "scaffold the Xcode project" as "scaffold the Mac app" and build it this way; don't go looking
 for a project file that cannot exist. `macos/` and `~/tmp/mergeright` are both worked examples.
 
+When trying the Mac app out, never point it at a real moomux session — attaching resizes it and
+stray keystrokes land in a live agent's prompt. `macos/CLAUDE.md` has a copy-paste recipe for a
+throwaway core and session under `XDG_CONFIG_HOME`.
+
 Two rules reach back across the boundary:
 
 - `internal/ipc` is a contract with a second client now. Changing a method's shape, or

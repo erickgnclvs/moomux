@@ -9,6 +9,7 @@ import SwiftUI
 /// The container's cell grid *is* tmux's window grid, so those proportions land
 /// on exact cell boundaries.
 struct ControlModeView: View {
+    @Environment(AppState.self) private var app
     let session: Session
     let tmuxPath: String
     /// The client went away: detached, the session ended, or tmux refused.
@@ -53,6 +54,7 @@ struct ControlModeView: View {
         .onDisappear {
             client?.stop()
             client = nil
+            app.controlClient = nil
         }
     }
 
@@ -104,6 +106,7 @@ struct ControlModeView: View {
         }
         client.start()
         self.client = client
+        app.controlClient = client
     }
 }
 
@@ -115,14 +118,9 @@ private struct PaneView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> TerminalView {
         let view = PaneTerminalView(frame: .init(x: 0, y: 0, width: 400, height: 300))
-        view.onMouseDown = { [weak client] in client?.selectPane(paneID) }
+        view.onFocused = { [weak client] in client?.selectPane(paneID) }
         view.terminalDelegate = context.coordinator
         view.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        // Legacy scrollers reserve width, so the view ends up one or two
-        // columns narrower than the pane tmux is formatting for and every long
-        // line rewraps a character early. Overlay scrollers reserve nothing —
-        // and tmux owns scrollback through copy-mode anyway.
-        view.scrollerStyle = .overlay
         client.register(view, for: paneID)
         return view
     }
@@ -161,14 +159,57 @@ private struct PaneView: NSViewRepresentable {
     }
 }
 
-/// `mouseDown` is one of the few SwiftTerm entry points marked `open` rather
-/// than `public`, which makes clicking a pane to select it possible at all.
-private final class PaneTerminalView: TerminalView {
-    var onMouseDown: () -> Void = {}
+/// Hides SwiftTerm's scroller, which is not cosmetic.
+///
+/// In SwiftTerm 1.20.0 `reservedScrollerWidth` is `scroller?.isHidden == true ? 0
+/// : scrollerWidth` — it ignores `scrollerStyle` entirely, and nothing in the
+/// library ever hides the scroller. So **every** view silently reserves ~17pt,
+/// and `getEffectiveWidth` takes it off before dividing by the cell width.
+///
+/// 17pt is noise in a 1188pt ruler (156 columns either way) and a whole column
+/// in a 590pt pane, so panes came out one column narrower than the pane tmux
+/// was formatting for and every full-width line wrapped a character early.
+/// Hiding it makes the reservation zero and the two agree. tmux owns scrollback
+/// through copy-mode, so the scroller had no job here anyway.
+///
+/// Note the version: an earlier reading of this same property came from
+/// SwiftTerm's `main`, where it also checks `scrollerStyle == .legacy` and
+/// setting `.overlay` would have been enough. Read `.build/checkouts`, not a
+/// fresh clone.
+class NoScrollerTerminalView: TerminalView {
+    override func didAddSubview(_ subview: NSView) {
+        super.didAddSubview(subview)
+        if subview is NSScroller { subview.isHidden = true }
+    }
+}
+
+/// `mouseDown` and `viewDidMoveToWindow` are the two SwiftTerm entry points
+/// marked `open` rather than `public`, which is what makes click-to-select and
+/// focus-on-appear possible at all.
+private final class PaneTerminalView: NoScrollerTerminalView {
+    /// Tell tmux this pane is the active one. Called for both ways a pane can
+    /// take the keyboard, so the highlighted border and the pane that actually
+    /// receives typing can never disagree.
+    var onFocused: () -> Void = {}
 
     override func mouseDown(with event: NSEvent) {
-        onMouseDown()
+        onFocused()
         super.mouseDown(with: event)
+    }
+
+    /// The first pane to appear takes the keyboard, so attaching and typing
+    /// works without clicking first — SwiftUI otherwise leaves first responder
+    /// on the sidebar list. Only when no sibling pane already has it, so this
+    /// never steals focus back from the pane the user actually clicked.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.window else { return }
+            if window.firstResponder is PaneTerminalView { return }
+            window.makeFirstResponder(self)
+            self.onFocused()
+        }
     }
 }
 
@@ -182,10 +223,9 @@ private struct CellRuler: NSViewRepresentable {
     let onSize: (Int, Int) -> Void
 
     func makeNSView(context: Context) -> TerminalView {
-        let view = TerminalView(frame: .init(x: 0, y: 0, width: 400, height: 300))
+        let view = NoScrollerTerminalView(frame: .init(x: 0, y: 0, width: 400, height: 300))
         view.terminalDelegate = context.coordinator
         view.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        view.scrollerStyle = .overlay // must match the panes, or it miscounts
         return view
     }
 

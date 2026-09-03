@@ -234,6 +234,22 @@ public final class TmuxControlClient {
         send("send-keys -t \(pane) -H \(hexKeys(bytes))")
     }
 
+    // MARK: Pane commands
+    //
+    // These exist because **tmux's prefix key cannot work in control mode**.
+    // Keystrokes reach a pane through `send-keys -t %id`, which writes straight
+    // to that pane's pty — this client never reports a key press to tmux at
+    // all, so tmux has no chance to see `C-b` and act on it. Verified: `C-b o`
+    // leaves the active pane unchanged and types a literal `o` into the pane.
+    // iTerm2's tmux integration has the same property, which is why it offers
+    // native menu commands instead. So does this; see `PaneCommands`.
+
+    public func nextPane() { send("select-pane -t \(sessionName):.+") }
+    public func previousPane() { send("select-pane -t \(sessionName):.-") }
+    public func splitRight() { send("split-window -h -t \(sessionName):.") }
+    public func splitDown() { send("split-window -v -t \(sessionName):.") }
+    public func toggleZoom() { send("resize-pane -Z -t \(sessionName):.") }
+
     public func selectPane(_ pane: String) {
         guard pane != activePane else { return }
         activePane = pane

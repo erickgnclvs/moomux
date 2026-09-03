@@ -50,9 +50,18 @@ dev: app
 	@while pgrep -x Moomux >/dev/null; do sleep 0.2; done
 	open $(APP) --args $(ARGS)
 
+# Quitting first is the same trap `run` has: a still-running Moomux keeps
+# serving the old code, and relaunching just reactivates that process rather
+# than starting the copy you installed — which reads as "install did nothing".
+# Note that .build/Moomux.app and /Applications/Moomux.app share a bundle
+# identifier, so LaunchServices can pick either one; `make clean` after
+# installing if you want to be certain which is running.
 install: app
+	pkill -x Moomux || true
+	@while pgrep -x Moomux >/dev/null; do sleep 0.2; done
 	rm -rf /Applications/Moomux.app
 	cp -R $(APP) /Applications/Moomux.app
+	@echo "installed $$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist) to /Applications/Moomux.app"
 
 # A PNG of the running app, for showing a UI change the way the Go side shows
 # one with scripts/screenshot.sh.

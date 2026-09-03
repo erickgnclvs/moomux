@@ -49,6 +49,11 @@ public final class AppState {
     public var useControlMode = true
     /// Whatever the last `OpenSession` told the user to do, if anything.
     public var hint: String?
+    /// The live control-mode client, while one is attached. Menu commands need
+    /// to reach it, and the menu is the only way to drive tmux's pane
+    /// navigation — the prefix key cannot reach tmux in control mode. Weak so
+    /// a detach that forgets to clear this cannot keep a tmux client alive.
+    public weak var controlClient: TmuxControlClient?
 
     public let client: MoomuxClient
 

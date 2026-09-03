@@ -94,11 +94,42 @@ tmux display-message -t $S -p '#{pane_id}'      # which pane tmux thinks is acti
 tmux capture-pane -p -t $S.2 | tail -3          # what a pane actually contains
 ```
 
-**Type into the shell pane, never the agent pane.** Synthetic keystrokes land in a real session
-someone is using; text typed at a `zsh` prompt is harmless and erasable, text typed into an agent's
-prompt box is not. Select the shell pane first (`tmux select-pane -t $S.2`), type, check with
-`capture-pane`, then clear the line with `C-u` and put the active pane back. Leave the session as
-you found it.
+### Test against a throwaway session, not the user's
+
+**Do not attach the app to a real moomux session to try something out.** Those are live agent
+sessions someone is working in: attaching resizes them, synthetic keystrokes land in an agent's
+prompt box, and a split or a kill is not yours to make. Stand up an isolated one instead — both the
+config and the session store honour `XDG_CONFIG_HOME`, so a scratch core sees only what you give
+it, and the real one is untouched:
+
+```sh
+rm -rf /tmp/mmxtest && mkdir -p /tmp/mmxtest/moomux /tmp/mmxtest/wt
+tmux new-session -d -s cmtest -x 120 -y 40 && tmux split-window -h -t cmtest
+
+cat > /tmp/mmxtest/moomux/config.toml <<'EOF'
+[projects.testproj]
+repo = "/tmp/mmxtest/wt"
+EOF
+
+cat > /tmp/mmxtest/moomux/sessions.json <<'EOF'
+{"version":1,"sessions":{"testproj:panes":{
+  "id":"testproj:panes","project":"testproj","name":"scratch","branch":"test/panes",
+  "worktree_path":"/tmp/mmxtest/wt","tmux_session":"cmtest",
+  "created_at":"2026-09-02T12:00:00Z","last_opened":"0001-01-01T00:00:00Z"}}}
+EOF
+
+XDG_CONFIG_HOME=/tmp/mmxtest moomux serve -socket /tmp/mmx2.sock &
+make dev ARGS="--socket /tmp/mmx2.sock"
+```
+
+The session record is hand-written on purpose: nothing has to exist for it but a directory and a
+tmux session of that name, so you can build any layout you want to test — four panes, two windows,
+a zoomed pane — in seconds. Tear down with `tmux kill-session -t cmtest && rm -rf /tmp/mmxtest`.
+
+If you ever do have to touch a real session, **type into the shell pane, never the agent pane** —
+text at a `zsh` prompt is harmless and erasable, text in an agent's prompt box is not. Select it
+first (`tmux select-pane -t $S.2`), check with `capture-pane`, clear the line with `C-u`, and put
+the active pane back. Leave it as you found it.
 
 **Synthetic key events need a real event source.** `CGEvent(keyboardEventSource: nil, …)` silently
 drops modifier flags, so a scripted `C-b` arrives as a bare `b` and whatever you are testing looks
@@ -253,9 +284,21 @@ to fix in Go, not a reason to link the core.
   the bug; an idle shell pane just stays black, which is how it was found. Paint on the first
   `sizeChanged`, never at registration.
 - **`getOptimalFrameSize()` reports the terminal's *current* cols, which lag a resize**, so
-  deriving a cell size from it inside `sizeChanged` is short by a column's worth and every pane
-  comes out one column narrow. The container divided by tmux's own grid is the self-consistent
-  measure, and its rounding error can only make a pane a hair *wide*, which is harmless.
+  deriving a cell size from it inside `sizeChanged` is short by a column's worth. The container
+  divided by tmux's own grid is the self-consistent measure, and its rounding error can only make a
+  pane a hair *wide*, which is harmless.
+- **Every SwiftTerm view silently reserves ~17pt of its width for a scroller.** In 1.20.0
+  `reservedScrollerWidth` is `scroller?.isHidden == true ? 0 : scrollerWidth` — it ignores
+  `scrollerStyle`, and nothing in the library ever hides the scroller. `getEffectiveWidth` takes it
+  off before dividing by the cell width, so it is noise in a wide ruler (156 columns either way)
+  and a **whole column** in a half-width pane. That is what "lines wrap when they shouldn't" looks
+  like. `NoScrollerTerminalView` hides it; every terminal view here must inherit from it, or the
+  ruler and the panes disagree about how many cells fit.
+- **Read the dependency's source from `.build/checkouts/`, not a fresh clone.** The scroller bug
+  above cost an extra round because the property was read from SwiftTerm's `main`, where it *does*
+  check `scrollerStyle` and setting `.overlay` would have been enough. The pinned version behaves
+  differently. `git clone --branch <tag>` also falls back to the default branch if the tag is
+  missing, silently giving you the wrong source.
 - **SwiftTerm marks most overrides `public`, not `open`** — `keyDown` cannot be overridden from
   this module, `mouseDown` and `viewDidMoveToWindow` can.
 - **`capture-pane` returns logical lines, not screen rows**, so a repainted pane wraps long lines
@@ -286,6 +329,12 @@ to fix in Go, not a reason to link the core.
 
 Decisions, not oversights. Don't "fix" these without being asked.
 
+- **tmux's prefix key does not work in control mode, and cannot.** Keystrokes reach a pane through
+  `send-keys -t %id`, which writes straight to that pane's pty, so tmux never sees `C-b` and every
+  prefix binding is dead — `C-b o` types a literal `o`. Verified. iTerm2's tmux integration has the
+  same property. The replacement is the **Pane menu** (⌘] / ⌘[ / ⌘D / ⌘⇧D / ⌘⇧↵), which issues
+  `select-pane`, `split-window` and `resize-pane -Z` as commands. Anything else tmux can do is a
+  one-line method on `TmuxControlClient` away; the plain attach is the fallback for muscle memory.
 - **Control mode is the default; the plain attach is the escape hatch.** The "Native panes" toggle
   switches between them and is not persisted between runs. Keep the plain path working — it is one
   `if` in `SessionDetail`, it costs nothing, and it is the fallback for anything control mode
