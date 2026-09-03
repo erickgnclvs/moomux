@@ -131,7 +131,11 @@ The session record is hand-written on purpose: nothing has to exist for it but a
 tmux session of that name, so you can build any layout you want to test — four panes, two windows,
 a zoomed pane — in seconds. Tear down with `tmux kill-session -t cmtest && rm -rf /tmp/mmxtest`.
 
-Two things to know about that scratch home:
+Three things to know about that scratch home:
+
+- **`moomux serve` caches `config.toml` in process.** Editing it and waiting for the app's 2s poll
+  changes nothing — restart the core. `sessions.json` is the opposite: re-read per request, which is
+  what makes "unknown session" reproducible by deleting an entry under a running server.
 
 - **`XDG_CONFIG_HOME` isolates more than moomux.** `gh` keeps its credentials in
   `$XDG_CONFIG_HOME/gh`, so the core's `PRStatus` silently comes back "unknown" — the scratch home
@@ -361,6 +365,15 @@ to fix in Go, not a reason to link the core.
   command. So the handler patches the name in the `windows` array in place, guarded on the name
   actually differing, rather than re-running `list-windows`: unguarded it is a round trip and a full
   view re-render per command typed in any window of the session.
+- **The Dock badge is not free of authorization.** `NSDockTile.badgeLabel` looks like a plain
+  property and reads like the fallback for when notifications are denied, but macOS silently drops
+  it unless the app holds the **badge** permission — System Settings → Notifications has to say
+  "Badges", not just "Sounds, Desktop". Requesting `[.alert, .sound]` and assigning `badgeLabel`
+  gives you a bare Dock icon and no error anywhere. `Notifier` asks for `.badge` too, and asks in
+  `init` rather than at the first banner: a session already waiting when the app opens sets the
+  badge without ever being a *transition*, so no banner would have done the asking. The answer is
+  sticky per bundle id, so a build that already earned an alert-only grant keeps it — flip Badges on
+  by hand, or reset the app in System Settings, before deciding the code is wrong.
 - **`center.add` returns no error while authorization is denied.** Measured: status denied, `add`
   err nil, nothing on screen. A missing banner gives you no signal at all, and denial is *sticky*
   per bundle identifier — quitting while the prompt is up is enough to earn it permanently. Read
@@ -423,8 +436,8 @@ Decisions, not oversights. Don't "fix" these without being asked.
   is a sectioned `List`, and `onMove` wants index sets over a bound array, so ⌃⌘↑/↓ is the whole
   feature for a day less work.
 - **The New Session sheet asks three questions: project, name, first prompt.** The TUI's dialog asks
-  thirteen. Agent, model, thinking level, base branch, "resume this existing branch", dangerous mode,
-  ticket/PR and auto-submit are all left to the core, which already defaults every one of them from
+  thirteen. Agent, model, thinking level, base branch, "resume this existing branch",
+  ticket/PR and auto-submit are all left to the core, which defaults them from
   the project's config — and the picker-shaped ones cannot be offered without a second copy of
   `internal/tui`'s `agentNames` / `thinkingNamesFor` / `modelNamesFor` tables living on this side of
   the socket, to drift silently the next time Go gains an agent. **The rule for growing this form is
@@ -432,6 +445,13 @@ Decisions, not oversights. Don't "fix" these without being asked.
   it today); a field the app can fill from `Config` or from free text is fair game, one that needs a
   hard-coded table is not. Ticket and PR are a Tags sheet away a second later. `open_terminal` is
   deliberately unset, so a new session lands in the sidebar rather than in iTerm.
+  **`dangerous` is the exception and the app has to send it**: `App.CreateSession` takes it as a
+  plain `bool` and hands it straight to `buildAgentCmd`, with no fallback to `proj.Dangerous` — the
+  defaulting lives in `internal/tui/update.go`, not in the core. Leaving it unset created sessions in
+  a `dangerous = true` project *without* `--dangerously-skip-permissions`, so the same project's
+  agents behaved differently depending on which front end made them. `AppState.create` reads it off
+  `Config` before the call. Anything else added here needs the same check: "the core defaults it" is
+  true of most fields and not of all of them.
 - **A slow write reports in the toolbar, not in its sheet.** `AppState.busy` is set by `mutate` for
   every action and rendered by `ConnectionBadge`, so the New Session sheet closes on Create rather
   than sitting there for the tens of seconds a worktree plus the worktree-create userscripts take.
@@ -450,7 +470,11 @@ Decisions, not oversights. Don't "fix" these without being asked.
   round trip, and it keeps project order and emoji fresh with no invalidation logic.
 - **Review happens in a tmux window, not in a patch viewer.** "Review Changes" runs
   `new-window -n review` in the session with `git diff --merge-base <base>` plus a
-  `git status --short --branch`, and leaves a shell behind (`AppState.reviewScript`). A native
+  `git status --short --branch`, and leaves a shell behind (`AppState.reviewScript`). Reviewing
+  twice reuses that window (`respawn-window -k`, then `select-window`; `new-window` only when there
+  is nothing to reuse) — two tabs both called "review" with nothing to tell them apart is worse than
+  either. `respawn-window` and not kill-then-create, because killing the last window of a session
+  kills the session. A native
   viewer was designed and rejected: ~400 lines across two languages — a new `gitwt.Diff`, an
   `App.Diff`, a `Patch` field on `ipc.Result`, a `Server` hook, a `main.go` line and a two-pane
   SwiftUI sheet — to end up a *worse* pager than the shell pane this app already renders natively,

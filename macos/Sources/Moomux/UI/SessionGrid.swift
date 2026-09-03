@@ -88,26 +88,20 @@ private struct SessionTile: View {
 
 /// `Process` blocks, same rule as every `MoomuxClient` call. A GUI app has
 /// launchd's `PATH`, so tmux comes from `ToolPath` and never from a bare name.
+///
+/// No `-e`, unlike the control-mode repaint: `TmuxSnapshot.screen` cuts rows by
+/// character count, and SGR escapes are characters that occupy no columns, so
+/// keeping colour would cut every coloured row short.
 private func capture(session: String) async -> [String] {
     guard !session.isEmpty, let tmux = ToolPath.find("tmux") else { return [] }
-    let argv = TmuxSnapshot.captureArgv(session: session)
     return await Task.detached(priority: .utility) { () -> [String] in
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: tmux)
-        process.arguments = argv
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return [] }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
         // A session can die between the poll and the capture. Nothing captured
         // leaves the tile showing its last snapshot, which is the same instinct
         // as `AppState.refresh` keeping the last good list: a failed call must
         // not read as "empty".
-        guard process.terminationStatus == 0 else { return [] }
-        return String(decoding: data, as: UTF8.self)
-            .split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard let out = try? ToolPath.run(tmux, ["capture-pane", "-p", "-t", session])
+        else { return [] }
+        return out.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     }.value
 }
 
@@ -118,15 +112,36 @@ private func capture(session: String) async -> [String] {
 private struct SnapshotTerminal: NSViewRepresentable {
     let rows: [String]
 
+    /// A terminal that cannot be clicked, so the tile underneath can be.
+    ///
+    /// The snapshot covers ~85% of a tile, and `MacTerminalView.mouseDown`
+    /// swallows a click without forwarding it — the same thing `PaneTerminalView`
+    /// exists to override. SwiftUI's `.allowsHitTesting(false)` does **not**
+    /// reach it (measured: the tap still never fired): the view is a real
+    /// `NSView` in the AppKit hierarchy and the click is resolved by
+    /// `NSView.hitTest` before SwiftUI is consulted. Refusing there is what
+    /// makes "click a tile to open it" true, and it also keeps the terminal
+    /// from stealing first responder from the sidebar list, which is what
+    /// silently killed arrow-key navigation.
+    private final class SnapshotTerminalView: NoScrollerTerminalView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
     func makeNSView(context: Context) -> TerminalView {
-        let view = NoScrollerTerminalView(frame: .init(x: 0, y: 0, width: 400, height: 200))
+        let view = SnapshotTerminalView(frame: .init(x: 0, y: 0, width: 400, height: 200))
         view.terminalDelegate = context.coordinator
         view.font = .monospacedSystemFont(ofSize: 9, weight: .regular)
         context.coordinator.view = view
         return view
     }
 
+    /// Guarded on the rows actually differing. `AppState` is `@Observable` and
+    /// fires on any assignment, so a tile's body re-runs on every poll and every
+    /// watcher tick — about once a second — while a capture only arrives every
+    /// five. Unguarded, each tile re-feeds a whole screen into SwiftTerm five
+    /// times per snapshot for nothing.
     func updateNSView(_ view: TerminalView, context: Context) {
+        guard context.coordinator.rows != rows else { return }
         context.coordinator.rows = rows
         context.coordinator.repaint()
     }

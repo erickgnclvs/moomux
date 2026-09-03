@@ -19,6 +19,15 @@ public final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         center = Bundle.main.bundleIdentifier == nil ? nil : .current()
         super.init()
         center?.delegate = self
+        // Asked once at startup rather than at the first banner. `.badge` is the
+        // reason it cannot wait: macOS suppresses `NSDockTile.badgeLabel`
+        // entirely for an app whose badge permission is off, and a session that
+        // is *already* waiting when the app opens sets the badge without ever
+        // being a transition, so no banner would ever have asked. After the
+        // first answer the system returns it without prompting again.
+        if let center {
+            Task { _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge]) }
+        }
     }
 
     /// Post for every session that just *became* blocked; clear the banner for
@@ -44,14 +53,9 @@ public final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         // Identifier = session id: a re-post replaces rather than stacks, and
         // it is how a tap finds its way back to a session.
         let request = UNNotificationRequest(identifier: session.id, content: content, trigger: nil)
-        Task {
-            // Asked every time rather than tracked in a flag: after the first
-            // answer the system returns it without prompting, so this is "ask
-            // when it first matters" with no state to keep.
-            guard (try? await center.requestAuthorization(options: [.alert, .sound])) == true
-            else { return }
-            try? await center.add(request)
-        }
+        // No authorization check here: `add` returns no error while denied, so
+        // there is nothing to learn from asking. `init` did the asking.
+        Task { try? await center.add(request) }
     }
 
     // MARK: Tapping a banner

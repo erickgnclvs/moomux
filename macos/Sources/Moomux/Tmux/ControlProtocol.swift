@@ -179,15 +179,6 @@ public func hexKeys(_ bytes: some Sequence<UInt8>) -> String {
 /// size until it was closed.
 public enum TmuxSnapshot {
 
-    /// argv for capturing a session's active pane.
-    ///
-    /// No `-e`, unlike the control-mode repaint: `screen(from:columns:)` cuts
-    /// rows by character count, and SGR escapes are characters that occupy no
-    /// columns, so keeping colour would cut every coloured row short.
-    public static func captureArgv(session: String) -> [String] {
-        ["capture-pane", "-p", "-t", session]
-    }
-
     /// Rows **truncated** to `columns`, framed with home+clear so a repaint
     /// replaces the screen rather than appending, CRLF-joined because a bare LF
     /// only moves down a row.
@@ -216,9 +207,6 @@ public enum TmuxSnapshot {
                "the blank rows below a pane's cursor would scroll the tile empty")
         // A tile whose terminal has not been sized yet must not trap.
         assert(screen(from: ["ab"], columns: -1).hasSuffix("[2J"))
-        assert(captureArgv(session: "moomux-x-ab12")
-            == ["capture-pane", "-p", "-t", "moomux-x-ab12"],
-               "no -e: colour escapes would break the character count")
     }
 }
 
@@ -251,6 +239,10 @@ public enum TmuxProtocolChecks {
         assert(p.parse(line: "%window-renamed @5 my session name")
             == .windowRenamed(window: "@5", name: "my session name"))
         assert(p.parse(line: "%window-add @9") == .windowAdd(window: "@9"))
+        // The branch that clears `windowID`. A wrong field index parses to ""
+        // rather than throwing, and the view then sits on a window that no
+        // longer exists with a dead tab in the bar.
+        assert(p.parse(line: "%window-close @9") == .windowClose(window: "@9"))
         assert(p.parse(line: "%exit") == .exit(reason: nil))
         assert(p.parse(line: "%exit server exited") == .exit(reason: "server exited"))
         assert(p.parse(line: "%sessions-changed") == .unhandled("%sessions-changed"))

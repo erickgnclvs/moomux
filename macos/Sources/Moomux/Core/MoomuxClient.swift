@@ -216,13 +216,15 @@ public final class MoomuxClient: Sendable {
     /// Returns the new session plus the server's hint — the userscripts'
     /// warnings and "attach with: tmux attach -t …", which is guidance.
     ///
-    /// Only `project` and `name` go over the wire. Agent, model, thinking
-    /// level, base branch, an existing branch to resume and dangerous mode are
-    /// all left unset so the core applies the project's own defaults; see
-    /// `AppState.create` for why none of them are offered here. `open_terminal`
-    /// stays unset too: this app attaches sessions itself.
-    public func createSession(project: String, name: String) throws -> (Session, String) {
-        let result = try call("CreateSession", Args(name: name, project: project))
+    /// Agent, model, thinking level, base branch and an existing branch to
+    /// resume are left unset so the core applies the project's own defaults;
+    /// see `AppState.create` for why none of them are offered here, and for why
+    /// `dangerous` is the one the caller has to supply. `open_terminal` stays
+    /// unset too: this app attaches sessions itself.
+    public func createSession(project: String, name: String,
+                              dangerous: Bool) throws -> (Session, String) {
+        let result = try call("CreateSession",
+                              Args(name: name, project: project, dangerous: dangerous))
         guard let session = result.session else { throw Failure.emptyResponse }
         return (session, result.hint ?? "")
     }

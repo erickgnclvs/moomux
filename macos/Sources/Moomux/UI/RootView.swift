@@ -76,6 +76,11 @@ struct RootView: View {
             }
         }
         .task { app.start() }
+        // A hint is what the *last action* had to say, and it is rendered in a
+        // session's Info pane. Nothing else clears it, so without this an
+        // "Opened a review window in moomux-a-1f2e." stays pinned under session
+        // B indefinitely, describing something that happened to session A.
+        .onChange(of: app.selectedSessionID) { _, _ in app.hint = nil }
         // Every modal hangs off the root, not off a row: the Session menu can
         // fire any of them with no row on screen at all.
         .sheet(item: $app.sheet) { sheet in
@@ -124,7 +129,12 @@ struct RootView: View {
         let base = "Kills tmux, removes the worktree at \(session.worktreePath), "
             + "and deletes the branch if moomux made it."
         let changes = app.statuses[session.id]?.changeSummary ?? ""
-        return changes.isEmpty ? base : "\(changes.capitalized). \(base)"
+        // First letter only. `.capitalized` title-cases every word, so the
+        // server's "2 files changed, 2 commits unpushed" came out as "2 Files
+        // Changed, 2 Commits Unpushed" — visibly not the same sentence the
+        // detail pane shows.
+        guard !changes.isEmpty else { return base }
+        return "\(changes.prefix(1).uppercased())\(changes.dropFirst()). \(base)"
     }
 }
 
@@ -152,6 +162,10 @@ private struct NewSessionSheet: View {
                     .lineLimit(3...6)
             }
             .formStyle(.grouped)
+            // An empty `TextField` in a grouped Form draws no box at all, so a
+            // blank field reads as a static label — the multi-line prompt field
+            // as a large blank void. A border is the whole fix.
+            .textFieldStyle(.roundedBorder)
             Text("Agent, model and branch come from the project's settings. "
                  + "The TUI's dialog is still the place to override them.")
                 .font(.caption)
@@ -200,6 +214,9 @@ private struct TextFieldSheet: View {
                 }
             }
             .formStyle(.grouped)
+            // Without a border an empty field is invisible: the Tags sheet with
+            // both fields blank looks like two static rows saying "Ticket" and "PR".
+            .textFieldStyle(.roundedBorder)
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
@@ -264,6 +281,14 @@ private struct SessionRow: View {
                     .truncationMode(.middle)
             }
             Spacer(minLength: 4)
+            // Archived rows are only on screen because the Archived toggle is
+            // on, and without this they are indistinguishable from live ones —
+            // the toggle changes the list and nothing says which rows it added.
+            if session.archived {
+                Image(systemName: "archivebox")
+                    .foregroundStyle(.tertiary)
+                    .help("archived")
+            }
             // A dead tmux session still has a worktree and still shows here —
             // the dot is the difference between "parked" and "gone".
             if !app.isAlive(session) {

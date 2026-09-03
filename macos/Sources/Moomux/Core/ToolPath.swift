@@ -61,6 +61,36 @@ public enum ToolPath {
         return FileManager.default.isExecutableFile(atPath: path)
     }
 
+    /// Runs a tool to completion and hands back its stdout, throwing whatever it
+    /// said on stderr — so a tmux refusal ("can't find session") reaches the
+    /// alert in tmux's own words. `Failure.server` is simply the one error type
+    /// here that carries a message.
+    ///
+    /// Blocking, like every `MoomuxClient` call: run it off the main actor.
+    /// stdout is drained before the wait because a full pipe buffer would
+    /// deadlock; stderr is read after, which would deadlock in turn if a tool
+    /// ever wrote 64KB of complaints — tmux and git do not.
+    @discardableResult
+    public static func run(_ path: String, _ args: [String]) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = args
+        let out = Pipe(), errors = Pipe()
+        process.standardOutput = out
+        process.standardError = errors
+        try process.run()
+        let stdout = out.fileHandleForReading.readDataToEndOfFile()
+        let stderr = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw MoomuxClient.Failure.server(
+                stderr.isEmpty ? "\(URL(fileURLWithPath: path).lastPathComponent) exited "
+                    + "\(process.terminationStatus)" : stderr)
+        }
+        return String(decoding: stdout, as: UTF8.self)
+    }
+
     // MARK: Checks
 
     public static func demo() {

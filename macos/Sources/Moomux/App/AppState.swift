@@ -250,8 +250,11 @@ public final class AppState {
         if statusError != message { statusError = message }
     }
 
-    /// Free, needs no authorization, and the whole fallback if notifications
-    /// are denied. `nil` rather than "0" — a zero badge is still a badge.
+    /// The quiet half of the notification surface: no sound, no banner, just a
+    /// count that is there when you look. It is **not** free of authorization —
+    /// macOS drops `badgeLabel` on the floor unless the app has the badge
+    /// permission, which is why `Notifier` asks for `.badge` alongside `.alert`.
+    /// `nil` rather than "0" — a zero badge is still a badge.
     private func updateDockBadge() {
         let count = needsInputCount
         NSApp.dockTile.badgeLabel = count == 0 ? nil : "\(count)"
@@ -362,18 +365,27 @@ public final class AppState {
 
     /// Three fields, and that is the whole form.
     ///
-    /// Agent, model, thinking level, base branch, "resume this existing
-    /// branch", dangerous mode and auto-submit are all deliberately absent: the
-    /// core already defaults every one of them from the project's config, and
-    /// offering a picker for any of them means shipping a second copy of
-    /// `internal/tui`'s `agentNames` / `thinkingNamesFor` / `modelNamesFor`
-    /// tables on this side of the socket, to drift silently the next time the
-    /// Go side gains an agent. Add a control here when the core can hand over
-    /// the list it validates against — not before. The TUI is still the place
-    /// to create anything unusual.
+    /// Agent, model, thinking level, base branch, "resume this existing branch"
+    /// and auto-submit are all deliberately absent: the core defaults them from
+    /// the project's config, and offering a picker for any of them means
+    /// shipping a second copy of `internal/tui`'s `agentNames` /
+    /// `thinkingNamesFor` / `modelNamesFor` tables on this side of the socket,
+    /// to drift silently the next time the Go side gains an agent. Add a
+    /// control here when the core can hand over the list it validates against —
+    /// not before. The TUI is still the place to create anything unusual.
+    ///
+    /// `dangerous` is the exception, and it has to be sent: `App.CreateSession`
+    /// takes it as a plain `bool` and passes it straight to `buildAgentCmd`
+    /// with no fallback to the project — the defaulting lives in
+    /// `internal/tui/update.go`, not in the core. Leaving it unset would create
+    /// sessions in a `dangerous = true` project *without*
+    /// `--dangerously-skip-permissions`, so the same project's agents behave
+    /// differently depending on which front end made them.
     public func create(project: String, name: String, prompt: String) {
+        let dangerous = config?.projects[project]?.dangerous ?? false
         mutate("Creating session") { client in
-            let (session, hint) = try client.createSession(project: project, name: name)
+            let (session, hint) = try client.createSession(
+                project: project, name: name, dangerous: dangerous)
             guard !prompt.isEmpty else { return hint }
             // Recorded on the session as well as typed into the pane, so the
             // detail pane's "First prompt" has something to show. Best-effort,
@@ -412,14 +424,31 @@ public final class AppState {
             return
         }
         let base = config?.projects[session.project]?.baseBranch ?? "main"
-        let args = ["new-window", "-t", session.tmuxSession,
-                    "-c", session.worktreePath,
-                    // -n also turns automatic-rename off for the window, so the
-                    // tab keeps saying "review" and not "zsh".
-                    "-n", "review", AppState.reviewScript(base: base)]
+        let script = AppState.reviewScript(base: base)
+        let target = "\(session.tmuxSession):review"
+        let create = ["new-window", "-t", session.tmuxSession,
+                      "-c", session.worktreePath,
+                      // -n also turns automatic-rename off for the window, so the
+                      // tab keeps saying "review" and not "zsh".
+                      "-n", "review", script]
+        // Reviewing twice reuses the window rather than stacking a second one
+        // called "review" with nothing to tell it from the first — the old one
+        // holds a finished diff, which is exactly what is being replaced.
+        // `respawn-window` and not kill-then-create: killing the last window of
+        // a session kills the session. It does not select, hence the second
+        // command; `new-window` does.
+        let reuse = ["respawn-window", "-k", "-t", target,
+                     "-c", session.worktreePath, script]
         Task {
             do {
-                try await withoutBlockingTheUI { try runTool(tmux, args) }
+                try await withoutBlockingTheUI {
+                    do {
+                        try ToolPath.run(tmux, reuse)
+                        try ToolPath.run(tmux, ["select-window", "-t", target])
+                    } catch {
+                        try ToolPath.run(tmux, create)  // no review window yet
+                    }
+                }
                 hint = "Opened a review window in \(session.tmuxSession)."
             } catch {
                 failed("Review", error)
@@ -499,25 +528,4 @@ private func withoutBlockingTheUI<T: Sendable>(
     _ work: @Sendable @escaping () throws -> T
 ) async throws -> T {
     try await Task.detached(priority: .userInitiated, operation: work).value
-}
-
-/// Runs a tool to completion and throws whatever it said on stderr, so a tmux
-/// refusal ("can't find session") reaches the alert in tmux's own words.
-/// `Failure.server` is just the one error type here that carries a message.
-private func runTool(_ path: String, _ args: [String]) throws {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: path)
-    process.arguments = args
-    let errors = Pipe()
-    process.standardError = errors
-    process.standardOutput = FileHandle.nullDevice
-    try process.run()
-    // Drained before the wait: a full pipe buffer would deadlock it.
-    let stderr = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    process.waitUntilExit()
-    guard process.terminationStatus == 0 else {
-        throw MoomuxClient.Failure.server(
-            stderr.isEmpty ? "tmux exited \(process.terminationStatus)" : stderr)
-    }
 }
