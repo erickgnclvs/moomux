@@ -56,29 +56,14 @@ type Watcher interface {
 	Run(ctx context.Context, out chan<- Snapshot)
 }
 
-// DirWatcher polls a directory of JSON session files (used by Claude and Codex).
+// DirWatcher watches a directory of JSON session files (used by Claude and
+// Codex) for changes. Run is implemented per-platform: dirwatcher_fsevents.go
+// (darwin) watches the directory for filesystem events instead of polling it
+// on a timer; dirwatcher_poll.go (everywhere else) ticks Interval (default
+// 2s) as before.
 type DirWatcher struct {
 	Dir      string
 	Interval time.Duration
-}
-
-// Run polls until ctx is canceled. Each tick produces one Snapshot on out.
-func (w *DirWatcher) Run(ctx context.Context, out chan<- Snapshot) {
-	interval := w.Interval
-	if interval == 0 {
-		interval = 2 * time.Second
-	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	w.tick(ctx, out)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			w.tick(ctx, out)
-		}
-	}
 }
 
 func (w *DirWatcher) tick(ctx context.Context, out chan<- Snapshot) {
