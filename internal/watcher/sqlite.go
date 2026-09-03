@@ -17,6 +17,16 @@ import (
 // sqlite3 CLI); an earlier OpenCodeWatcher was superseded by this generic
 // implementation. Query must return two columns: (path TEXT, updated_ms
 // INTEGER) where updated_ms is a Unix timestamp in milliseconds.
+//
+// Run is defined per-platform (sqlite_poll.go / sqlite_fsevents.go): unlike
+// DirWatcher, the periodic tick itself can't be replaced by filesystem
+// events even on darwin, because ActiveAge decay (Working -> Done once a
+// session has been quiet for a while) is a time-based transition with no
+// corresponding filesystem event. macOS instead watches the DB directory and
+// MarkerDir and fires an extra out-of-cycle tick on change, so a session
+// going busy (or a needs-input marker appearing) shows up immediately
+// instead of waiting out the rest of the current interval; the interval
+// itself is unchanged so decay is still caught on schedule.
 type SQLiteWatcher struct {
 	DB        string        // exact path or glob (e.g. ~/.codex/state_*.sqlite)
 	Query     string        // SELECT path_col, updated_ms_col FROM ... GROUP BY path_col
@@ -29,28 +39,6 @@ type SQLiteWatcher struct {
 	// last-snapshot-wins semantics mean combining them across separate
 	// snapshots would let whichever tick lands last clobber the other.
 	MarkerDir string
-}
-
-func (w *SQLiteWatcher) Run(ctx context.Context, out chan<- Snapshot) {
-	activeAge := w.ActiveAge
-	if activeAge == 0 {
-		activeAge = 10 * time.Second
-	}
-	interval := w.Interval
-	if interval == 0 {
-		interval = 2 * time.Second
-	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	w.tick(ctx, out, activeAge)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			w.tick(ctx, out, activeAge)
-		}
-	}
 }
 
 func (w *SQLiteWatcher) tick(ctx context.Context, out chan<- Snapshot, activeAge time.Duration) {
