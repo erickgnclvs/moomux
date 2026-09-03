@@ -68,6 +68,11 @@ struct PaneCommands: Commands {
                 .keyboardShortcut("d", modifiers: [.command, .shift])
             Button("Zoom Pane") { app.controlClient?.toggleZoom() }
                 .keyboardShortcut(.return, modifiers: [.command, .shift])
+            Divider()
+            Button("Next Window") { app.controlClient?.nextWindow() }
+                .keyboardShortcut("]", modifiers: [.command, .shift])
+            Button("Previous Window") { app.controlClient?.previousWindow() }
+                .keyboardShortcut("[", modifiers: [.command, .shift])
         }
     }
 }

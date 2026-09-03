@@ -19,9 +19,38 @@ struct ControlModeView: View {
     @State private var client: TmuxControlClient?
     @State private var layout: TmuxWindowLayout?
     @State private var activePane: String?
+    @State private var windows: [TmuxWindow] = []
     @State private var failure: String?
 
     var body: some View {
+        VStack(spacing: 0) {
+            // Only worth its vertical space once there is somewhere to go. The
+            // `CellRuler` sits inside the GeometryReader below, so whatever the
+            // bar costs is already off the size reported to tmux.
+            if windows.count > 1, let client {
+                Picker("Window", selection: Binding(
+                    get: { windows.first(where: \.active)?.id ?? "" },
+                    set: { client.selectWindow($0) })) {
+                    ForEach(windows) { window in
+                        Text("\(window.index): \(window.name)").tag(window.id)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                Divider()
+            }
+            panesArea
+        }
+        .onDisappear {
+            client?.stop()
+            client = nil
+            app.controlClient = nil
+        }
+    }
+
+    private var panesArea: some View {
         GeometryReader { geometry in
             ZStack {
                 if let client, let layout, layout.width > 0, layout.height > 0 {
@@ -50,11 +79,6 @@ struct ControlModeView: View {
                 .allowsHitTesting(false)
                 .opacity(0)
             }
-        }
-        .onDisappear {
-            client?.stop()
-            client = nil
-            app.controlClient = nil
         }
     }
 
@@ -97,6 +121,7 @@ struct ControlModeView: View {
         client.onLayoutChange = { [weak client] in
             layout = client?.layout
             activePane = client?.activePane
+            windows = client?.windows ?? []
         }
         client.onStatusChange = { status in
             if case let .exited(reason) = status {

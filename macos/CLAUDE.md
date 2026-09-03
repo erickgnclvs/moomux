@@ -7,7 +7,8 @@ everything outside `macos/`.
 
 Today it lists sessions, streams their live agent state, shows detail, banners and dock-badges the
 ones that start waiting on you, attaches a session's tmux inside the app — by default over tmux
-**control mode**, with each pane in its own native view, and optionally as one plain `tmux attach`
+**control mode**, with each pane in its own native view and the session's windows as tabs, and
+optionally as one plain `tmux attach`
 — and hands a session to the user's terminal. Every write path beyond `OpenSession` is still
 missing.
 
@@ -347,6 +348,16 @@ to fix in Go, not a reason to link the core.
   does a bundle sitting under `/tmp` — no prompt, same error, both measured. `.build/Moomux.app`
   opened by `make dev` is fine, and so is `~/Applications`. That error is very easy to misread as
   "ad-hoc signing doesn't work" (it isn't — see the signing bullet below).
+- **Clicking a window tab moves the session, not just our view.** `select-window` sets the
+  *session's* current window, and every client attached to it follows — the user's iTerm and phone
+  jump to whatever tab was clicked here. Same class as the shared-size trap above and just as
+  unfixable client-side: a control-mode client has no private notion of "which window I am looking
+  at". It is the price of the tab bar, not a bug in it.
+- **`%window-renamed` fires far more often than a window is renamed.** With tmux's automatic-rename
+  on (the default), it arrives every time a window's foreground command changes — once per shell
+  command. So the handler patches the name in the `windows` array in place, guarded on the name
+  actually differing, rather than re-running `list-windows`: unguarded it is a round trip and a full
+  view re-render per command typed in any window of the session.
 - **`center.add` returns no error while authorization is denied.** Measured: status denied, `add`
   err nil, nothing on screen. A missing banner gives you no signal at all, and denial is *sticky*
   per bundle identifier — quitting while the prompt is up is enough to earn it permanently. Read
@@ -379,9 +390,13 @@ Decisions, not oversights. Don't "fix" these without being asked.
   switches between them and is not persisted between runs. Keep the plain path working — it is one
   `if` in `SessionDetail`, it costs nothing, and it is the fallback for anything control mode
   renders badly.
-- **Control mode shows one window's panes, not tabs.** tmux windows exist in the protocol
-  (`%window-add`, `%window-close`) and are not surfaced; switching windows inside tmux follows
-  along, but there is no tab bar.
+- **The window tab bar switches windows and nothing else.** No new/close/rename affordance and no
+  ⌘1–⌘9: tmux windows in a moomux session are made by the user's own workflow, and the bar exists to
+  see and reach them. It is hidden entirely at one window, and it does not scroll or overflow — a
+  segmented picker squeezes, and a session with enough windows to need scrolling is not a session
+  this app is the right front end for. Pane views are also not cached per window: leaving a window
+  dismantles its `PaneView`s and returning repaints them from `capture-pane`, which is the same
+  first-paint path an attach uses and costs one round trip.
 - **Scrollback is restored once, on a pane's first paint, and never refreshed.** `capture-pane -S
   -1000` feeds history plus the visible screen into SwiftTerm's own scroll buffer; later repaints
   (every `sizeChanged`, i.e. every frame of a window drag) are visible-only, because re-streaming

@@ -22,6 +22,7 @@ public enum TmuxEvent: Equatable {
     case sessionWindowChanged(window: String)
     case windowPaneChanged(window: String, pane: String)
     case windowRenamed(window: String, name: String)
+    case windowAdd(window: String)
     case windowClose(window: String)
     /// The client is going away — detached, session killed, or an error.
     case exit(reason: String?)
@@ -81,6 +82,8 @@ public struct TmuxLineParser {
         case "%window-renamed":
             let (window, name) = split(rest)
             return .windowRenamed(window: window, name: name)
+        case "%window-add":
+            return .windowAdd(window: field(rest, 0))
         case "%window-close":
             return .windowClose(window: field(rest, 0))
         case "%exit":
@@ -99,6 +102,26 @@ public struct TmuxLineParser {
     private func field(_ line: String, _ index: Int) -> String {
         let parts = line.split(separator: " ", omittingEmptySubsequences: false)
         return index < parts.count ? String(parts[index]) : ""
+    }
+}
+
+/// One tmux window, as `list-windows` describes it.
+public struct TmuxWindow: Equatable, Identifiable {
+    public var id: String       // "@1"
+    public var index: Int       // tmux's own numbering, which is what the user sees
+    public var name: String
+    public var active: Bool
+    public var layout: String
+
+    /// Parses `#{window_id} #{window_active} #{window_index} #{window_layout} #{window_name}`.
+    /// The name comes last because it is the only field that can contain spaces.
+    public static func parse(_ lines: [String]) -> [TmuxWindow] {
+        lines.compactMap { line in
+            let f = line.split(separator: " ", maxSplits: 4, omittingEmptySubsequences: false)
+            guard f.count == 5, let index = Int(f[2]) else { return nil }
+            return TmuxWindow(id: String(f[0]), index: index, name: String(f[4]),
+                              active: f[1] == "1", layout: String(f[3]))
+        }
     }
 }
 
@@ -176,6 +199,7 @@ public enum TmuxProtocolChecks {
             == .windowPaneChanged(window: "@5", pane: "%12"))
         assert(p.parse(line: "%window-renamed @5 my session name")
             == .windowRenamed(window: "@5", name: "my session name"))
+        assert(p.parse(line: "%window-add @9") == .windowAdd(window: "@9"))
         assert(p.parse(line: "%exit") == .exit(reason: nil))
         assert(p.parse(line: "%exit server exited") == .exit(reason: "server exited"))
         assert(p.parse(line: "%sessions-changed") == .unhandled("%sessions-changed"))
@@ -208,5 +232,16 @@ public enum TmuxProtocolChecks {
 
         assert(hexKeys([0x03]) == "03")
         assert(hexKeys(Array("hi".utf8)) == "68 69")
+
+        // list-windows rows. The layout is fixed-shape, the name is the tail.
+        let ws = TmuxWindow.parse([
+            "@1 1 0 2a71,100x30,0,0,955 my window",
+            "@2 0 3 367d,100x30,0,0,956 zsh",
+            "garbage"])
+        assert(ws.count == 2, "a malformed row is dropped, not fatal")
+        assert(ws[0] == TmuxWindow(id: "@1", index: 0, name: "my window",
+                                   active: true, layout: "2a71,100x30,0,0,955"),
+               "\(ws[0])")
+        assert(ws[1].index == 3 && !ws[1].active)
     }
 }

@@ -35,6 +35,8 @@ public final class TmuxControlClient {
     /// The active window's panes, in cells. nil until the first layout arrives.
     public private(set) var layout: TmuxWindowLayout?
     public private(set) var activePane: String?
+    /// Every window in the session, for the tab bar. Empty until the first list.
+    public private(set) var windows: [TmuxWindow] = []
 
     public var onStatusChange: (Status) -> Void = { _ in }
     public var onLayoutChange: () -> Void = {}
@@ -153,22 +155,38 @@ public final class TmuxControlClient {
 
         case let .sessionWindowChanged(window):
             windowID = window
-            refreshLayout()
+            refreshWindows()
 
         case let .windowPaneChanged(window, pane):
             guard window == windowID else { return }
             activePane = pane
             onLayoutChange()
 
+        case .windowAdd:
+            refreshWindows()
+
         case let .windowClose(window):
-            // The window we were showing is gone; follow the session to
-            // whatever it moved to.
-            if window == windowID { refreshLayout() }
+            // Always: the tab has to go whichever window closed. If it was the
+            // one we were showing, dropping the id makes the refresh fall
+            // through to whatever the session moved to.
+            if window == windowID { windowID = nil }
+            refreshWindows()
+
+        case let .windowRenamed(window, name):
+            // Patched in place rather than re-listed: with automatic-rename on,
+            // tmux fires this every time a window's foreground command changes,
+            // and a list-windows round trip per shell command is not a thing to
+            // do. Guarded on a real change for the same reason `@Observable`
+            // writes are — this fires far more often than the name moves.
+            guard let i = windows.firstIndex(where: { $0.id == window }),
+                  windows[i].name != name else { break }
+            windows[i].name = name
+            onLayoutChange()
 
         case let .exit(reason):
             status = .exited(reason)
 
-        case .windowRenamed, .unhandled:
+        case .unhandled:
             break
         }
 
@@ -178,7 +196,7 @@ public final class TmuxControlClient {
             ready = true
             status = .attached
             applySize()
-            refreshLayout()
+            refreshWindows()
         }
     }
 
@@ -190,17 +208,21 @@ public final class TmuxControlClient {
         process.send(data: ArraySlice(Array((command + "\n").utf8)))
     }
 
-    private func refreshLayout() {
-        send("list-windows -F \"#{window_id} #{window_active} #{window_layout}\"") {
+    private func refreshWindows() {
+        send("list-windows -F \"#{window_id} #{window_active} #{window_index} "
+            + "#{window_layout} #{window_name}\"") {
             [weak self] lines, isError in
             guard let self, !isError else { return }
+            let rows = TmuxWindow.parse(lines)
+            // Published before the guard below, and on its own: a window added
+            // or closed elsewhere changes the tab bar even when the layout we
+            // are drawing is untouched, and nothing further down would fire.
+            if rows != self.windows {
+                self.windows = rows
+                self.onLayoutChange()
+            }
             // Prefer the window we are already showing; otherwise the session's
             // active one.
-            let rows = lines.compactMap { line -> (id: String, active: Bool, layout: String)? in
-                let parts = line.split(separator: " ", maxSplits: 2).map(String.init)
-                guard parts.count == 3 else { return nil }
-                return (parts[0], parts[1] == "1", parts[2])
-            }
             guard let row = rows.first(where: { $0.id == self.windowID })
                 ?? rows.first(where: \.active) else { return }
             self.windowID = row.id
@@ -234,7 +256,7 @@ public final class TmuxControlClient {
         send("refresh-client -C \(size.cols)x\(size.rows)")
         // tmux does not always volunteer a %layout-change for a resize we asked
         // for ourselves, and the panes are wrong until the layout catches up.
-        refreshLayout()
+        refreshWindows()
     }
 
     public func sendKeys(_ bytes: ArraySlice<UInt8>, to pane: String) {
@@ -265,6 +287,37 @@ public final class TmuxControlClient {
         guard pane != activePane else { return }
         activePane = pane
         send("select-pane -t \(pane)")
+    }
+
+    // MARK: Window commands
+
+    /// Switching the tab switches the *session's* current window, so every
+    /// other client attached to it follows — the same shared-state deal as the
+    /// window size, and just as unfixable from here.
+    public func selectWindow(_ id: String) {
+        guard id != windowID else { return }
+        // Optimistic, so the segment moves under the click rather than a round
+        // trip later; the refresh is what makes it true.
+        windowID = id
+        windows = windows.map { var w = $0; w.active = w.id == id; return w }
+        onLayoutChange()
+        send("select-window -t \(id)")
+        refreshWindows()
+    }
+
+    public func nextWindow() { step(":+") }
+    public func previousWindow() { step(":-") }
+
+    /// `windowID` has to be dropped first: the refresh prefers the window we
+    /// are already showing, so keeping it would land us straight back on the
+    /// one we just stepped off.
+    private func step(_ target: String) {
+        windowID = nil
+        send("select-window -t \(sessionName)\(target)")
+        // tmux also answers with %session-window-changed, which relayouts on
+        // its own — but commands are ordered, so asking outright costs one
+        // round trip and does not depend on the notification arriving.
+        refreshWindows()
     }
 
     // MARK: Pane views

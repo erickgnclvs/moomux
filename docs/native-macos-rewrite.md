@@ -233,12 +233,13 @@ class of thing, not for the protocol.
 
 Next, in the order they are worth doing:
 
-1. **Windows as tabs.** `%window-add` / `%window-close` / `%window-renamed` already arrive and are
-   parsed; nothing surfaces them. This is the cheapest remaining win.
-2. **Scrollback.** Panes paint from `capture-pane` of the visible screen only. tmux's copy-mode
-   works through the keyboard, but native scrolling needs history.
-3. **Then §5's payoff features** — notifications, diff review, the multi-session grid — which is
-   the actual reason for any of this.
+1. ~~**Windows as tabs.**~~ Done. Cheap as predicted, though the claim above that `%window-add`
+   "already arrives and is parsed" was wrong — it was reaching `.unhandled`, and the discovery
+   actually piggybacks on the `list-windows` call the layout code already made.
+2. ~~**Scrollback.**~~ Done: a pane's first paint restores `capture-pane -S -1000` into SwiftTerm's
+   own scroll buffer. Later repaints stay visible-only.
+3. **Then §5's payoff features** — notifications (done), diff review, the multi-session grid —
+   which is the actual reason for any of this.
 
 Concretely:
 
