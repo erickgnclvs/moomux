@@ -56,6 +56,16 @@ struct RootView: View {
             }
         }
         .task { app.start() }
+        // The whole visible surface of `actionError` for now: a refused action
+        // has to say so somewhere, and an alert is the least that qualifies.
+        .alert("Couldn't do that", isPresented: Binding(
+            get: { app.actionError != nil },
+            set: { if !$0 { app.actionError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(app.actionError ?? "")
+        }
     }
 }
 

@@ -56,6 +56,9 @@ public final class AppState {
     public var useControlMode = true
     /// Whatever the last `OpenSession` told the user to do, if anything.
     public var hint: String?
+    /// A mutation the server refused, until the user dismisses it. See
+    /// `failed(_:_:)` for why this is not `connection`.
+    public var actionError: String?
     /// The live control-mode client, while one is attached. Menu commands need
     /// to reach it, and the menu is the only way to drive tmux's pane
     /// navigation — the prefix key cannot reach tmux in control mode. Weak so
@@ -264,22 +267,56 @@ public final class AppState {
         // A deleted session's state goes with it.
         states = merge(states, [:], live: ["/wt/a"])
         assert(states.keys.sorted() == ["/wt/a"])
+
+        // A mutation the server refuses is an answer, not a dead socket. It has
+        // to reach the user as its own message and leave `connection` exactly
+        // where the poll loop left it, or one declined action blanks the
+        // sidebar into "Can't reach moomux". `--selftest` runs on the main
+        // thread, from MoomuxApp.bootstrap().
+        MainActor.assumeIsolated {
+            let app = AppState()
+            app.connection = .connected
+            app.failed("Rename", MoomuxClient.Failure.server(#"session "x" already exists"#))
+            assert(app.actionError == #"Rename failed: session "x" already exists"#,
+                   app.actionError ?? "nil")
+            assert(app.connection == .connected, "a refused action must not read as a dead socket")
+        }
     }
 
     // MARK: Actions
 
-    public func open(_ session: Session) {
+    /// The one way a write reaches the server. Runs the blocking call off the
+    /// main actor, then reloads — `refresh()` is the whole-world poll, so there
+    /// is nothing finer-grained to invalidate, and it is what makes a mutation
+    /// visible now rather than up to two seconds later.
+    ///
+    /// A non-nil return replaces `hint`; nil means the action had nothing to
+    /// say and leaves whatever is there.
+    private func mutate(_ what: String, _ work: @Sendable @escaping (MoomuxClient) throws -> String?) {
         Task {
             do {
-                let hint = try await withoutBlockingTheUI { [client] in
-                    try client.openSession(id: session.id)
+                if let hint = try await withoutBlockingTheUI({ [client] in try work(client) }) {
+                    self.hint = hint.isEmpty ? nil : hint
                 }
-                self.hint = hint.isEmpty ? nil : hint
                 await refresh()
             } catch {
-                connection = .down(error.localizedDescription)
+                failed(what, error)
             }
         }
+    }
+
+    /// A refused action and an unreachable socket are not the same condition
+    /// and must not render the same. This used to be `connection = .down(…)`,
+    /// which blanked the whole sidebar into "Can't reach moomux" because one
+    /// action was declined — and then the next poll, two seconds later, quietly
+    /// put it back, so the server's actual reason flashed past unread.
+    /// `connection` belongs to the poll loop and to nothing else.
+    private func failed(_ what: String, _ error: Error) {
+        actionError = "\(what) failed: \(error.localizedDescription)"
+    }
+
+    public func open(_ session: Session) {
+        mutate("Open") { try $0.openSession(id: session.id) }
     }
 }
 
