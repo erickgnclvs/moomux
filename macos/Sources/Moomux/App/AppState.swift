@@ -59,10 +59,15 @@ public final class AppState {
     /// A mutation the server refused, until the user dismisses it. See
     /// `failed(_:_:)` for why this is not `connection`.
     public var actionError: String?
+    /// What a write is doing, while it does it. Only `create` takes long
+    /// enough to matter, but every mutation reports here so nothing has to
+    /// hold a sheet open waiting for one. Rendered by `ConnectionBadge`.
+    public private(set) var busy: String?
     /// Which modal form is up. Presentation state lives on the store rather
     /// than in a view because the Session menu has to open these too, and views
     /// read AppState and nothing else.
     public enum Sheet: Identifiable, Hashable {
+        case create
         case rename(Session)
         case tags(Session)
         public var id: Self { self }
@@ -306,6 +311,8 @@ public final class AppState {
     /// say and leaves whatever is there.
     private func mutate(_ what: String, _ work: @Sendable @escaping (MoomuxClient) throws -> String?) {
         Task {
+            busy = what
+            defer { busy = nil }
             do {
                 if let hint = try await withoutBlockingTheUI({ [client] in try work(client) }) {
                     self.hint = hint.isEmpty ? nil : hint
@@ -325,6 +332,39 @@ public final class AppState {
     /// `connection` belongs to the poll loop and to nothing else.
     private func failed(_ what: String, _ error: Error) {
         actionError = "\(what) failed: \(error.localizedDescription)"
+    }
+
+    /// Three fields, and that is the whole form.
+    ///
+    /// Agent, model, thinking level, base branch, "resume this existing
+    /// branch", dangerous mode and auto-submit are all deliberately absent: the
+    /// core already defaults every one of them from the project's config, and
+    /// offering a picker for any of them means shipping a second copy of
+    /// `internal/tui`'s `agentNames` / `thinkingNamesFor` / `modelNamesFor`
+    /// tables on this side of the socket, to drift silently the next time the
+    /// Go side gains an agent. Add a control here when the core can hand over
+    /// the list it validates against — not before. The TUI is still the place
+    /// to create anything unusual.
+    public func create(project: String, name: String, prompt: String) {
+        mutate("Creating session") { client in
+            let (session, hint) = try client.createSession(project: project, name: name)
+            guard !prompt.isEmpty else { return hint }
+            // Recorded on the session as well as typed into the pane, so the
+            // detail pane's "First prompt" has something to show. Best-effort,
+            // exactly as the TUI treats it.
+            try? client.setPrompt(id: session.id, prompt: prompt)
+            do {
+                try client.startFirstPrompt(tmuxSession: session.tmuxSession, prompt: prompt)
+            } catch {
+                // The worktree and the tmux session already exist by now. A
+                // prompt that never landed is a hint, not a failed creation —
+                // reporting it as one would tell the user to try again and
+                // hand them "session already exists".
+                let note = "couldn't send first prompt: \(error.localizedDescription)"
+                return hint.isEmpty ? note : hint + "\n" + note
+            }
+            return hint
+        }
     }
 
     public func open(_ session: Session) {

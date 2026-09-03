@@ -35,6 +35,16 @@ struct RootView: View {
         .toolbar {
             ToolbarItem(placement: .status) { ConnectionBadge() }
             ToolbarItem {
+                Button {
+                    app.sheet = .create
+                } label: {
+                    Label("New Session", systemImage: "plus")
+                }
+                // ⌘N lives on the File menu item, not here: two views claiming
+                // the same shortcut is ambiguous and only one of them wins.
+                .help("New session (⌘N)")
+            }
+            ToolbarItem {
                 Toggle("Archived", isOn: $app.showArchived)
                     .help("Show archived sessions")
             }
@@ -60,6 +70,8 @@ struct RootView: View {
         // fire any of them with no row on screen at all.
         .sheet(item: $app.sheet) { sheet in
             switch sheet {
+            case .create:
+                NewSessionSheet()
             case let .rename(session):
                 TextFieldSheet(title: "Rename “\(session.name)”",
                                labels: ["Name"], values: [session.name]) {
@@ -103,6 +115,61 @@ struct RootView: View {
             + "and deletes the branch if moomux made it."
         let changes = app.statuses[session.id]?.changeSummary ?? ""
         return changes.isEmpty ? base : "\(changes.capitalized). \(base)"
+    }
+}
+
+/// Three fields, deliberately — see `AppState.create` for what is missing and
+/// why. Everything else the TUI's new-session dialog asks for is answered by
+/// the project's own configuration on the Go side.
+private struct NewSessionSheet: View {
+    @Environment(AppState.self) private var app
+    @Environment(\.dismiss) private var dismiss
+    @State private var project = ""
+    @State private var name = ""
+    @State private var prompt = ""
+
+    private var projects: [String] { app.config?.orderedProjectNames ?? app.projects }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("New session").font(.headline)
+            Form {
+                Picker("Project", selection: $project) {
+                    ForEach(projects, id: \.self) { Text($0).tag($0) }
+                }
+                TextField("Name", text: $name)
+                TextField("First prompt", text: $prompt, axis: .vertical)
+                    .lineLimit(3...6)
+            }
+            .formStyle(.grouped)
+            Text("Agent, model and branch come from the project's settings. "
+                 + "The TUI's dialog is still the place to override them.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                // Closes at once rather than waiting out the worktree and the
+                // userscripts: `app.busy` reports progress in the toolbar, and
+                // a refusal lands in the error alert either way.
+                Button("Create") {
+                    app.create(project: project, name: name, prompt: prompt)
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(project.isEmpty || name.isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+        // Seeded from the row being looked at — a second session in the same
+        // project is the common case.
+        .onAppear {
+            project = app.visibleSessions.first { $0.id == app.selectedSessionID }?.project
+                ?? projects.first ?? ""
+        }
     }
 }
 
@@ -418,20 +485,31 @@ private struct ConnectionBadge: View {
     @Environment(AppState.self) private var app
 
     var body: some View {
-        switch app.connection {
-        case .connecting:
-            Text("connecting…").foregroundStyle(.secondary)
-        case .connected:
-            if let error = app.statusError {
-                Label(error, systemImage: "exclamationmark.triangle")
+        // A running write outranks the connection state: creating a session
+        // cuts a worktree and runs the worktree-create userscripts, which is
+        // tens of seconds of nothing visible happening otherwise. Here rather
+        // than in the sheet so every action gets it for free.
+        if let busy = app.busy {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("\(busy)…").foregroundStyle(.secondary).lineLimit(1)
+            }
+        } else {
+            switch app.connection {
+            case .connecting:
+                Text("connecting…").foregroundStyle(.secondary)
+            case .connected:
+                if let error = app.statusError {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                }
+            case let .down(message):
+                Label(message, systemImage: "bolt.horizontal.circle")
                     .foregroundStyle(.orange)
                     .lineLimit(1)
+                    .help("Is `moomux serve` running?")
             }
-        case let .down(message):
-            Label(message, systemImage: "bolt.horizontal.circle")
-                .foregroundStyle(.orange)
-                .lineLimit(1)
-                .help("Is `moomux serve` running?")
         }
     }
 }

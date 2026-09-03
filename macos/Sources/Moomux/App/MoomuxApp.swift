@@ -96,6 +96,12 @@ struct SessionCommands: Commands {
     }
 
     var body: some Commands {
+        // Replacing .newItem drops the dead "New Window" AppKit puts there for
+        // a single-Window scene, so ⌘N means the only thing it can mean.
+        CommandGroup(replacing: .newItem) {
+            Button("New Session…") { app.sheet = .create }
+                .keyboardShortcut("n")
+        }
         CommandMenu("Session") {
             // ⌘R is Refresh and ⌘↩ is Attach, both already live here.
             Button("Rename…") { if let s = selected { app.sheet = .rename(s) } }

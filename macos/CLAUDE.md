@@ -9,8 +9,9 @@ Today it lists sessions, streams their live agent state, shows detail, banners a
 ones that start waiting on you, attaches a session's tmux inside the app — by default over tmux
 **control mode**, with each pane in its own native view and the session's windows as tabs, and
 optionally as one plain `tmux attach`
-— hands a session to the user's terminal, and renames, tags, archives, reorders, kills and deletes
-them. Creating one is still the TUI's job.
+— hands a session to the user's terminal, and creates, renames, tags, archives, reorders, kills and
+deletes them. Creating one here takes a project, a name and a first prompt; anything more unusual is
+still the TUI's dialog.
 
 ## The environment decides more than you'd think
 
@@ -412,13 +413,29 @@ Decisions, not oversights. Don't "fix" these without being asked.
 - **No mouse reporting or drag-to-resize panes in control mode.** Clicking selects a pane; that is
   all. Resizing goes through tmux's own keys.
 - **No terminal settings** — font, size, colours and cursor are all SwiftTerm's defaults.
-- **The write paths stop at the session row.** Rename, tags, archive, move, kill tmux and delete are
-  there; **CreateSession is not yet**, nor is `SetSessionAgent`, project CRUD
-  (`AddProject`/`UpdateProject`/`RemoveProject`/`MoveProject`) or any of the settings toggles
-  (`SetTheme`/`SetAutoTmux`/…). All of them already exist on the socket — this is appetite, not a
-  missing boundary. **No drag-to-reorder**, either: `MoveSession` takes a ±1 delta, the sidebar is a
-  sectioned `List`, and `onMove` wants index sets over a bound array, so ⌃⌘↑/↓ is the whole feature
-  for a day less work.
+- **The write paths stop at the session row.** Create, rename, tags, archive, move, kill tmux and
+  delete are there; `SetSessionAgent`, project CRUD
+  (`AddProject`/`UpdateProject`/`RemoveProject`/`MoveProject`) and the settings toggles
+  (`SetTheme`/`SetAutoTmux`/…) are not. All of them already exist on the socket — this is appetite,
+  not a missing boundary. **No drag-to-reorder**, either: `MoveSession` takes a ±1 delta, the sidebar
+  is a sectioned `List`, and `onMove` wants index sets over a bound array, so ⌃⌘↑/↓ is the whole
+  feature for a day less work.
+- **The New Session sheet asks three questions: project, name, first prompt.** The TUI's dialog asks
+  thirteen. Agent, model, thinking level, base branch, "resume this existing branch", dangerous mode,
+  ticket/PR and auto-submit are all left to the core, which already defaults every one of them from
+  the project's config — and the picker-shaped ones cannot be offered without a second copy of
+  `internal/tui`'s `agentNames` / `thinkingNamesFor` / `modelNamesFor` tables living on this side of
+  the socket, to drift silently the next time Go gains an agent. **The rule for growing this form is
+  that the core must be able to hand over the list it validates against** (there is no IPC method for
+  it today); a field the app can fill from `Config` or from free text is fair game, one that needs a
+  hard-coded table is not. Ticket and PR are a Tags sheet away a second later. `open_terminal` is
+  deliberately unset, so a new session lands in the sidebar rather than in iTerm.
+- **A slow write reports in the toolbar, not in its sheet.** `AppState.busy` is set by `mutate` for
+  every action and rendered by `ConnectionBadge`, so the New Session sheet closes on Create rather
+  than sitting there for the tens of seconds a worktree plus the worktree-create userscripts take.
+  A refusal still lands in the "Couldn't do that" alert. `StartFirstPrompt` failing is folded into
+  the *hint* rather than the error, because by then the worktree and the tmux session already exist
+  — reporting it as a failed creation invites a retry that answers "session already exists".
 - **No app icon**, so the bundle shows the generic one. `~/tmp/mergeright/Scripts/make-icon.swift`
   draws one from code when it's wanted.
 - **No `dist`/`notarize`, no Sparkle, no signing identity.** Ad-hoc signing is fine until something

@@ -211,6 +211,29 @@ public final class MoomuxClient: Sendable {
     // away on purpose: `AppState.mutate` reloads everything a beat later, and
     // splicing one row in by hand would be a second source of truth.
 
+    /// Cuts a worktree and a branch, runs the worktree-create userscripts and
+    /// starts a tmux session. Tens of seconds, and the only call here that is.
+    /// Returns the new session plus the server's hint — the userscripts'
+    /// warnings and "attach with: tmux attach -t …", which is guidance.
+    ///
+    /// Only `project` and `name` go over the wire. Agent, model, thinking
+    /// level, base branch, an existing branch to resume and dangerous mode are
+    /// all left unset so the core applies the project's own defaults; see
+    /// `AppState.create` for why none of them are offered here. `open_terminal`
+    /// stays unset too: this app attaches sessions itself.
+    public func createSession(project: String, name: String) throws -> (Session, String) {
+        let result = try call("CreateSession", Args(name: name, project: project))
+        guard let session = result.session else { throw Failure.emptyResponse }
+        return (session, result.hint ?? "")
+    }
+
+    /// Types a prompt into a freshly created agent pane. Blocks while the Go
+    /// side waits for that pane to be ready, which is however long the agent
+    /// takes to boot. Never auto-submits — `auto_submit` is left unset.
+    public func startFirstPrompt(tmuxSession: String, prompt: String) throws {
+        try call("StartFirstPrompt", Args(prompt: prompt, tmuxSession: tmuxSession))
+    }
+
     /// Kills tmux, removes the worktree and runs the worktree-delete
     /// userscripts. The hint is those scripts' warnings, not an error.
     @discardableResult
@@ -231,6 +254,12 @@ public final class MoomuxClient: Sendable {
     /// typed rather than mapped to nil.
     public func setTags(id: String, ticket: String, pr: String) throws {
         try call("SetSessionTags", Args(id: id, ticket: ticket, pr: pr))
+    }
+
+    /// Records the first prompt on the session record, which is what makes it
+    /// show in the detail pane. Separate from typing it into the pane.
+    public func setPrompt(id: String, prompt: String) throws {
+        try call("SetSessionPrompt", Args(id: id, prompt: prompt))
     }
 
     public func setArchived(id: String, _ archived: Bool) throws {
@@ -338,6 +367,17 @@ public final class MoomuxClient: Sendable {
                 Request(method: "SetSessionArchived", args: Args(id: "s1", on: false))),
             as: UTF8.self)
         assert(unarchive == #"{"args":{"id":"s1","on":false},"method":"SetSessionArchived"}"#, unarchive)
+
+        // Create sends two fields and nothing else. Every absent one is a
+        // deliberate "use the project's default" — `open_terminal` especially:
+        // sending it as true would hand the new session to iTerm behind the
+        // app's back.
+        let create = String(
+            decoding: try! encoder.encode(
+                Request(method: "CreateSession", args: Args(name: "macos", project: "moomux"))),
+            as: UTF8.self)
+        assert(create == #"{"args":{"name":"macos","project":"moomux"},"method":"CreateSession"}"#,
+               create)
 
         // The three keys `ipc.Args` spells differently from their property
         // names. Checked on a bare Args because no one call sends all three;
