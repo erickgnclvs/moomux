@@ -216,11 +216,20 @@ Two observations that matter more than the table:
 **Don't rewrite. Add a Mac front end on the existing core, over tmux control
 mode.**
 
-Status: **1 and 2 are done, 3 has started.** `internal/ipc` / `moomux serve` / `moomux ui -socket`
-carry the boundary; `macos/` is a SwiftUI app on SwiftPM that lists sessions over the socket,
-streams live agent state, attaches a session's tmux over **control mode** with each pane in its own
-native view (plain `tmux attach` kept as a fallback), and already carries the menu-bar count from
-§5. See `macos/CLAUDE.md` for how to work on it.
+Status: **all three are done.** `internal/ipc` / `moomux serve` / `moomux ui -socket` carry the
+boundary; `macos/` is a SwiftUI app on SwiftPM that lists sessions over the socket, streams live
+agent state, attaches a session's tmux over **control mode** with each pane in its own native view
+and a tab bar for its windows (plain `tmux attach` kept as a fallback), creates / renames / tags /
+archives / reorders / deletes sessions, and carries every §5 payoff feature it is going to carry —
+the menu-bar count, notifications, review and the session grid. See `macos/CLAUDE.md` for how to
+work on it, and its "Deliberately not done" list for the shape the last three landed in and why.
+
+What is left is not on this doc's list: **distribution** (no signing identity, no `dist`/`notarize`,
+no icon — the gate on anyone else running it), the write paths past the session row
+(`SetSessionAgent`, project CRUD, the settings toggles — all on the socket already, pure appetite),
+and **FSEvents instead of the 2s poll**, the one §5 item nothing has claimed. The New Session sheet
+asks three of the TUI's thirteen questions on purpose; growing it wants an IPC method that hands
+over the lists the core validates against, which does not exist yet.
 
 What the sizing table below got roughly right: the control-mode client landed near the bottom of
 its 2–3 week estimate, because the protocol is small once you stop guessing at it and read
