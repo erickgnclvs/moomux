@@ -17,6 +17,8 @@ enum SelfTest {
         Wire.demo()
         MoomuxClient.demo()
         ToolPath.demo()
+        TmuxProtocolChecks.demo()
+        TmuxWindowLayout.demo()
         AppState.demo()
 
         print("selftest: ok")

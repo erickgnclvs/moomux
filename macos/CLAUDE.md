@@ -6,8 +6,9 @@ and not a rewrite. This file is for working on it; the Go side's `AGENTS.md` sti
 everything outside `macos/`.
 
 Today it lists sessions, streams their live agent state, shows detail, attaches a session's tmux
-inside the app, and hands a session to the user's terminal. tmux control mode and every write path
-beyond `OpenSession` are not built yet.
+inside the app — either as one plain `tmux attach` or, with "Native panes", over tmux **control
+mode** with each pane in its own view — and hands a session to the user's terminal. Every write
+path beyond `OpenSession` is still missing.
 
 ## The environment decides more than you'd think
 
@@ -136,12 +137,19 @@ Core/UnixSocket.swift    AF_UNIX plumbing; blocking, closed to cancel
 Core/Models.swift        the wire types + JSON coding + Wire.demo()
 Core/MoomuxClient.swift  the Swift half of internal/ipc
 Core/ToolPath.swift      finding tmux without a shell's PATH
+Tmux/ControlProtocol.swift  the `tmux -CC` line protocol, pure
+Tmux/TmuxLayout.swift    the layout string -> pane rectangles, pure
+Tmux/ControlClient.swift the control-mode transport: forkpty, commands, events
 App/AppState.swift       the single root store, poll loop, watch loop
 App/MoomuxApp.swift      scenes: main window + MenuBarExtra
 App/SelfTest.swift       --selftest
 UI/RootView.swift        split view, rows, detail, inspector, menu-bar content
-UI/TerminalPane.swift    SwiftTerm hosting a `tmux attach` client
+UI/TerminalPane.swift    SwiftTerm hosting a plain `tmux attach`
+UI/ControlModeView.swift native panes over control mode
 ```
+
+Both `Tmux/` parsers are pure and checked by `demo()` against output captured from a real
+`tmux -CC attach` — paste new captures in rather than inventing plausible-looking lines.
 
 SwiftTerm is reached **only** through `UI/TerminalPane.swift`, so swapping it for libghostty later
 is one file — which is the arrangement the plan doc assumes.
@@ -191,9 +199,29 @@ to fix in Go, not a reason to link the core.
 - **Every tmux client on a session shares one window size.** While the app is attached, the user's
   iTerm and phone are letterboxed down to the app's dimensions, and it only springs back on detach —
   not when the bigger client is used again. Grouped sessions (`new-session -t`) do **not** fix this;
-  a group shares the windows themselves. Measured, both ways. This is why attaching is an explicit
-  action and not a consequence of selecting a row, and it is the strongest argument for control
-  mode, where the GUI owns the layout.
+  a group shares the windows themselves. Control mode does not fix it either: a `-CC` client sets
+  its size with `refresh-client -C` and the window follows exactly the same way. All three measured.
+  This is why attaching is an explicit action and not a consequence of selecting a row.
+- **A control-mode client does not take its size from the pty.** `list-clients` reports it as `80x`
+  no matter what winsize the forkpty was given; `refresh-client -C WxH` is the only lever, and until
+  it lands the panes are laid out against the wrong grid.
+- **tmux emits one unsolicited `%begin`/`%end` block right after attaching**, before
+  `%session-changed`. Command replies are matched to commands by order, so that block has to be
+  dropped — which it is, by not sending anything until `%session-changed` arrives and ignoring a
+  reply that nothing is waiting for.
+- **A new `NSView` has a zero frame, and a terminal soft-resets when it is later given a real
+  grid.** Anything painted before that is wiped. A pane producing output repaints itself and hides
+  the bug; an idle shell pane just stays black, which is how it was found. Paint on the first
+  `sizeChanged`, never at registration.
+- **`getOptimalFrameSize()` reports the terminal's *current* cols, which lag a resize**, so
+  deriving a cell size from it inside `sizeChanged` is short by a column's worth and every pane
+  comes out one column narrow. The container divided by tmux's own grid is the self-consistent
+  measure, and its rounding error can only make a pane a hair *wide*, which is harmless.
+- **SwiftTerm marks most overrides `public`, not `open`** — `keyDown` cannot be overridden from
+  this module, `mouseDown` and `viewDidMoveToWindow` can.
+- **`capture-pane` returns logical lines, not screen rows**, so a repainted pane wraps long lines
+  itself rather than reproducing tmux's exact screen. That is not a bug and cost an hour to talk
+  myself out of — count the characters before believing a wrap is wrong.
 - **SwiftTerm marks its overrides `public`, not `open`.** `keyDown` and friends cannot be overridden
   from this module — the compiler says "overriding non-open instance method outside of its defining
   module". `viewDidMoveToWindow` is fine because it comes from `NSView`.
@@ -219,10 +247,15 @@ to fix in Go, not a reason to link the core.
 
 Decisions, not oversights. Don't "fix" these without being asked.
 
-- **No tmux control mode (`tmux -CC`).** The pane runs a plain `tmux attach`, so tmux draws its own
-  splits and status line inside one view and the app cannot see the layout: no native tabs, no
-  native splits, and the shared-window-size cost above. Control mode is ~1–1.5k LOC of stateful
-  line protocol and buys nothing until there is UI to put a layout into.
+- **Control mode is opt-in and off by default.** The "Native panes" toggle picks it; the plain
+  attach stays the boring path while control mode earns trust. Not persisted between runs yet.
+- **Control mode shows one window's panes, not tabs.** tmux windows exist in the protocol
+  (`%window-add`, `%window-close`) and are not surfaced; switching windows inside tmux follows
+  along, but there is no tab bar.
+- **No scrollback in control-mode panes.** The initial paint is `capture-pane` of the visible
+  screen only; tmux's copy-mode still works through the keyboard.
+- **No mouse reporting or drag-to-resize panes in control mode.** Clicking selects a pane; that is
+  all. Resizing goes through tmux's own keys.
 - **No terminal settings** — font, size, colours and cursor are all SwiftTerm's defaults.
 - **No write paths beyond `OpenSession`.** Create/rename/delete/tag/settings all exist on the socket
   already; the scaffold only proves one round trip.

@@ -81,6 +81,16 @@ Cost: medium. Risk: medium (control-mode parsing is fiddly, and layout
 sync between tmux and native splits is where iTerm2 has historically had bugs).
 Payoff: highest — it's additive rather than a replacement.
 
+**Correction, from building it:** control mode does *not* escape tmux's shared
+window size, which an earlier draft of this doc assumed. A `-CC` client sets its
+size with `refresh-client -C` and the window follows it, letterboxing every
+other client, exactly as a plain `tmux attach` does. Grouped sessions
+(`new-session -t`) don't help either — a group shares the windows themselves.
+Both measured. What control mode actually buys is per-pane native views (real
+selection, scrollback and copy per pane) and the app *knowing* the layout, which
+is the substrate every native feature in §5 wants. It is worth doing for that,
+not for sizing.
+
 ### B. App owns the PTYs, tmux is gone
 
 Forkpty per pane, terminal emulation in-process, panes are native views.

@@ -18,11 +18,12 @@ import SwiftUI
 /// assumed — grouped sessions (`new-session -t`) do not fix it, because a group
 /// shares the windows themselves, and the size does not spring back when the
 /// larger client is used again. It only recovers on detach. That is why
-/// attaching is an explicit action rather than a consequence of selecting a
-/// row, and it is the strongest argument for the upgrade: a control-mode client
-/// parsing `%output` / `%layout-change` onto native views owns the layout
-/// itself and sidesteps the shared size entirely (~1–1.5k LOC, §2A of the plan,
-/// and how iTerm2 does it).
+/// attaching is an explicit action rather than a consequence of selecting a row.
+///
+/// Control mode does **not** fix this either, contrary to what the plan doc
+/// assumed: a `-CC` client sets its size with `refresh-client -C` and the
+/// window follows it exactly the same way. Measured both ways — see
+/// `TmuxControlClient`.
 ///
 /// The terminal widget is deliberately reached only through this file, so
 /// swapping SwiftTerm for libghostty later is one file, as the plan assumes.

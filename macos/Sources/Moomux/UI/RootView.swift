@@ -152,7 +152,12 @@ private struct SessionDetail: View {
     var body: some View {
         let state = app.state(for: session)
         Group {
-            if attached {
+            if attached, app.useControlMode, let tmux = ToolPath.find("tmux") {
+                ControlModeView(session: session, tmuxPath: tmux) { reason in
+                    attached = false
+                    if let reason, !reason.isEmpty { app.hint = reason }
+                }
+            } else if attached {
                 SessionTerminal(session: session, onDetach: { attached = false })
             } else {
                 SessionInfo(session: session, onAttach: { attached = true })
@@ -219,6 +224,10 @@ private struct SessionInfo: View {
                         // what revives a session whose tmux is gone.
                         .help("Hand this session to your terminal app, as the TUI does")
                     }
+                    Toggle("Native panes", isOn: Binding(
+                        get: { app.useControlMode },
+                        set: { app.useControlMode = $0 }))
+                        .help("Attach with tmux control mode: each pane in its own native view")
                     if !app.isAlive(session) {
                         Text("No live tmux session — open it to start one.")
                             .foregroundStyle(.secondary)
