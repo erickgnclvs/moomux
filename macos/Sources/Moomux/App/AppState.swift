@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -64,6 +65,8 @@ public final class AppState {
     public let client: MoomuxClient
 
     private var tasks: [Task<Void, Never>] = []
+    /// No view reads this, and `@Observable` fires on any assignment.
+    @ObservationIgnored private var notifier: Notifier?
 
     public init(client: MoomuxClient = MoomuxClient()) {
         self.client = client
@@ -77,6 +80,11 @@ public final class AppState {
 
     public func isAlive(_ session: Session) -> Bool {
         alive[session.id] ?? false
+    }
+
+    /// The reverse of `state(for:)`: the watcher only knows worktree paths.
+    public func session(atPath path: String) -> Session? {
+        sessions.first { $0.worktreePath == path }
     }
 
     /// Sessions the user should look at. The menu bar's whole reason to exist.
@@ -109,6 +117,10 @@ public final class AppState {
 
     public func start() {
         guard tasks.isEmpty else { return }
+        // Here rather than in `init`: `--selftest` exits inside `bootstrap()`
+        // from an unbundled binary, where reaching the notification center at
+        // all would trap.
+        notifier = Notifier(app: self)
         tasks = [
             Task { [weak self] in await self?.pollLoop() },
             Task { [weak self] in await self?.watchLoop() },
@@ -160,6 +172,7 @@ public final class AppState {
             // forever or answer for a recreated id.
             let live = Set(snapshot.sessions.map(\.id))
             statuses = statuses.filter { live.contains($0.key) }
+            updateDockBadge()  // needsInputCount filters visibleSessions
         } catch {
             // Deliberately leaves the last-good lists in place. A failed call
             // must never read as "everything was deleted" — the Go client
@@ -176,9 +189,16 @@ public final class AppState {
             do {
                 for try await snapshot in client.watch() {
                     backoff = .milliseconds(200) // a working connection earns a fast retry
+                    // Diffed after the merge, not against the raw snapshot: a
+                    // snapshot carries only one agent's paths, so comparing
+                    // merged maps is what makes a partial tick a no-op for
+                    // everybody else.
+                    let previous = states
                     states = AppState.merge(
                         states, snapshot.states,
                         live: Set(sessions.map(\.worktreePath)))
+                    notifier?.report(previous: previous, current: states)
+                    updateDockBadge()
                     set(statusError: snapshot.err)
                 }
                 throw MoomuxClient.Failure.disconnected
@@ -195,6 +215,13 @@ public final class AppState {
     /// error re-renders every list row once per watcher tick.
     private func set(statusError message: String?) {
         if statusError != message { statusError = message }
+    }
+
+    /// Free, needs no authorization, and the whole fallback if notifications
+    /// are denied. `nil` rather than "0" — a zero badge is still a badge.
+    private func updateDockBadge() {
+        let count = needsInputCount
+        NSApp.dockTile.badgeLabel = count == 0 ? nil : "\(count)"
     }
 
     /// Folds one watcher snapshot into the known states.

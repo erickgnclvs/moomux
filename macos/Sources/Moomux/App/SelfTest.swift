@@ -20,6 +20,7 @@ enum SelfTest {
         TmuxProtocolChecks.demo()
         TmuxWindowLayout.demo()
         AppState.demo()
+        Notifier.demo()
 
         print("selftest: ok")
         exit(0)

@@ -5,10 +5,11 @@ Go core over the `moomux serve` unix socket — see `docs/native-macos-rewrite.m
 and not a rewrite. This file is for working on it; the Go side's `AGENTS.md` still governs
 everything outside `macos/`.
 
-Today it lists sessions, streams their live agent state, shows detail, attaches a session's tmux
-inside the app — by default over tmux **control mode**, with each pane in its own native view, and
-optionally as one plain `tmux attach` — and hands a session to the user's terminal. Every write
-path beyond `OpenSession` is still missing.
+Today it lists sessions, streams their live agent state, shows detail, banners and dock-badges the
+ones that start waiting on you, attaches a session's tmux inside the app — by default over tmux
+**control mode**, with each pane in its own native view, and optionally as one plain `tmux attach`
+— and hands a session to the user's terminal. Every write path beyond `OpenSession` is still
+missing.
 
 ## The environment decides more than you'd think
 
@@ -50,8 +51,9 @@ With no `--socket` it uses `ipc.DefaultSocket` (`~/.local/share/moomux/moomux.so
 `moomux ui`.
 
 The bundle is not optional for anything that wants a bundle identifier — `swift run` produces an
-unbundled binary, and `UNUserNotificationCenter.current()` **traps** without one. That bites the
-moment notifications land.
+unbundled binary, and `UNUserNotificationCenter.current()` **traps** without one. `Notifier` is
+guarded on `Bundle.main.bundleIdentifier` for exactly that reason: `make selfcheck` runs the
+unbundled `.build` binary.
 
 ## UI changes
 
@@ -223,6 +225,7 @@ Tmux/ControlProtocol.swift  the `tmux -CC` line protocol, pure
 Tmux/TmuxLayout.swift    the layout string -> pane rectangles, pure
 Tmux/ControlClient.swift the control-mode transport: forkpty, commands, events
 App/AppState.swift       the single root store, poll loop, watch loop
+App/Notifier.swift       the only file allowed to touch UNUserNotificationCenter
 App/MoomuxApp.swift      scenes: main window + MenuBarExtra
 App/SelfTest.swift       --selftest
 UI/RootView.swift        split view, rows, detail, inspector, menu-bar content
@@ -328,6 +331,19 @@ to fix in Go, not a reason to link the core.
 - **`open` against an app that is still terminating does nothing at all**, which reads exactly like
   a crash on launch. `make run`/`make dev` wait out the old process for this reason — do not
   "simplify" that loop away.
+- **Notification authorization needs a bundle LaunchServices has registered, and that means `open`
+  from a real location.** Exec'ing the binary inside the bundle
+  (`./Moomux.app/Contents/MacOS/Moomux`) fails instantly with `UNErrorDomain Code=1 "Notifications
+  are not allowed for this application"` even though `Bundle.main.bundleIdentifier` is right, and so
+  does a bundle sitting under `/tmp` — no prompt, same error, both measured. `.build/Moomux.app`
+  opened by `make dev` is fine, and so is `~/Applications`. That error is very easy to misread as
+  "ad-hoc signing doesn't work" (it isn't — see the signing bullet below).
+- **`center.add` returns no error while authorization is denied.** Measured: status denied, `add`
+  err nil, nothing on screen. A missing banner gives you no signal at all, and denial is *sticky*
+  per bundle identifier — quitting while the prompt is up is enough to earn it permanently. Read
+  `getNotificationSettings().authorizationStatus` (0 notDetermined, 1 denied, 2 authorized) before
+  believing the code is broken, and reset in System Settings → Notifications. Focus/DND does the
+  same thing for a different reason.
 
 ## Conventions
 
@@ -367,9 +383,15 @@ Decisions, not oversights. Don't "fix" these without being asked.
 - **No app icon**, so the bundle shows the generic one. `~/tmp/mergeright/Scripts/make-icon.swift`
   draws one from code when it's wanted.
 - **No `dist`/`notarize`, no Sparkle, no signing identity.** Ad-hoc signing is fine until something
-  depends on a stable designated requirement (launch-at-login, notification authorization).
+  depends on a stable designated requirement — launch-at-login, which is still unproven.
+  **Notification authorization is not one of those things**: measured with a throwaway bundle of
+  exactly `make app`'s shape (hand-assembled, `codesign --force --sign -`), the prompt appears
+  normally, `add` succeeds, and the grant survives a rebuild that changes the CDHash and a move
+  between `~/Applications` and `.build/`. It is keyed by bundle identifier, not by signature.
 - **Config is re-fetched on every 2s poll** rather than only after a change. One extra socket
   round trip, and it keeps project order and emoji fresh with no invalidation logic.
-- **No notifications, no diff review, no multi-window grid.** The payoff features from the plan
-  doc's §5, all downstream of the terminal pane.
+- **No diff review, no multi-window grid.** The remaining payoff features from the plan doc's §5.
+- **No notification actions, and no "Approve" button.** Tapping a banner selects the session and
+  brings the app forward; that is the whole interaction. An action button would have to send keys
+  into the agent's pane, and there is no write path for that. A banner already *is* an Open button.
 - **SwiftUI views have no coverage** and cannot have any. Screenshots are the check.

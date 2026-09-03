@@ -21,9 +21,10 @@ selfcheck:
 # identifier — notifications and launch-at-login both need one.
 #
 # Ad-hoc signing (`-`) is fine while nothing depends on a stable designated
-# requirement. When launch-at-login or notification authorization lands, switch
-# to a stable local identity — an ad-hoc signature changes every build, which
-# makes those registrations unreliable.
+# requirement. When launch-at-login lands, switch to a stable local identity —
+# an ad-hoc signature changes every build, which makes that registration
+# unreliable. Notifications are *not* affected: measured, the grant is keyed by
+# bundle identifier and survives a rebuild with a new CDHash.
 app: build
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
