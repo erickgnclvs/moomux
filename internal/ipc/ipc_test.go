@@ -106,11 +106,19 @@ func (f *fakeBackend) InitProjectAndAdd(string, config.Project) error { return n
 func (f *fakeBackend) AddPlainProject(string, config.Project) error   { return nil }
 func (f *fakeBackend) UpdateProject(string, config.Project) error     { return nil }
 func (f *fakeBackend) RemoveProject(string) error                     { return nil }
-func (f *fakeBackend) SetTheme(string, string) error                  { return nil }
-func (f *fakeBackend) SetAutoSubmitDefault(bool) error                { return nil }
-func (f *fakeBackend) SetSortRecentFirst(bool) error                  { return nil }
-func (f *fakeBackend) SetAutoTmux(bool) error                         { return nil }
-func (f *fakeBackend) SetCompactDetail(bool) error                    { return nil }
+func (f *fakeBackend) SetTheme(theme, appearance string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.cfg != nil {
+		f.cfg.Theme = theme
+		f.cfg.Appearance = appearance
+	}
+	return nil
+}
+func (f *fakeBackend) SetAutoSubmitDefault(bool) error { return nil }
+func (f *fakeBackend) SetSortRecentFirst(bool) error   { return nil }
+func (f *fakeBackend) SetAutoTmux(bool) error          { return nil }
+func (f *fakeBackend) SetCompactDetail(bool) error     { return nil }
 
 type fakeWatcher struct{ snaps []watcher.Snapshot }
 
@@ -175,6 +183,13 @@ func (l *trackingListener) Accept() (net.Conn, error) {
 		l.mu.Unlock()
 	}
 	return c, err
+}
+
+// connCount reports how many connections have been accepted so far.
+func (l *trackingListener) connCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.conns)
 }
 
 // kill drops the listener and every connection it handed out.
@@ -294,6 +309,29 @@ func TestRoundTrip(t *testing.T) {
 			t.Fatalf("Config() = %+v, %v", cfg, err)
 		}
 	})
+}
+
+// TestMutMakesOneRoundTripNotTwo guards against a config-mutating call (here
+// SetTheme) dialing twice — once for the mutation, once more to re-fetch
+// Config — instead of the server attaching its post-mutation snapshot to the
+// same response. Every settings toggle paid for a second dial+encode+decode
+// of the whole Projects map before this.
+func TestMutMakesOneRoundTripNotTwo(t *testing.T) {
+	cfg := &config.Config{Theme: "dracula"}
+	b := &fakeBackend{}
+	c, ln := start(t, b, cfg, nil)
+	c.Bind(cfg)
+
+	before := ln.connCount()
+	if err := c.SetTheme("gruvbox", ""); err != nil {
+		t.Fatalf("SetTheme: %v", err)
+	}
+	if got := ln.connCount() - before; got != 1 {
+		t.Fatalf("SetTheme made %d connections, want 1", got)
+	}
+	if cfg.Theme != "gruvbox" {
+		t.Fatalf("cfg.Theme = %q, want the mutation's own response to have refreshed it", cfg.Theme)
+	}
 }
 
 func TestWatchStreams(t *testing.T) {

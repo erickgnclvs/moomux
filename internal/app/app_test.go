@@ -42,13 +42,23 @@ type fakeTmuxRunner struct {
 	calls  [][]string
 	out    map[string]string
 	failOn map[string]bool
-	events *[]string
+	// failWithOutput, unlike failOn, fails with a non-empty diagnostic —
+	// tmux.Client.HasSession treats an exit-1 with empty/"can't find
+	// session" output as "no session" (no error); this is for simulating a
+	// genuine tmux error instead.
+	failWithOutput map[string]string
+	events         *[]string
 	// seq, when set for a key, returns successive values on each call to
 	// that key (staying on the last one once exhausted) instead of out's
 	// fixed value — used to simulate pane content actually changing across
 	// polls (e.g. idle shell prompt -> agent startup -> agent idle).
 	seq    map[string][]string
 	seqIdx map[string]int
+	// failFirstN[key], when >0, fails that key's next N calls with a
+	// transient error before it starts answering normally — for simulating
+	// a command that briefly errors (e.g. right after window creation)
+	// rather than one that's simply off/absent.
+	failFirstN map[string]int
 }
 
 type exitErr struct{}
@@ -72,6 +82,13 @@ func (f *fakeTmuxRunner) Run(args ...string) (string, error) {
 		*f.events = append(*f.events, "tmux "+key)
 	}
 	if f.failOn[key] {
+		return "", exitErr{}
+	}
+	if out, ok := f.failWithOutput[key]; ok {
+		return out, exitErr{}
+	}
+	if f.failFirstN[key] > 0 {
+		f.failFirstN[key]--
 		return "", exitErr{}
 	}
 	if _, ok := f.out[key]; !ok {
@@ -180,7 +197,7 @@ func newTestApp(t *testing.T, projects map[string]config.Project) (*App, *fakeGi
 	t.Setenv("SSH_TTY", "")
 	t.Setenv("MOSHI_CLIENT", "")
 	git := &fakeGitRunner{failOn: map[string]bool{}, out: map[string]string{}}
-	tm := &fakeTmuxRunner{out: map[string]string{}, failOn: map[string]bool{}}
+	tm := &fakeTmuxRunner{out: map[string]string{}, failOn: map[string]bool{}, failWithOutput: map[string]string{}, failFirstN: map[string]int{}}
 	term := &fakeTerminal{}
 	store := &session.Store{Path: filepath.Join(dir, "sessions.json")}
 	if err := store.Load(); err != nil {
@@ -924,6 +941,22 @@ func TestCreateSessionOpenCodePorts(t *testing.T) {
 	}
 }
 
+// TestNextOpenCodePortAvoidsCollisionBeforePersisting guards a TOCTOU race:
+// CreateSession doesn't persist a session's AgentPort until well after
+// nextOpenCodePort is called (worktree creation and tmux/terminal setup run
+// in between), so two concurrent CreateSession calls for opencode sessions
+// would otherwise both read the same "highest port so far" from the Store
+// and collide. nextOpenCodePort must remember a port the moment it hands it
+// out, not just infer availability from what's already persisted.
+func TestNextOpenCodePortAvoidsCollisionBeforePersisting(t *testing.T) {
+	a, _, _, _ := newTestApp(t, gitProject("/repo"))
+	p1 := a.nextOpenCodePort()
+	p2 := a.nextOpenCodePort()
+	if p1 == p2 {
+		t.Fatalf("nextOpenCodePort returned %d twice before either session was persisted", p1)
+	}
+}
+
 func TestCreateSessionPlainProject(t *testing.T) {
 	projects := map[string]config.Project{
 		"notes": {Kind: "plain", Repo: "/notes"},
@@ -1486,6 +1519,31 @@ func TestKillTmuxSkipsTabCloseWhenNoTabRecorded(t *testing.T) {
 	}
 	if len(fakeTerm.closed) != 0 {
 		t.Fatalf("want no close attempt without a recorded tab, got %v", fakeTerm.closed)
+	}
+}
+
+// TestKillTmuxClosesTerminalTabDespiteTmuxError guards against a session
+// whose tmux side genuinely errors (not just "already gone") leaking its
+// terminal tab open forever: the tab-close/TermTabID cleanup must still run,
+// with the tmux error still surfaced to the caller.
+func TestKillTmuxClosesTerminalTabDespiteTmuxError(t *testing.T) {
+	a, _, tm, _ := newTestApp(t, gitProject("/repo"))
+	tm.failWithOutput["has-session -t =moomux-a"] = "lost server\n"
+	fakeTerm := &fakeCloseTabTerminal{}
+	a.Terminal = fakeTerm
+	_ = a.Store.Put(session.Session{
+		ID: "demo:a", Project: "demo", Name: "a", TmuxSession: "moomux-a", TermTabID: "tab-7",
+	})
+
+	if err := a.KillTmux("demo:a"); err == nil {
+		t.Fatal("want the tmux error surfaced, got nil")
+	}
+	if len(fakeTerm.closed) != 1 || fakeTerm.closed[0] != "tab-7" {
+		t.Fatalf("want tab-7 closed despite the tmux error, got %v", fakeTerm.closed)
+	}
+	s, _ := a.Store.Get("demo:a")
+	if s.TermTabID != "" {
+		t.Fatalf("want tab id cleared despite the tmux error, got %q", s.TermTabID)
 	}
 }
 
@@ -2729,5 +2787,36 @@ func TestStartFirstPromptWaitsForBracketedPasteBeforePasting(t *testing.T) {
 	}
 	if flagPolls == 0 {
 		t.Fatalf("never checked whether the pane was accepting a paste: %v", tm.calls)
+	}
+}
+
+// TestStartFirstPromptRetriesBracketedPasteErrorInsteadOfPastingEarly guards
+// against treating a transient tmux error (e.g. right after window creation,
+// before the pane is fully up) the same as "bracketed paste is on": it must
+// keep polling, not paste into a pane whose input layer isn't ready.
+func TestStartFirstPromptRetriesBracketedPasteErrorInsteadOfPastingEarly(t *testing.T) {
+	a, _, tm, _ := newTestApp(t, map[string]config.Project{})
+	tm.seq = map[string][]string{
+		"capture-pane -p -t =demo:x:": {"$ claude", "agent-idle", "agent-idle"},
+	}
+	tm.failFirstN["display-message -p -t =demo:x: #{bracket_paste_flag}"] = 2
+	tm.out["display-message -p -t =demo:x: #{bracket_paste_flag}"] = "1"
+
+	if err := a.StartFirstPrompt("demo:x", "do the thing", false); err != nil {
+		t.Fatal(err)
+	}
+
+	flagPolls := 0
+	for _, c := range tm.calls {
+		joined := strings.Join(c, " ")
+		if joined == "display-message -p -t =demo:x: #{bracket_paste_flag}" {
+			flagPolls++
+		}
+		if strings.HasPrefix(joined, "load-buffer") && flagPolls < 3 {
+			t.Fatalf("pasted after only %d bracketed-paste polls (2 of which errored), before the pane was confirmed ready: %v", flagPolls, tm.calls)
+		}
+	}
+	if flagPolls < 3 {
+		t.Fatalf("want at least 3 polls (2 errors + 1 success), got %d: %v", flagPolls, tm.calls)
 	}
 }

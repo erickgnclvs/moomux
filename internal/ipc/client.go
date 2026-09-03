@@ -77,22 +77,19 @@ func (c *Client) call(method string, a Args) (Result, error) {
 // mutates — so over a socket that pointer would freeze at connect time and
 // a newly added project would never appear. Refreshing it in place mirrors
 // what config.Reload does locally.
+//
+// The server attaches its post-mutation config snapshot to the same
+// response (see Server.mutResult) specifically so this doesn't need a
+// second "Config" round trip — every settings toggle would otherwise dial,
+// encode and decode the whole Projects map twice.
 func (c *Client) mut(method string, a Args) error {
-	if err := c.err0(method, a); err != nil {
+	r, err := c.call(method, a)
+	if err != nil {
 		return err
 	}
-	return c.refreshConfig()
-}
-
-func (c *Client) refreshConfig() error {
-	if c.cfg == nil {
-		return nil
+	if c.cfg != nil && r.Cfg != nil {
+		*c.cfg = *r.Cfg
 	}
-	fresh, err := c.Config()
-	if err != nil || fresh == nil {
-		return err
-	}
-	*c.cfg = *fresh
 	return nil
 }
 

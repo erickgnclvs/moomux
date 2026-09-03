@@ -55,6 +55,15 @@ type App struct {
 	// from the Update loop. Serving App over a socket, one goroutine per
 	// connection, made the same race routine rather than narrow.
 	cfgMu sync.RWMutex
+
+	// portMu guards reservedPorts, nextOpenCodePort's in-memory record of
+	// ports already handed out this process but not yet persisted to the
+	// Store — without it, two concurrent CreateSession calls for opencode
+	// sessions (server.go dispatches each on its own goroutine) can both
+	// read the same "highest port so far" from the Store before either has
+	// written its new session, and collide.
+	portMu        sync.Mutex
+	reservedPorts map[int]bool
 }
 
 // project returns a copy of the named project's config. config.Project is
@@ -400,13 +409,28 @@ func WorktreeRootDefault() string {
 // Starts at 4096 and increments past the highest AgentPort recorded across
 // all sessions; AgentPort is only ever non-zero on OpenCode sessions, so
 // this is effectively scoped to those without needing an explicit filter.
+//
+// The Store won't know about this port until CreateSession's much later
+// Store.Put — worktree creation and the tmux/terminal setup in between run
+// for seconds — so a port is also recorded in reservedPorts the moment it's
+// handed out, and never handed out twice for the life of this App, even to
+// two CreateSession calls racing on separate goroutines.
 func (a *App) nextOpenCodePort() int {
+	a.portMu.Lock()
+	defer a.portMu.Unlock()
 	port := 4096
 	for _, s := range a.Store.All() {
 		if s.AgentPort >= port {
 			port = s.AgentPort + 1
 		}
 	}
+	for a.reservedPorts[port] {
+		port++
+	}
+	if a.reservedPorts == nil {
+		a.reservedPorts = map[int]bool{}
+	}
+	a.reservedPorts[port] = true
 	return port
 }
 
@@ -879,7 +903,10 @@ func (a *App) waitForPaneStable(tmuxSession, seed string, deadline time.Time) st
 func (a *App) waitForPaneAcceptingPaste(tmuxSession string) {
 	deadline := time.Now().Add(paneReadyTimeout)
 	for {
-		if on, err := a.Tmux.BracketedPaste(tmuxSession); err != nil || on {
+		// A transient error (e.g. the window not fully up yet) is not "the
+		// flag is on" — it must keep polling like the flag-is-off case,
+		// not fall through early into pasting against an unready pane.
+		if on, err := a.Tmux.BracketedPaste(tmuxSession); err == nil && on {
 			return
 		}
 		if time.Now().After(deadline) {
@@ -1349,14 +1376,17 @@ func (a *App) KillTmux(id string) error {
 		return fmt.Errorf("unknown session %q", id)
 	}
 	slog.Debug("KillTmux: starting", "id", id, "pid", os.Getpid(), "tmux_session", s.TmuxSession, "term_tab_id", s.TermTabID)
+	// tmuxErr is recorded rather than returned immediately: the terminal-tab
+	// cleanup below must still run (and TermTabID still get cleared) even
+	// when tmux itself errored, or a session that fails to kill leaves a
+	// stale tab open forever with no way to close it short of deleting the
+	// session record.
+	var tmuxErr error
 	has, err := a.Tmux.HasSession(s.TmuxSession)
 	if err != nil {
-		return err
-	}
-	if has {
-		if err := a.Tmux.KillSession(s.TmuxSession); err != nil {
-			return err
-		}
+		tmuxErr = err
+	} else if has {
+		tmuxErr = a.Tmux.KillSession(s.TmuxSession)
 	}
 	if closer, ok := a.Terminal.(terminal.TabCloser); ok && s.TermTabID != "" {
 		err := closer.CloseTab(s.TermTabID)
@@ -1369,7 +1399,7 @@ func (a *App) KillTmux(id string) error {
 			slog.Warn("clear terminal tab id failed", "id", id, "err", err)
 		}
 	}
-	return nil
+	return tmuxErr
 }
 
 // validateProjectLocked requires a.cfgMu held for writing: its duplicate-name

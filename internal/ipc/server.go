@@ -203,29 +203,29 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 	case "MoveSession":
 		return Result{}, b.MoveSession(a.ID, a.Delta)
 	case "MoveProject":
-		return Result{}, b.MoveProject(a.Name, a.Delta)
+		return s.mutResult(b.MoveProject(a.Name, a.Delta))
 
 	case "AddProject":
-		return Result{}, b.AddProject(a.Name, a.Proj)
+		return s.mutResult(b.AddProject(a.Name, a.Proj))
 	case "InitProjectAndAdd":
-		return Result{}, b.InitProjectAndAdd(a.Name, a.Proj)
+		return s.mutResult(b.InitProjectAndAdd(a.Name, a.Proj))
 	case "AddPlainProject":
-		return Result{}, b.AddPlainProject(a.Name, a.Proj)
+		return s.mutResult(b.AddPlainProject(a.Name, a.Proj))
 	case "UpdateProject":
-		return Result{}, b.UpdateProject(a.Name, a.Proj)
+		return s.mutResult(b.UpdateProject(a.Name, a.Proj))
 	case "RemoveProject":
-		return Result{}, b.RemoveProject(a.Name)
+		return s.mutResult(b.RemoveProject(a.Name))
 
 	case "SetTheme":
-		return Result{}, b.SetTheme(a.Theme, a.Appearance)
+		return s.mutResult(b.SetTheme(a.Theme, a.Appearance))
 	case "SetAutoSubmitDefault":
-		return Result{}, b.SetAutoSubmitDefault(a.On)
+		return s.mutResult(b.SetAutoSubmitDefault(a.On))
 	case "SetSortRecentFirst":
-		return Result{}, b.SetSortRecentFirst(a.On)
+		return s.mutResult(b.SetSortRecentFirst(a.On))
 	case "SetAutoTmux":
-		return Result{}, b.SetAutoTmux(a.On)
+		return s.mutResult(b.SetAutoTmux(a.On))
 	case "SetCompactDetail":
-		return Result{}, b.SetCompactDetail(a.On)
+		return s.mutResult(b.SetCompactDetail(a.On))
 	}
 	return Result{}, fmt.Errorf("unknown method %q", method)
 }
@@ -234,4 +234,16 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 // (session.Session, error).
 func sessionResult(sess session.Session, err error) (Result, error) {
 	return Result{Session: &sess}, err
+}
+
+// mutResult adapts the config-mutating Backend methods (all bare error
+// returns) by attaching the post-mutation config snapshot to a successful
+// response — see Client.mut, which applies it in place instead of making a
+// second "Config" round trip for every settings change.
+func (s *Server) mutResult(err error) (Result, error) {
+	if err != nil || s.Config == nil {
+		return Result{}, err
+	}
+	cfg := s.Config()
+	return Result{Cfg: &cfg}, nil
 }

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -794,10 +795,23 @@ func fetchGitStatusCmd(backend Backend, ids []string) tea.Cmd {
 	return func() tea.Msg {
 		now := time.Now()
 		status := make(map[string]gitStatusInfo, len(ids))
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		// Each id is its own `git status`/`rev-list` call — over a socket
+		// backend that's also its own dial+encode+decode round trip — so
+		// fetching them one at a time makes a stale-session sweep's latency
+		// scale with session count instead of with the slowest single one.
 		for _, id := range ids {
-			dirty, unpushed, ok := backend.WorktreeStatus(id)
-			status[id] = gitStatusInfo{dirty: dirty, unpushed: unpushed, ok: ok, checkedAt: now}
+			wg.Add(1)
+			go func(id string) {
+				defer wg.Done()
+				dirty, unpushed, ok := backend.WorktreeStatus(id)
+				mu.Lock()
+				status[id] = gitStatusInfo{dirty: dirty, unpushed: unpushed, ok: ok, checkedAt: now}
+				mu.Unlock()
+			}(id)
 		}
+		wg.Wait()
 		return GitStatusMsg{Status: status}
 	}
 }
@@ -865,10 +879,22 @@ func fetchPRStatusCmd(backend Backend, ids []string) tea.Cmd {
 	return func() tea.Msg {
 		now := time.Now()
 		status := make(map[string]prStatusInfo, len(ids))
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		// See fetchGitStatusCmd: each id is its own network-bound `gh pr
+		// view`, fanned out rather than chained so N sessions cost one
+		// round trip's worth of latency instead of N.
 		for _, id := range ids {
-			info, ok := backend.PRStatus(id)
-			status[id] = prStatusInfo{info: info, ok: ok, checkedAt: now}
+			wg.Add(1)
+			go func(id string) {
+				defer wg.Done()
+				info, ok := backend.PRStatus(id)
+				mu.Lock()
+				status[id] = prStatusInfo{info: info, ok: ok, checkedAt: now}
+				mu.Unlock()
+			}(id)
 		}
+		wg.Wait()
 		return PRStatusMsg{Status: status}
 	}
 }
