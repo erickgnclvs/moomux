@@ -56,6 +56,32 @@ struct RootView: View {
             }
         }
         .task { app.start() }
+        // Every modal hangs off the root, not off a row: the Session menu can
+        // fire any of them with no row on screen at all.
+        .sheet(item: $app.sheet) { sheet in
+            switch sheet {
+            case let .rename(session):
+                TextFieldSheet(title: "Rename “\(session.name)”",
+                               labels: ["Name"], values: [session.name]) {
+                    app.rename(session, to: $0[0])
+                }
+            case let .tags(session):
+                TextFieldSheet(title: "Tags for “\(session.name)”",
+                               labels: ["Ticket", "PR"],
+                               values: [session.ticket ?? "", session.pr ?? ""]) {
+                    app.setTags(session, ticket: $0[0], pr: $0[1])
+                }
+            }
+        }
+        .alert("Delete session?", isPresented: Binding(
+            get: { app.pendingDelete != nil },
+            set: { if !$0 { app.pendingDelete = nil } }
+        ), presenting: app.pendingDelete) { session in
+            Button("Delete", role: .destructive) { app.delete(session) }
+            Button("Cancel", role: .cancel) {}
+        } message: { session in
+            Text(deleteWarning(for: session))
+        }
         // The whole visible surface of `actionError` for now: a refused action
         // has to say so somewhere, and an alert is the least that qualifies.
         .alert("Couldn't do that", isPresented: Binding(
@@ -66,6 +92,47 @@ struct RootView: View {
         } message: {
             Text(app.actionError ?? "")
         }
+    }
+
+    /// Reuses the status already fetched for the selected session rather than
+    /// paying for a fresh `WorktreeStatus` round trip inside an alert — the same
+    /// warning the TUI's confirm dialog shows, at no extra cost. A session that
+    /// was never selected has no status, and then the alert is the base text.
+    private func deleteWarning(for session: Session) -> String {
+        let base = "Kills tmux, removes the worktree at \(session.worktreePath), "
+            + "and deletes the branch if moomux made it."
+        let changes = app.statuses[session.id]?.changeSummary ?? ""
+        return changes.isEmpty ? base : "\(changes.capitalized). \(base)"
+    }
+}
+
+/// Rename is one text field and Tags is two, so they are one view.
+private struct TextFieldSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let title: String
+    let labels: [String]
+    @State var values: [String]
+    let onSave: ([String]) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.headline)
+            Form {
+                ForEach(labels.indices, id: \.self) { i in
+                    TextField(labels[i], text: $values[i])
+                }
+            }
+            .formStyle(.grouped)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save") { onSave(values); dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 360)
     }
 }
 
@@ -129,6 +196,26 @@ private struct SessionRow: View {
             }
         }
         .padding(.vertical, 2)
+        // Closes over `session`, never over the selection: right-clicking an
+        // unselected row has to act on the row you clicked.
+        .contextMenu {
+            Button("Open in Terminal") { app.open(session) }
+            Button("Rename…") { app.sheet = .rename(session) }
+            Button("Tags…") { app.sheet = .tags(session) }
+            Divider()
+            Button(session.archived ? "Unarchive" : "Archive") {
+                app.setArchived(session, !session.archived)
+            }
+            Button("Move Up") { app.move(session, by: -1) }
+            Button("Move Down") { app.move(session, by: 1) }
+            Divider()
+            // No confirmation: the worktree survives, the powersleep dot shows
+            // the result immediately, and "Open in Terminal" brings it back.
+            // Delete is the irreversible one, and the only thing that asks.
+            Button("Kill tmux") { app.killTmux(session) }
+                .disabled(!app.isAlive(session))
+            Button("Delete…", role: .destructive) { app.pendingDelete = session }
+        }
     }
 }
 
@@ -242,6 +329,16 @@ private struct SessionInfo: View {
                         // The core's own open path: a real terminal window, and
                         // what revives a session whose tmux is gone.
                         .help("Hand this session to your terminal app, as the TUI does")
+
+                        // The Ticket/PR rows below already render the result;
+                        // without this the detail pane is a dead end for the
+                        // one edit you make while looking at a session.
+                        Button {
+                            app.sheet = .tags(session)
+                        } label: {
+                            Label("Tags", systemImage: "tag")
+                        }
+                        .help("Set this session's ticket and pull request")
                     }
                     Toggle("Native panes", isOn: Binding(
                         get: { app.useControlMode },

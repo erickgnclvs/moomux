@@ -42,8 +42,38 @@ public final class MoomuxClient: Sendable {
 
     /// The subset of `ipc.Args` this app sends. Everything is optional and
     /// `omitempty` on the Go side, so unset fields simply do not appear.
+    ///
+    /// Every field has to stay Optional. A non-optional `Bool` would encode
+    /// `false` on every call, and `open_terminal:false` on a call that never
+    /// meant to say anything about it is a different message.
     struct Args: Encodable {
         var id: String?
+        var name: String?
+        var project: String?
+        var agent: String?
+        var branch: String?
+        var ticket: String?
+        var pr: String?
+        var prompt: String?
+        var model: String?
+        var thinking: String?
+        var tmuxSession: String?
+        var delta: Int?
+        var dangerous: Bool?
+        var openTerminal: Bool?
+        var autoSubmit: Bool?
+        var on: Bool?
+
+        // Three of `ipc.Args`' json tags are snake_case; the rest already match
+        // their property names. A missing entry here is invisible in both
+        // directions — Go ignores the unknown key and uses the zero value.
+        enum CodingKeys: String, CodingKey {
+            case id, name, project, agent, branch, ticket, pr, prompt, model, thinking, delta
+            case dangerous, on
+            case tmuxSession = "tmux_session"
+            case openTerminal = "open_terminal"
+            case autoSubmit = "auto_submit"
+        }
     }
 
     private struct Request: Encodable {
@@ -60,6 +90,9 @@ public final class MoomuxClient: Sendable {
     }
 
     struct CallResult: Decodable {
+        /// The updated row, from every mutating setter. Discarded today — see
+        /// the mutations below.
+        var session: Session?
         var sessions: [Session]?
         var strings: [String]?
         var alive: [String: Bool]?
@@ -171,6 +204,45 @@ public final class MoomuxClient: Sendable {
         try call("OpenSession", Args(id: id)).hint ?? ""
     }
 
+    // MARK: - Mutations
+    //
+    // Ordered as `internal/ipc/server.go` dispatches them, so the two files
+    // diff against each other. The `Session` the setters answer with is thrown
+    // away on purpose: `AppState.mutate` reloads everything a beat later, and
+    // splicing one row in by hand would be a second source of truth.
+
+    /// Kills tmux, removes the worktree and runs the worktree-delete
+    /// userscripts. The hint is those scripts' warnings, not an error.
+    @discardableResult
+    public func deleteSession(id: String) throws -> String {
+        try call("DeleteSession", Args(id: id)).hint ?? ""
+    }
+
+    /// Leaves the worktree and the session record; only the tmux server side goes.
+    public func killTmux(id: String) throws {
+        try call("KillTmux", Args(id: id))
+    }
+
+    public func rename(id: String, to name: String) throws {
+        try call("RenameSession", Args(id: id, name: name))
+    }
+
+    /// An empty ticket or PR is how a tag gets cleared, so both are sent as
+    /// typed rather than mapped to nil.
+    public func setTags(id: String, ticket: String, pr: String) throws {
+        try call("SetSessionTags", Args(id: id, ticket: ticket, pr: pr))
+    }
+
+    public func setArchived(id: String, _ archived: Bool) throws {
+        try call("SetSessionArchived", Args(id: id, on: archived))
+    }
+
+    /// ±1, within the project group. A move off either end is a no-op on the Go
+    /// side rather than an error.
+    public func move(id: String, delta: Int) throws {
+        try call("MoveSession", Args(id: id, delta: delta))
+    }
+
     // MARK: - Status stream
 
     /// Yields a snapshot per watcher tick until the connection drops, then
@@ -247,6 +319,40 @@ public final class MoomuxClient: Sendable {
             decoding: try! encoder.encode(Request(method: "OpenSession", args: Args(id: "s1"))),
             as: UTF8.self)
         assert(open == #"{"args":{"id":"s1"},"method":"OpenSession"}"#, open)
+
+        // An empty tag is how a tag is cleared, so it has to go over the wire
+        // as "" rather than being dropped — and every field nobody set must be
+        // absent, never null.
+        let tags = String(
+            decoding: try! encoder.encode(
+                Request(method: "SetSessionTags", args: Args(id: "s1", ticket: "T-1", pr: ""))),
+            as: UTF8.self)
+        assert(tags == #"{"args":{"id":"s1","pr":"","ticket":"T-1"},"method":"SetSessionTags"}"#, tags)
+        assert(!tags.contains("name"), "unset fields must vanish")
+
+        // Unarchiving sends `on:false` explicitly. Go's omitempty would drop it
+        // and the zero value is the same false, so both spellings are correct —
+        // this pins which one we send, so a reader isn't left guessing.
+        let unarchive = String(
+            decoding: try! encoder.encode(
+                Request(method: "SetSessionArchived", args: Args(id: "s1", on: false))),
+            as: UTF8.self)
+        assert(unarchive == #"{"args":{"id":"s1","on":false},"method":"SetSessionArchived"}"#, unarchive)
+
+        // The three keys `ipc.Args` spells differently from their property
+        // names. Checked on a bare Args because no one call sends all three;
+        // a missing CodingKeys entry is otherwise silent, and Go would read the
+        // zero value while the UI looked merely broken.
+        let snake = String(
+            decoding: try! encoder.encode(
+                Args(tmuxSession: "moomux-x", openTerminal: true, autoSubmit: true)),
+            as: UTF8.self)
+        assert(snake == #"{"auto_submit":true,"open_terminal":true,"tmux_session":"moomux-x"}"#, snake)
+
+        // A mutating call answers with the updated session, not a bare ok.
+        let renamed = #"{"result":{"session":{"id":"p:new","name":"new","project":"p"}}}"#
+        let rr = try! Wire.decoder.decode(Response.self, from: Data(renamed.utf8))
+        assert(rr.result?.session?.name == "new")
 
         // A server-side error arrives as a string beside an empty result; it
         // must surface as a thrown error rather than as "no sessions".

@@ -59,6 +59,18 @@ public final class AppState {
     /// A mutation the server refused, until the user dismisses it. See
     /// `failed(_:_:)` for why this is not `connection`.
     public var actionError: String?
+    /// Which modal form is up. Presentation state lives on the store rather
+    /// than in a view because the Session menu has to open these too, and views
+    /// read AppState and nothing else.
+    public enum Sheet: Identifiable, Hashable {
+        case rename(Session)
+        case tags(Session)
+        public var id: Self { self }
+    }
+    public var sheet: Sheet?
+    /// The session the delete confirmation is asking about. Its own field, not
+    /// a `Sheet` case: an alert is not a sheet and cannot share the modifier.
+    public var pendingDelete: Session?
     /// The live control-mode client, while one is attached. Menu commands need
     /// to reach it, and the menu is the only way to drive tmux's pane
     /// navigation — the prefix key cannot reach tmux in control mode. Weak so
@@ -317,6 +329,43 @@ public final class AppState {
 
     public func open(_ session: Session) {
         mutate("Open") { try $0.openSession(id: session.id) }
+    }
+
+    public func rename(_ session: Session, to name: String) {
+        mutate("Rename") { try $0.rename(id: session.id, to: name); return nil }
+    }
+
+    public func setTags(_ session: Session, ticket: String, pr: String) {
+        mutate("Set tags") { try $0.setTags(id: session.id, ticket: ticket, pr: pr); return nil }
+    }
+
+    public func setArchived(_ session: Session, _ archived: Bool) {
+        mutate(archived ? "Archive" : "Unarchive") {
+            try $0.setArchived(id: session.id, archived)
+            return nil
+        }
+    }
+
+    public func move(_ session: Session, by delta: Int) {
+        mutate("Move") { try $0.move(id: session.id, delta: delta); return nil }
+    }
+
+    public func killTmux(_ session: Session) {
+        detachIfShowing(session)
+        mutate("Kill tmux") { try $0.killTmux(id: session.id); return nil }
+    }
+
+    public func delete(_ session: Session) {
+        detachIfShowing(session)
+        mutate("Delete") { try $0.deleteSession(id: session.id) }
+    }
+
+    /// Killing or deleting the session the detail pane is attached to would
+    /// leave a control-mode client talking to a tmux session that is about to
+    /// stop existing. Clearing the selection unmounts `SessionDetail`, which
+    /// tears the client down — the same path selecting another row takes.
+    private func detachIfShowing(_ session: Session) {
+        if selectedSessionID == session.id { selectedSessionID = nil }
     }
 }
 

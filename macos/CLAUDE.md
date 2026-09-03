@@ -9,8 +9,8 @@ Today it lists sessions, streams their live agent state, shows detail, banners a
 ones that start waiting on you, attaches a session's tmux inside the app — by default over tmux
 **control mode**, with each pane in its own native view and the session's windows as tabs, and
 optionally as one plain `tmux attach`
-— and hands a session to the user's terminal. Every write path beyond `OpenSession` is still
-missing.
+— hands a session to the user's terminal, and renames, tags, archives, reorders, kills and deletes
+them. Creating one is still the TUI's job.
 
 ## The environment decides more than you'd think
 
@@ -412,8 +412,13 @@ Decisions, not oversights. Don't "fix" these without being asked.
 - **No mouse reporting or drag-to-resize panes in control mode.** Clicking selects a pane; that is
   all. Resizing goes through tmux's own keys.
 - **No terminal settings** — font, size, colours and cursor are all SwiftTerm's defaults.
-- **No write paths beyond `OpenSession`.** Create/rename/delete/tag/settings all exist on the socket
-  already; the scaffold only proves one round trip.
+- **The write paths stop at the session row.** Rename, tags, archive, move, kill tmux and delete are
+  there; **CreateSession is not yet**, nor is `SetSessionAgent`, project CRUD
+  (`AddProject`/`UpdateProject`/`RemoveProject`/`MoveProject`) or any of the settings toggles
+  (`SetTheme`/`SetAutoTmux`/…). All of them already exist on the socket — this is appetite, not a
+  missing boundary. **No drag-to-reorder**, either: `MoveSession` takes a ±1 delta, the sidebar is a
+  sectioned `List`, and `onMove` wants index sets over a bound array, so ⌃⌘↑/↓ is the whole feature
+  for a day less work.
 - **No app icon**, so the bundle shows the generic one. `~/tmp/mergeright/Scripts/make-icon.swift`
   draws one from code when it's wanted.
 - **No `dist`/`notarize`, no Sparkle, no signing identity.** Ad-hoc signing is fine until something
