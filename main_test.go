@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,6 +13,36 @@ import (
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/tmux"
 )
+
+// explicitFlagOverride must tell an unset -dangerous apart from an
+// explicitly passed one — a plain flag.Bool default can't, and runSpawn used
+// to force every spawned session non-dangerous regardless of the project's
+// configured default before this distinction existed.
+func TestExplicitFlagOverride(t *testing.T) {
+	newFlagSet := func(args []string) (*flag.FlagSet, *bool) {
+		fs := flag.NewFlagSet("spawn", flag.ContinueOnError)
+		dangerous := fs.Bool("dangerous", false, "")
+		if err := fs.Parse(args); err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		return fs, dangerous
+	}
+
+	fs, dangerous := newFlagSet(nil)
+	if got := explicitFlagOverride(fs, "dangerous", *dangerous); got != nil {
+		t.Fatalf("unset flag: got override %v, want nil", *got)
+	}
+
+	fs, dangerous = newFlagSet([]string{"-dangerous=true"})
+	if got := explicitFlagOverride(fs, "dangerous", *dangerous); got == nil || !*got {
+		t.Fatalf("-dangerous=true: got %v, want pointer to true", got)
+	}
+
+	fs, dangerous = newFlagSet([]string{"-dangerous=false"})
+	if got := explicitFlagOverride(fs, "dangerous", *dangerous); got == nil || *got {
+		t.Fatalf("-dangerous=false: got %v, want pointer to false", got)
+	}
+}
 
 // saveConfig must log a Save failure rather than silently discard it —
 // otherwise cfg.TmuxSetupAsked/AutoTmuxAsked being lost would reopen the

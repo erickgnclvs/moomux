@@ -78,20 +78,18 @@ type Args struct {
 	TmuxSession string        `json:"tmux_session,omitempty"`
 	Delta       int           `json:"delta,omitempty"`
 	State       watcher.State `json:"state,omitempty"`
-	// Dangerous is CreateSession's dangerous, and only CreateSession's: it's
-	// a pointer so the caller can leave it unset (nil, simply omitted on the
-	// wire) to mean "use the project's own default" — a plain bool can't
-	// express that, since an explicit false and an absent field would be
-	// indistinguishable. SetSessionAgent's dangerous is always an explicit
-	// choice with no such case, so it gets its own plain-bool field
-	// (AgentDangerous) rather than making every caller of this one carry a
-	// pointer it never needed.
-	Dangerous      *bool          `json:"dangerous,omitempty"`
-	AgentDangerous bool           `json:"agent_dangerous,omitempty"`
-	OpenTerminal   bool           `json:"open_terminal,omitempty"`
-	AutoSubmit     bool           `json:"auto_submit,omitempty"`
-	On             bool           `json:"on,omitempty"` // archived / recentFirst / compact / autoTmux
-	Proj           config.Project `json:"proj,omitempty"`
+	// Dangerous is shared by CreateSession and SetSessionAgent. It's a
+	// pointer so CreateSession's caller can leave it unset (nil, simply
+	// omitted on the wire) to mean "use the project's own default" — a plain
+	// bool can't express that, since an explicit false and an absent field
+	// would be indistinguishable. SetSessionAgent's dangerous is always an
+	// explicit choice, so its server-side handler treats a nil Dangerous
+	// (which it never sends) the same as false.
+	Dangerous    *bool          `json:"dangerous,omitempty"`
+	OpenTerminal bool           `json:"open_terminal,omitempty"`
+	AutoSubmit   bool           `json:"auto_submit,omitempty"`
+	On           bool           `json:"on,omitempty"` // archived / recentFirst / compact / autoTmux
+	Proj         config.Project `json:"proj,omitempty"`
 }
 
 // Result is the matching union of every return shape. Same trade as Args.
