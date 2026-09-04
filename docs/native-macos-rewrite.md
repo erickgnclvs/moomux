@@ -81,6 +81,16 @@ Cost: medium. Risk: medium (control-mode parsing is fiddly, and layout
 sync between tmux and native splits is where iTerm2 has historically had bugs).
 Payoff: highest — it's additive rather than a replacement.
 
+**Correction, from building it:** control mode does *not* escape tmux's shared
+window size, which an earlier draft of this doc assumed. A `-CC` client sets its
+size with `refresh-client -C` and the window follows it, letterboxing every
+other client, exactly as a plain `tmux attach` does. Grouped sessions
+(`new-session -t`) don't help either — a group shares the windows themselves.
+Both measured. What control mode actually buys is per-pane native views (real
+selection, scrollback and copy per pane) and the app *knowing* the layout, which
+is the substrate every native feature in §5 wants. It is worth doing for that,
+not for sizing.
+
 ### B. App owns the PTYs, tmux is gone
 
 Forkpty per pane, terminal emulation in-process, panes are native views.
@@ -205,6 +215,42 @@ Two observations that matter more than the table:
 
 **Don't rewrite. Add a Mac front end on the existing core, over tmux control
 mode.**
+
+Status: **all three are done.** `internal/ipc` / `moomux serve` / `moomux ui -socket` carry the
+boundary; `macos/` is a SwiftUI app on SwiftPM that lists sessions over the socket, streams live
+agent state, attaches a session's tmux over **control mode** with each pane in its own native view
+and a tab bar for its windows (plain `tmux attach` kept as a fallback), creates / renames / tags /
+archives / reorders / deletes sessions, and carries every §5 payoff feature it is going to carry —
+the menu-bar count, notifications, review and the session grid. See `macos/CLAUDE.md` for how to
+work on it, and its "Deliberately not done" list for the shape the last three landed in and why.
+
+What is left is not on this doc's list: **distribution** (no signing identity, no `dist`/`notarize`,
+no icon — the gate on anyone else running it), the write paths past the session row
+(`SetSessionAgent`, project CRUD, the settings toggles — all on the socket already, pure appetite),
+and **FSEvents instead of the 2s poll**, the one §5 item nothing has claimed. The New Session sheet
+asks three of the TUI's thirteen questions on purpose; growing it wants an IPC method that hands
+over the lists the core validates against, which does not exist yet.
+
+What the sizing table below got roughly right: the control-mode client landed near the bottom of
+its 2–3 week estimate, because the protocol is small once you stop guessing at it and read
+`man tmux`'s CONTROL MODE section. What it got wrong is where the time actually goes — not the
+parser (a day, and it is pure and test-covered) but the four undocumented behaviours around it,
+each of which presents as a rendering bug and none of which is in any documentation: the client
+ignoring its pty size, the unsolicited `%begin` block on attach, views painted before they have a
+frame being silently reset, and stale column counts from `getOptimalFrameSize`. Budget for that
+class of thing, not for the protocol.
+
+Next, in the order they are worth doing:
+
+1. ~~**Windows as tabs.**~~ Done. Cheap as predicted, though the claim above that `%window-add`
+   "already arrives and is parsed" was wrong — it was reaching `.unhandled`, and the discovery
+   actually piggybacks on the `list-windows` call the layout code already made.
+2. ~~**Scrollback.**~~ Done: a pane's first paint restores `capture-pane -S -1000` into SwiftTerm's
+   own scroll buffer. Later repaints stay visible-only.
+3. ~~**Then §5's payoff features**~~ Done, two of the three not as described: notifications as
+   banners plus a dock badge; diff review as a `new-window -n review` rather than a native patch
+   viewer; the multi-session grid as periodic read-only `capture-pane` snapshots rather than live
+   views, because every tmux client on a session sets the shared window size.
 
 Concretely:
 

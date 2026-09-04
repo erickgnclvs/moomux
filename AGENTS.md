@@ -30,6 +30,33 @@ Send the resulting PNG(s) to the user so they can see the change, the same way y
 
 Forms like the new-session dialog track focus as a plain int (`newFormFocus`) and key several independent switches off it — tab-cycling, typing/left-right handling, and focus-in in `internal/tui/update.go`, but also `focusedOverlayLine` in `internal/tui/view.go` (which decides where the overlay viewport scrolls to keep the focused field visible). When adding, removing, or reordering a field, `grep -rn "newFormFocus" internal/tui/*.go` and update every hit, not just the ones in the file you're already touching — a stale `default:` case doesn't fail to compile, it just silently scrolls to the wrong field at runtime, which reads to a user as the whole dialog "resizing" or jumping.
 
+## The macOS app
+
+`macos/` is a separate SwiftUI app that drives this same core over the `moomux serve` unix socket
+(`internal/ipc`). It has its own working notes in `macos/CLAUDE.md` — read those before touching
+anything in there; none of the Go rules above apply to it.
+
+**There is no Xcode on this machine** (`xcode-select -p` → `/Library/Developer/CommandLineTools`),
+so a Mac app here is a **SwiftPM executable plus a Makefile that assembles and signs the `.app`
+bundle by hand — never an `.xcodeproj`**. `xcodebuild` doesn't exist, `#Preview` doesn't compile
+(its macro plugin ships with Xcode), and neither XCTest nor swift-testing is importable, so the
+test harness is `assert`-based `demo()` functions run through the real binary via `--selftest`.
+Take "scaffold the Xcode project" as "scaffold the Mac app" and build it this way; don't go looking
+for a project file that cannot exist. `macos/` and `~/tmp/mergeright` are both worked examples.
+
+When trying the Mac app out, never point it at a real moomux session — attaching resizes it and
+stray keystrokes land in a live agent's prompt. `macos/CLAUDE.md` has a copy-paste recipe for a
+throwaway core and session under `XDG_CONFIG_HOME`.
+
+Two rules reach back across the boundary:
+
+- `internal/ipc` is a contract with a second client now. Changing a method's shape, or
+  `session.Session`'s JSON tags, breaks the Swift side silently — it decodes into optionals. Grep
+  `macos/Sources/Moomux/Core/Models.swift` when you touch either.
+- The Mac app attaches sessions with `tmux -CC` (control mode) and parses tmux's line protocol, so
+  it depends on the *names* moomux gives tmux sessions and on nothing else about how the TUI drives
+  tmux. Renaming or restructuring `internal/tmux`'s session naming is a change the Swift side feels.
+
 ## Releases and commit messages
 
 Every merge to `main` auto-tags and deploys a new version (`.github/workflows/deploy.yml` computes the next tag via `scripts/next_version.sh`, then `release.yml` builds and publishes it) — there's no manual release step, and no way to land a commit on `main` without it shipping.
