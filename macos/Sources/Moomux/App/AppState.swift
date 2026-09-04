@@ -30,6 +30,11 @@ public final class AppState {
     /// watcher observes; `state(for:)` does the join.
     public private(set) var states: [String: AgentState] = [:]
     public private(set) var config: Config?
+    /// Which agents the core can launch, and what to offer in a model or
+    /// thinking-level picker for each. Fetched once — it is a static table in
+    /// `internal/app`, served over the socket precisely so a front end never
+    /// keeps its own copy to drift.
+    public private(set) var agentOptions: [AgentOption] = []
     /// Worktree and PR state, by session id, for sessions that have been
     /// looked at. Deliberately **not** part of the poll loop: each entry costs
     /// a `git status`, a `git log` and a `gh` call over the network, so filling
@@ -74,14 +79,41 @@ public final class AppState {
     /// read AppState and nothing else.
     public enum Sheet: Identifiable, Hashable {
         case create
-        case rename(Session)
+        /// Name, agent and the dangerous flag together — `internal/tui`'s
+        /// edit-session form is one dialog over the same three fields, and
+        /// `RenameSession` no-ops on an unchanged name, so there is nothing to
+        /// gain from splitting them into two sheets and two shortcuts.
+        case edit(Session)
         case tags(Session)
+        /// Settings *and* project management, on two tabs.
+        ///
+        /// The project add/edit form is deliberately not a case here: it is
+        /// opened from inside this sheet, and one `.sheet(item:)` modifier can
+        /// only present one thing — a nested form needs its own presentation on
+        /// the settings sheet itself. Which also means there is exactly one
+        /// place projects are managed from, and one host for the dialogs that
+        /// managing them raises.
+        case settings
         public var id: Self { self }
     }
     public var sheet: Sheet?
     /// The session the delete confirmation is asking about. Its own field, not
     /// a `Sheet` case: an alert is not a sheet and cannot share the modifier.
     public var pendingDelete: Session?
+    /// The project the remove confirmation is asking about. Same reason.
+    public var pendingProjectDelete: String?
+
+    /// A project whose repo path turned out not to be a git repository. Not an
+    /// error — a question, and these are its two answers (`initProject` /
+    /// `addPlainProject`), which is exactly what the TUI's init-choice dialog
+    /// asks. Carries the form's own `Project` so answering does not need the
+    /// sheet to still be open.
+    public struct PendingProject: Identifiable, Hashable, Sendable {
+        public let name: String
+        public let project: Project
+        public var id: String { name }
+    }
+    public var pendingProjectInit: PendingProject?
     /// The live control-mode client, while one is attached. Menu commands need
     /// to reach it, and the menu is the only way to drive tmux's pane
     /// navigation — the prefix key cannot reach tmux in control mode. Weak so
@@ -146,6 +178,40 @@ public final class AppState {
         config?.projects[project]?.emoji
     }
 
+    /// Manual reordering is meaningless while the core sorts by last-opened —
+    /// the next open would undo it. The TUI disables shift+↑↓ for the same
+    /// reason rather than letting a move silently do nothing.
+    public var canReorder: Bool { config?.sortRecentFirst != true }
+
+    // MARK: Agent table
+    //
+    // These three mirror `internal/tui`'s `agentNames` / `modelNamesFor` /
+    // `thinkingNamesFor` exactly, fallbacks included, over the same table the
+    // TUI reads. The point is that neither side owns a copy of the *contents*.
+
+    public var agentNames: [String] {
+        // A core that answered with nothing at all would otherwise leave every
+        // picker empty and unselectable; claude is what the TUI falls back to.
+        agentOptions.isEmpty ? ["claude"] : agentOptions.map(\.name)
+    }
+
+    /// The model choices for `agent`, falling back to claude's list. Empty
+    /// means the agent has no fixed list worth offering (opencode) and the
+    /// control should be a free-text field instead of a picker.
+    public func models(for agent: String) -> [String] {
+        if let own = agentOptions.first(where: { $0.name == agent })?.models, !own.isEmpty {
+            return own
+        }
+        return agentOptions.first { $0.name == "claude" }?.models ?? []
+    }
+
+    /// The thinking-level choices for `agent`, falling back to claude's.
+    public func thinking(for agent: String) -> [String] {
+        agentOptions.first { $0.name == agent }?.thinking
+            ?? agentOptions.first { $0.name == "claude" }?.thinking
+            ?? []
+    }
+
     // MARK: Lifecycle
 
     public func start() {
@@ -157,7 +223,24 @@ public final class AppState {
         tasks = [
             Task { [weak self] in await self?.pollLoop() },
             Task { [weak self] in await self?.watchLoop() },
+            Task { [weak self] in await self?.loadAgentOptions() },
         ]
+    }
+
+    /// Retries until it lands: the app can start before `moomux serve` does,
+    /// and without the table the new-session form has no pickers at all. Once
+    /// fetched it is never refetched — the Go side's table is a `var` in the
+    /// binary, so it cannot change without a restart of the core.
+    private func loadAgentOptions() async {
+        while !Task.isCancelled, agentOptions.isEmpty {
+            if let options = try? await withoutBlockingTheUI({ [client] in
+                try client.agentOptions()
+            }), !options.isEmpty {
+                agentOptions = options
+                return
+            }
+            try? await Task.sleep(for: .seconds(2))
+        }
     }
 
     public func stop() {
@@ -314,6 +397,51 @@ public final class AppState {
         // command, so it is quoted rather than trusted.
         assert(reviewScript(base: "a'b").contains(#"'origin/a'\''b'"#), reviewScript(base: "a'b"))
 
+        // The thinking level reaches claude and opencode as a prompt phrase,
+        // because neither has a launch-time flag for it. Getting this wrong is
+        // invisible: the session is created either way and simply does not
+        // think as hard as the user asked it to.
+        assert(thinkingPromptPrefix("ultrathink") == "ultrathink: ")
+        assert(thinkingPromptPrefix("default").isEmpty, #""default" means prepend nothing"#)
+        assert(thinkingPromptPrefix("").isEmpty)
+
+        assert(promptExtras(ticket: "T-1", pr: "").isEmpty == false)
+        assert(promptExtras(ticket: "T-1", pr: "http://p/1") == "Ticket: T-1\nPR: http://p/1")
+        assert(promptExtras(ticket: "", pr: "http://p/1") == "PR: http://p/1")
+        assert(promptExtras(ticket: "", pr: "").isEmpty, "no tags adds no lines")
+
+        assert(joinHint("a", "b") == "a\nb")
+        assert(joinHint("", "b") == "b" && joinHint("a", "") == "a")
+
+        // The agent table's fallbacks, which decide what every picker in the
+        // new-session form contains. Same rules as `internal/tui`'s
+        // agentNames / modelNamesFor / thinkingNamesFor.
+        MainActor.assumeIsolated {
+            let app = AppState()
+            // A core that never answered must still leave the form usable.
+            assert(app.agentNames == ["claude"], "\(app.agentNames)")
+            assert(app.models(for: "claude").isEmpty)
+
+            app.agentOptions = [
+                AgentOption(name: "claude", models: ["default", "opus"],
+                            thinking: ["default", "ultrathink"]),
+                AgentOption(name: "codex", models: ["default", "gpt"], thinking: ["default", "high"]),
+                AgentOption(name: "opencode", thinking: ["default", "think"]),
+            ]
+            assert(app.agentNames == ["claude", "codex", "opencode"])
+            assert(app.models(for: "codex") == ["default", "gpt"])
+            // opencode has no list of its own, so it falls back to claude's —
+            // which is why its model control is a free-text field in the form
+            // rather than this picker.
+            assert(app.models(for: "opencode") == ["default", "opus"])
+            assert(app.models(for: "nonesuch") == ["default", "opus"], "unknown agents fall back")
+            assert(app.thinking(for: "codex") == ["default", "high"])
+            assert(app.thinking(for: "nonesuch") == ["default", "ultrathink"])
+
+            // Manual reordering is off while the core sorts by last-opened.
+            assert(app.canReorder, "no config yet must not disable reordering")
+        }
+
         // A mutation the server refuses is an answer, not a dead socket. It has
         // to reach the user as its own message and leave `connection` exactly
         // where the poll loop left it, or one declined action blanks the
@@ -363,46 +491,94 @@ public final class AppState {
         actionError = "\(what) failed: \(error.localizedDescription)"
     }
 
-    /// Three fields, and that is the whole form.
+    /// Creates a session, then does the four things the TUI does *after*
+    /// `CreateSession` returns — and this method exists rather than the sheet
+    /// calling the client directly because every one of them is a semantic the
+    /// core does not apply and a second front end would otherwise get wrong:
     ///
-    /// Agent, model, thinking level, base branch, "resume this existing branch"
-    /// and auto-submit are all deliberately absent: the core defaults them from
-    /// the project's config, and offering a picker for any of them means
-    /// shipping a second copy of `internal/tui`'s `agentNames` /
-    /// `thinkingNamesFor` / `modelNamesFor` tables on this side of the socket,
-    /// to drift silently the next time the Go side gains an agent. Add a
-    /// control here when the core can hand over the list it validates against —
-    /// not before. The TUI is still the place to create anything unusual.
+    /// 1. A changed auto-submit toggle is remembered as the new default, best
+    ///    effort — the TUI writes it before creating, and a failed config save
+    ///    must not block a session.
+    /// 2. A PR tag is set afterwards, because `CreateSession` takes a ticket
+    ///    and not a PR.
+    /// 3. The thinking level reaches claude and opencode as a phrase prepended
+    ///    to the first prompt — neither has a launch-time flag for it. codex is
+    ///    the exception: its level is a real `-c model_reasoning_effort` value
+    ///    that the core already applied, so prepending it there would say it
+    ///    twice.
+    /// 4. Ticket and PR are appended to the prompt as their own lines, so the
+    ///    agent knows what it is working on.
     ///
-    /// `dangerous` is the exception, and it has to be sent: `App.CreateSession`
-    /// takes it as a plain `bool` and passes it straight to `buildAgentCmd`
-    /// with no fallback to the project — the defaulting lives in
-    /// `internal/tui/update.go`, not in the core. Leaving it unset would create
+    /// `dangerous` is the caller's to compute: `App.CreateSession` takes it as
+    /// a plain bool with no fallback to the project, so leaving it out creates
     /// sessions in a `dangerous = true` project *without*
-    /// `--dangerously-skip-permissions`, so the same project's agents behave
-    /// differently depending on which front end made them.
-    public func create(project: String, name: String, prompt: String) {
-        let dangerous = config?.projects[project]?.dangerous ?? false
+    /// `--dangerously-skip-permissions`. Everything else may be "" for "let the
+    /// core default it".
+    public func create(project: String, name: String, existingBranch: String = "",
+                       baseBranch: String = "", agent: String = "", dangerous: Bool,
+                       model: String = "", thinking: String = "", ticket: String = "",
+                       pr: String = "", prompt: String, autoSubmit: Bool = false) {
+        let rememberAutoSubmit = autoSubmit != (config?.autoSubmitDefault ?? false)
         mutate("Creating session") { client in
-            let (session, hint) = try client.createSession(
-                project: project, name: name, dangerous: dangerous)
+            if rememberAutoSubmit {
+                // Best effort, exactly as the TUI treats it: remembering a
+                // toggle is not worth failing a session creation over.
+                try? client.setAutoSubmitDefault(autoSubmit)
+            }
+            let (session, created) = try client.createSession(
+                project: project, name: name, agent: agent, existingBranch: existingBranch,
+                ticket: ticket, dangerous: dangerous, baseBranch: baseBranch,
+                model: model, thinking: thinking)
+            // The worktree and the tmux session exist from here on, so nothing
+            // below may be reported as a failed creation — it would invite a
+            // retry that answers "session already exists".
+            var hint = created
+            if !pr.isEmpty {
+                do {
+                    try client.setTags(id: session.id, ticket: ticket, pr: pr)
+                } catch {
+                    hint = joinHint(hint, "couldn't set PR tag: \(error.localizedDescription)")
+                }
+            }
             guard !prompt.isEmpty else { return hint }
+            var prompt = prompt
+            if agent != "codex" {
+                prompt = AppState.thinkingPromptPrefix(thinking) + prompt
+            }
+            let extras = AppState.promptExtras(ticket: ticket, pr: pr)
+            if !extras.isEmpty { prompt += "\n\n" + extras }
             // Recorded on the session as well as typed into the pane, so the
             // detail pane's "First prompt" has something to show. Best-effort,
             // exactly as the TUI treats it.
             try? client.setPrompt(id: session.id, prompt: prompt)
             do {
-                try client.startFirstPrompt(tmuxSession: session.tmuxSession, prompt: prompt)
+                try client.startFirstPrompt(tmuxSession: session.tmuxSession,
+                                            prompt: prompt, autoSubmit: autoSubmit)
             } catch {
                 // The worktree and the tmux session already exist by now. A
                 // prompt that never landed is a hint, not a failed creation —
                 // reporting it as one would tell the user to try again and
                 // hand them "session already exists".
-                let note = "couldn't send first prompt: \(error.localizedDescription)"
-                return hint.isEmpty ? note : hint + "\n" + note
+                return joinHint(hint, "couldn't send first prompt: \(error.localizedDescription)")
             }
             return hint
         }
+    }
+
+    /// `internal/tui`'s `thinkingPromptPrefix`: there is no CLI flag for
+    /// extended-thinking effort on claude or opencode, so the level goes in as
+    /// the same magic words a user would type. "default" prepends nothing.
+    nonisolated static func thinkingPromptPrefix(_ level: String) -> String {
+        (level.isEmpty || level == "default") ? "" : level + ": "
+    }
+
+    /// `internal/tui`'s `newFormPromptExtras`: the ticket and PR as their own
+    /// lines under the first prompt, so the agent is told what it is on.
+    nonisolated static func promptExtras(ticket: String, pr: String) -> String {
+        var lines: [String] = []
+        if !ticket.isEmpty { lines.append("Ticket: " + ticket) }
+        if !pr.isEmpty { lines.append("PR: " + pr) }
+        return lines.joined(separator: "\n")
     }
 
     public func open(_ session: Session) {
@@ -483,8 +659,16 @@ public final class AppState {
             + #" exec "${SHELL:-/bin/sh}""#
     }
 
-    public func rename(_ session: Session, to name: String) {
-        mutate("Rename") { try $0.rename(id: session.id, to: name); return nil }
+    /// Both halves of the edit-session form, in the TUI's order: the rename
+    /// first (it no-ops when the name is unchanged, and fails loudly on a
+    /// collision, which must stop the agent change too), then the agent.
+    public func edit(_ session: Session, name: String, agent: String, dangerous: Bool) {
+        mutate("Save session") { client in
+            try client.rename(id: session.id, to: name)
+            guard agent != session.agentName || dangerous != session.dangerous else { return nil }
+            try client.setAgent(id: session.id, agent: agent, dangerous: dangerous)
+            return "\(name) will launch \(agent) next time it's opened."
+        }
     }
 
     public func setTags(_ session: Session, ticket: String, pr: String) {
@@ -500,6 +684,89 @@ public final class AppState {
 
     public func move(_ session: Session, by delta: Int) {
         mutate("Move") { try $0.move(id: session.id, delta: delta); return nil }
+    }
+
+    // MARK: Projects
+
+    /// The core insists the repo path already be a git repository, and answers
+    /// "it isn't" as a sentinel rather than a plain failure — so this is the
+    /// one write that can end in a question. `pendingProjectInit` is that
+    /// question; `initProject` and `addPlainProject` are its answers.
+    public func addProject(name: String, _ project: Project) {
+        Task {
+            busy = "Add project"
+            defer { busy = nil }
+            do {
+                try await withoutBlockingTheUI { [client] in
+                    try client.addProject(name: name, project)
+                }
+                await refresh()
+            } catch MoomuxClient.Failure.notGitRepo {
+                pendingProjectInit = PendingProject(name: name, project: project)
+            } catch {
+                failed("Add project", error)
+            }
+        }
+    }
+
+    /// `mkdir -p`, `git init`, one empty commit, then the project is saved as a
+    /// git one — the "i" answer in the TUI's init-choice dialog.
+    public func initProject(name: String, _ project: Project) {
+        mutate("Init repo") { client in
+            try client.initProjectAndAdd(name: name, project)
+            return "Initialized a git repo at \(project.repo) and added \(name)."
+        }
+    }
+
+    /// The "s" answer: no git at all, so no worktrees and no branches — every
+    /// session runs in the folder itself.
+    public func addPlainProject(name: String, _ project: Project) {
+        mutate("Add project") { client in
+            try client.addPlainProject(name: name, project)
+            return "Added \(name) as a plain folder — no worktrees or branches."
+        }
+    }
+
+    public func updateProject(name: String, _ project: Project) {
+        mutate("Save project") { try $0.updateProject(name: name, project); return nil }
+    }
+
+    /// Config only — the repository on disk is untouched. The core refuses
+    /// while the project still has sessions, archived ones included, and that
+    /// refusal is the message the user sees.
+    public func removeProject(name: String) {
+        mutate("Remove project") { try $0.removeProject(name: name); return nil }
+    }
+
+    public func moveProject(name: String, by delta: Int) {
+        mutate("Move project") { try $0.moveProject(name: name, delta: delta); return nil }
+    }
+
+    // MARK: Settings
+    //
+    // Each is one socket call that rewrites one field of the shared config, so
+    // a change here shows up in the TUI's settings screen and vice versa.
+
+    public func setAutoSubmitDefault(_ on: Bool) {
+        mutate("Save setting") { try $0.setAutoSubmitDefault(on); return nil }
+    }
+
+    public func setSortRecentFirst(_ on: Bool) {
+        mutate("Save setting") { try $0.setSortRecentFirst(on); return nil }
+    }
+
+    public func setAutoTmux(_ on: Bool) {
+        mutate("Save setting") { try $0.setAutoTmux(on); return nil }
+    }
+
+    public func setCompactDetail(_ on: Bool) {
+        mutate("Save setting") { try $0.setCompactDetail(on); return nil }
+    }
+
+    /// The TUI's palette, edited from here because it is one config file. This
+    /// app draws itself with semantic colors and is unaffected by either value.
+    public func setTheme(_ theme: String, appearance: String) {
+        mutate("Save theme") { try $0.setTheme(theme, appearance: appearance); return nil }
     }
 
     public func killTmux(_ session: Session) {
@@ -519,6 +786,15 @@ public final class AppState {
     private func detachIfShowing(_ session: Session) {
         if selectedSessionID == session.id { selectedSessionID = nil }
     }
+}
+
+/// Two notes on one line, dropping whichever half is empty. `internal/app`'s
+/// `joinHint`, for the same reason: a create that succeeded but could not send
+/// its prompt has two things to say and one place to say them.
+func joinHint(_ a: String, _ b: String) -> String {
+    if a.isEmpty { return b }
+    if b.isEmpty { return a }
+    return a + "\n" + b
 }
 
 /// Every `MoomuxClient` call is a blocking socket read. Running one on the main

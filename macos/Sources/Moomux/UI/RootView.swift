@@ -87,17 +87,16 @@ struct RootView: View {
             switch sheet {
             case .create:
                 NewSessionSheet()
-            case let .rename(session):
-                TextFieldSheet(title: "Rename “\(session.name)”",
-                               labels: ["Name"], values: [session.name]) {
-                    app.rename(session, to: $0[0])
-                }
+            case let .edit(session):
+                EditSessionSheet(session: session)
             case let .tags(session):
                 TextFieldSheet(title: "Tags for “\(session.name)”",
                                labels: ["Ticket", "PR"],
                                values: [session.ticket ?? "", session.pr ?? ""]) {
                     app.setTags(session, ticket: $0[0], pr: $0[1])
                 }
+            case .settings:
+                SettingsSheet()
             }
         }
         .alert("Delete session?", isPresented: Binding(
@@ -138,39 +137,93 @@ struct RootView: View {
     }
 }
 
-/// Three fields, deliberately — see `AppState.create` for what is missing and
-/// why. Everything else the TUI's new-session dialog asks for is answered by
-/// the project's own configuration on the Go side.
+/// The full new-session form — the same questions the TUI's dialog asks, now
+/// that the core serves the agent/model/thinking table (`AgentOptions`) that
+/// the pickers are built from. Nothing here hardcodes a list.
+///
+/// The three fields that matter most are up top and the rest is behind a
+/// disclosure, because a session in a well-configured project needs none of
+/// them: the project's own settings already answer every one.
 private struct NewSessionSheet: View {
     @Environment(AppState.self) private var app
     @Environment(\.dismiss) private var dismiss
-    @State private var project = ""
-    @State private var name = ""
-    @State private var prompt = ""
+    @State private var form = NewSessionForm()
+    @State private var showMore = false
 
     private var projects: [String] { app.config?.orderedProjectNames ?? app.projects }
+    private var project: Project? { app.config?.projects[form.project] }
+    private var models: [String] { app.models(for: form.agent) }
+    private var thinking: [String] { app.thinking(for: form.agent) }
+    /// opencode has no fixed model list, so its control is a text field. Keyed
+    /// off the list being empty rather than off the agent's name, so a future
+    /// agent in the same position needs no change here.
+    private var hasModelList: Bool { !models.isEmpty && form.agent != "opencode" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("New session").font(.headline)
             Form {
-                Picker("Project", selection: $project) {
+                Picker("Project", selection: $form.project) {
                     ForEach(projects, id: \.self) { Text($0).tag($0) }
                 }
-                TextField("Name", text: $name)
-                TextField("First prompt", text: $prompt, axis: .vertical)
+                TextField("Name", text: $form.name)
+                    .help("Names the branch, the worktree and the tmux session")
+                TextField("First prompt", text: $form.prompt, axis: .vertical)
                     .lineLimit(3...6)
+                Toggle("Send it (press Enter)", isOn: $form.autoSubmit)
+                    .help("Off leaves the prompt typed but unsent, so you can look before it runs")
+
+                DisclosureGroup("Agent, model, branch", isExpanded: $showMore) {
+                    Picker("Agent", selection: $form.agent) {
+                        // Only for a `prompt_agent` project, which starts with
+                        // no agent chosen and must not silently pick one.
+                        if form.agent.isEmpty { Text("choose one").tag("") }
+                        ForEach(app.agentNames, id: \.self) { Text($0).tag($0) }
+                    }
+                    Toggle("Skip permission prompts", isOn: $form.dangerous)
+                        .help(form.agent == "opencode"
+                              ? "opencode has no permission-skipping flag — this does nothing for it"
+                              : "claude: --dangerously-skip-permissions, codex: --yolo")
+                    if hasModelList {
+                        Picker("Model", selection: $form.model) {
+                            ForEach(models, id: \.self) { Text($0).tag($0) }
+                        }
+                    } else {
+                        TextField("Model", text: $form.modelText, prompt: Text("default"))
+                            .help("\(form.agent) has no fixed model list — type one or leave it empty")
+                    }
+                    if !thinking.isEmpty {
+                        Picker("Thinking", selection: $form.thinking) {
+                            ForEach(thinking, id: \.self) { Text($0).tag($0) }
+                        }
+                        .help(form.agent == "codex"
+                              ? "codex takes this as a real reasoning-effort flag"
+                              : "Prepended to the first prompt — there is no CLI flag for it")
+                    }
+                    // A short placeholder on purpose: a long one pushes the
+                    // field onto its own line in a grouped Form and the row
+                    // stops looking like the ones above it.
+                    TextField("Existing branch", text: $form.existingBranch,
+                              prompt: Text("resume, don't cut"))
+                    TextField("Base branch", text: $form.baseBranch,
+                              prompt: Text(project?.baseBranch ?? "the project's default"))
+                        .disabled(project?.isPlain == true)
+                    TextField("Ticket", text: $form.ticket)
+                    TextField("PR", text: $form.pr)
+                }
             }
             .formStyle(.grouped)
             // An empty `TextField` in a grouped Form draws no box at all, so a
             // blank field reads as a static label — the multi-line prompt field
             // as a large blank void. A border is the whole fix.
             .textFieldStyle(.roundedBorder)
-            Text("Agent, model and branch come from the project's settings. "
-                 + "The TUI's dialog is still the place to override them.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if form.agent.isEmpty {
+                Text("This project asks for an agent every time — pick one under "
+                     + "“Agent, model, branch”.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
@@ -179,20 +232,98 @@ private struct NewSessionSheet: View {
                 // userscripts: `app.busy` reports progress in the toolbar, and
                 // a refusal lands in the error alert either way.
                 Button("Create") {
-                    app.create(project: project, name: name, prompt: prompt)
+                    app.create(project: form.project, name: form.name,
+                               existingBranch: form.existingBranch, baseBranch: form.baseBranch,
+                               agent: form.agent, dangerous: form.dangerous,
+                               model: form.modelToSend(hasModelList: hasModelList),
+                               thinking: form.thinking, ticket: form.ticket, pr: form.pr,
+                               prompt: form.prompt, autoSubmit: form.autoSubmit)
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(project.isEmpty || name.isEmpty)
+                .disabled(!form.canCreate)
             }
         }
         .padding(20)
-        .frame(width: 420)
+        .frame(width: 460)
         // Seeded from the row being looked at — a second session in the same
         // project is the common case.
         .onAppear {
-            project = app.visibleSessions.first { $0.id == app.selectedSessionID }?.project
+            form.project = app.visibleSessions.first { $0.id == app.selectedSessionID }?.project
                 ?? projects.first ?? ""
+            form.autoSubmit = app.config?.autoSubmitDefault ?? false
+            applyProject()
+            // A project that insists on an explicit agent has nothing selected,
+            // and a collapsed section would hide the only control that can fix it.
+            showMore = form.agent.isEmpty
+        }
+        // The agent, and with it every list below it, belongs to the project.
+        .onChange(of: form.project) { _, _ in applyProject() }
+        .onChange(of: form.agent) { _, _ in form.clampChoices(models: models, thinking: thinking) }
+        // The table arrives one round trip after the window, so a sheet opened
+        // in that gap would seed its agent against an empty list.
+        .onChange(of: app.agentNames) { _, _ in applyProject() }
+    }
+
+    private func applyProject() {
+        form.applyProjectDefaults(project, agentNames: app.agentNames)
+        form.clampChoices(models: models, thinking: thinking)
+    }
+}
+
+/// Name, agent and the dangerous flag — the same three fields as the TUI's
+/// edit-session form, saved the same way (rename, then agent).
+private struct EditSessionSheet: View {
+    @Environment(AppState.self) private var app
+    @Environment(\.dismiss) private var dismiss
+    let session: Session
+    @State private var name = ""
+    @State private var agent = ""
+    @State private var dangerous = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Edit “\(session.name)”").font(.headline)
+            Form {
+                TextField("Name", text: $name)
+                Picker("Agent", selection: $agent) {
+                    ForEach(app.agentNames, id: \.self) { Text($0).tag($0) }
+                }
+                Toggle("Skip permission prompts", isOn: $dangerous)
+                    .disabled(agent == "opencode")
+                    .help(agent == "opencode"
+                          ? "opencode has no permission-skipping flag"
+                          : "claude: --dangerously-skip-permissions, codex: --yolo")
+            }
+            .formStyle(.grouped)
+            .textFieldStyle(.roundedBorder)
+            Text("Renaming also renames the tmux session. A new agent takes effect the next "
+                 + "time this session is opened — the one already running keeps what it "
+                 + "was launched with.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save") {
+                    app.edit(session, name: name, agent: agent, dangerous: dangerous)
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(name.trimmed.isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 400)
+        .onAppear {
+            name = session.name
+            // "" is not one of `agentNames`, and a session whose agent the core
+            // no longer offers would leave the picker unselectable.
+            agent = app.agentNames.contains(session.agentName)
+                ? session.agentName : (app.agentNames.first ?? "claude")
+            dangerous = session.dangerous
         }
     }
 }
@@ -304,14 +435,16 @@ private struct SessionRow: View {
             Button("Open in Terminal") { app.open(session) }
             Button("Review Changes") { app.review(session) }
                 .disabled(!app.canReview(session))
-            Button("Rename…") { app.sheet = .rename(session) }
+            Button("Edit…") { app.sheet = .edit(session) }
             Button("Tags…") { app.sheet = .tags(session) }
             Divider()
             Button(session.archived ? "Unarchive" : "Archive") {
                 app.setArchived(session, !session.archived)
             }
             Button("Move Up") { app.move(session, by: -1) }
+                .disabled(!app.canReorder)
             Button("Move Down") { app.move(session, by: 1) }
+                .disabled(!app.canReorder)
             Divider()
             // No confirmation: the worktree survives, the powersleep dot shows
             // the result immediately, and "Open in Terminal" brings it back.
@@ -338,8 +471,24 @@ private struct EmptyState: View {
                         .foregroundStyle(.secondary)
                 }
             }
+        } else if app.projects.isEmpty {
+            // The first thing a fresh install sees. Until the app could add a
+            // project it had to say "go and use the TUI"; now it can offer the
+            // one action that gets you out of here.
+            ContentUnavailableView {
+                Label("No projects yet", systemImage: "folder.badge.plus")
+            } description: {
+                Text("A project is a repo moomux cuts session worktrees from.")
+            } actions: {
+                Button("Add a project…") { app.sheet = .settings }
+                    .buttonStyle(.borderedProminent)
+            }
         } else {
-            ContentUnavailableView("No sessions", systemImage: "tray")
+            ContentUnavailableView {
+                Label("No sessions", systemImage: "tray")
+            } description: {
+                Text("⌘N starts one.")
+            }
         }
     }
 }
@@ -443,6 +592,13 @@ private struct SessionInfo: View {
                             Label("Tags", systemImage: "tag")
                         }
                         .help("Set this session's ticket and pull request")
+
+                        Button {
+                            app.sheet = .edit(session)
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
+                        }
+                        .help("This session's name and agent")
 
                         Button {
                             app.review(session)

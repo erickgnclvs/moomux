@@ -6,6 +6,11 @@
 //   swift Scripts/ui.swift dump                 the whole tree, indented, with labels and frames
 //   swift Scripts/ui.swift find <text>          matching elements only
 //   swift Scripts/ui.swift click <text>         press the first actionable match
+//   swift Scripts/ui.swift press <text>         click the first match's *leading edge* — for a
+//                                              disclosure chevron, or anything whose row is
+//                                              labelled far from the control that responds
+//   swift Scripts/ui.swift type <text>          type into whatever has keyboard focus
+//   swift Scripts/ui.swift key <name>           return|tab|space|escape|up|down
 //   swift Scripts/ui.swift frame                the window frame, as screencapture -R wants it
 
 import ApplicationServices
@@ -159,7 +164,79 @@ case "click":
         exit(1)
     }
 
+case "type", "key":
+    // Typing into whatever has focus, and pressing Return/Escape/Tab. Enough
+    // to drive a form end to end, which is the only way to check that what a
+    // sheet sends is what the core receives — a screenshot cannot.
+    //
+    // The event source is not optional: `CGEvent(keyboardEventSource: nil, …)`
+    // silently drops modifier flags and posts unreliably for text.
+    guard bringToFront() else {
+        FileHandle.standardError.write(Data("could not bring \(appName) to the front\n".utf8))
+        exit(1)
+    }
+    let source = CGEventSource(stateID: .hidSystemState)
+    if command == "type" {
+        // One event per character, carrying the character as a unicode string
+        // rather than a keycode — no keyboard-layout table to get wrong.
+        for ch in CommandLine.arguments.dropFirst(2).joined(separator: " ").unicodeScalars {
+            var utf16 = Array(String(ch).utf16)
+            for down in [true, false] {
+                guard let e = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: down)
+                else { continue }
+                e.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
+                e.post(tap: .cghidEventTap)
+            }
+            usleep(15_000)
+        }
+        print("typed \(CommandLine.arguments.dropFirst(2).joined(separator: " ").count) characters")
+    } else {
+        let codes: [String: CGKeyCode] = ["return": 36, "tab": 48, "space": 49, "escape": 53,
+                                          "down": 125, "up": 126]
+        guard let code = codes[needle] else {
+            FileHandle.standardError.write(
+                Data("unknown key \"\(needle)\" — try \(codes.keys.sorted().joined(separator: "/"))\n".utf8))
+            exit(2)
+        }
+        for down in [true, false] {
+            CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down)?
+                .post(tap: .cghidEventTap)
+            usleep(20_000)
+        }
+        print("pressed \(needle)")
+    }
+
+case "press":
+    // `click` aims at the element's centre, which is wrong for anything whose
+    // control sits at its leading edge — a `DisclosureGroup` labels the whole
+    // row but only the chevron responds, so a centre click lands on empty
+    // space and silently does nothing (the value stays 0 and it reads as a
+    // broken disclosure). This aims just inside the left edge instead.
+    var target: AXUIElement?
+    walk(window, depth: 0) { e, _ in
+        if target == nil, labels(e).contains(where: { $0.lowercased().contains(needle) }) {
+            target = e
+        }
+        return true
+    }
+    guard let target, let box = frame(target) else {
+        FileHandle.standardError.write(Data("nothing matching \"\(needle)\"\n".utf8))
+        exit(1)
+    }
+    guard bringToFront() else {
+        FileHandle.standardError.write(Data("could not bring \(appName) to the front\n".utf8))
+        exit(1)
+    }
+    let point = CGPoint(x: box.minX + 8, y: box.midY)
+    for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+        CGEvent(mouseEventSource: nil, mouseType: type,
+                mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+        usleep(40_000)
+    }
+    print("pressed at \(Int(point.x)),\(Int(point.y)): \(labels(target).joined(separator: " · "))")
+
 default:
-    FileHandle.standardError.write(Data("usage: Scripts/ui.swift dump|find <text>|click <text>|frame\n".utf8))
+    FileHandle.standardError.write(
+        Data("usage: Scripts/ui.swift dump|find <text>|click <text>|press <text>|frame\n".utf8))
     exit(2)
 }

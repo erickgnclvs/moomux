@@ -105,23 +105,50 @@ public struct Session: Decodable, Identifiable, Hashable, Sendable {
 
 // MARK: - Config
 
-public struct Project: Decodable, Hashable, Sendable {
+/// `config.Project`, in both directions: it is read back inside `Config` and
+/// sent whole as `ipc.Args.proj` by the project writes.
+///
+/// Encoding is explicit rather than synthesized so an unset optional vanishes
+/// instead of crossing as `null`, and so the bools always go over as real
+/// values — `dangerous: false` has to be distinguishable from "didn't say" for
+/// `UpdateProject` to be able to turn the flag back off.
+public struct Project: Codable, Hashable, Sendable {
     public var kind: String?
     public var repo: String
     public var branchPrefix: String?
     public var baseBranch: String?
     public var agent: String?
     public var dangerous: Bool
+    /// Forces the new-session form to ask for an agent every time instead of
+    /// preselecting `agent`. The Mac app honours it the way the TUI does.
+    public var promptAgent: Bool
     public var noWorktree: Bool
     public var emoji: String?
 
     public var isPlain: Bool { kind == "plain" }
     public var usesWorktree: Bool { !isPlain && !noWorktree }
+    /// Mirrors `config.Project.AgentName`: an empty agent means claude.
+    public var agentName: String { (agent?.isEmpty == false) ? agent! : "claude" }
+
+    public init(kind: String? = nil, repo: String = "", branchPrefix: String? = nil,
+                baseBranch: String? = nil, agent: String? = nil, dangerous: Bool = false,
+                promptAgent: Bool = false, noWorktree: Bool = false, emoji: String? = nil) {
+        self.kind = kind
+        self.repo = repo
+        self.branchPrefix = branchPrefix
+        self.baseBranch = baseBranch
+        self.agent = agent
+        self.dangerous = dangerous
+        self.promptAgent = promptAgent
+        self.noWorktree = noWorktree
+        self.emoji = emoji
+    }
 
     enum CodingKeys: String, CodingKey {
         case kind, repo, agent, dangerous, emoji
         case branchPrefix = "branch_prefix"
         case baseBranch = "base_branch"
+        case promptAgent = "prompt_agent"
         case noWorktree = "no_worktree"
     }
 
@@ -133,8 +160,51 @@ public struct Project: Decodable, Hashable, Sendable {
         baseBranch = try c.decodeIfPresent(String.self, forKey: .baseBranch)
         agent = try c.decodeIfPresent(String.self, forKey: .agent)
         dangerous = try c.decodeIfPresent(Bool.self, forKey: .dangerous) ?? false
+        promptAgent = try c.decodeIfPresent(Bool.self, forKey: .promptAgent) ?? false
         noWorktree = try c.decodeIfPresent(Bool.self, forKey: .noWorktree) ?? false
         emoji = try c.decodeIfPresent(String.self, forKey: .emoji)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(kind, forKey: .kind)
+        try c.encode(repo, forKey: .repo)
+        try c.encodeIfPresent(branchPrefix, forKey: .branchPrefix)
+        try c.encodeIfPresent(baseBranch, forKey: .baseBranch)
+        try c.encodeIfPresent(agent, forKey: .agent)
+        try c.encode(dangerous, forKey: .dangerous)
+        try c.encode(promptAgent, forKey: .promptAgent)
+        try c.encode(noWorktree, forKey: .noWorktree)
+        try c.encodeIfPresent(emoji, forKey: .emoji)
+    }
+}
+
+/// `config.AgentOption` — one agent the core can launch, plus the model and
+/// thinking-level choices worth offering for it.
+///
+/// The whole reason a picker can exist on this side of the socket: the table
+/// lives in `internal/app` and is served by `AgentOptions`, so a copy here
+/// cannot drift the next time the Go side gains an agent.
+public struct AgentOption: Decodable, Hashable, Sendable {
+    public var name: String
+    /// Empty for an agent with no fixed list worth hardcoding (opencode) — a
+    /// free-text field is the honest control there.
+    public var models: [String]
+    public var thinking: [String]
+
+    enum CodingKeys: String, CodingKey { case name, models, thinking }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        models = try c.decodeIfPresent([String].self, forKey: .models) ?? []
+        thinking = try c.decodeIfPresent([String].self, forKey: .thinking) ?? []
+    }
+
+    public init(name: String, models: [String] = [], thinking: [String] = []) {
+        self.name = name
+        self.models = models
+        self.thinking = thinking
     }
 }
 
@@ -146,9 +216,24 @@ public struct Config: Decodable, Sendable {
     public var order: [String]
     public var theme: String?
     public var appearance: String?
+    /// Relaunch the *TUI* inside a dedicated tmux session on startup. Nothing
+    /// this app does, but the same config file, so it is editable from here.
+    public var autoTmux: Bool
+    /// The remembered starting state of the new-session form's auto-submit
+    /// toggle — shared with the TUI's form, which is the point of persisting it.
+    public var autoSubmitDefault: Bool
+    /// Sessions sort most-recently-opened first, and manual reordering is off.
+    /// The Go side applies the sort; this is what tells a front end that its
+    /// move-up/move-down actions would be undone by the next open.
+    public var sortRecentFirst: Bool
+    public var compactDetail: Bool
 
     enum CodingKeys: String, CodingKey {
         case projects, order, theme, appearance
+        case autoTmux = "auto_tmux"
+        case autoSubmitDefault = "auto_submit_default"
+        case sortRecentFirst = "sort_recent_first"
+        case compactDetail = "compact_detail"
     }
 
     public init(from decoder: Decoder) throws {
@@ -157,6 +242,10 @@ public struct Config: Decodable, Sendable {
         order = try c.decodeIfPresent([String].self, forKey: .order) ?? []
         theme = try c.decodeIfPresent(String.self, forKey: .theme)
         appearance = try c.decodeIfPresent(String.self, forKey: .appearance)
+        autoTmux = try c.decodeIfPresent(Bool.self, forKey: .autoTmux) ?? false
+        autoSubmitDefault = try c.decodeIfPresent(Bool.self, forKey: .autoSubmitDefault) ?? false
+        sortRecentFirst = try c.decodeIfPresent(Bool.self, forKey: .sortRecentFirst) ?? false
+        compactDetail = try c.decodeIfPresent(Bool.self, forKey: .compactDetail) ?? false
     }
 
     public var orderedProjectNames: [String] {
@@ -325,6 +414,61 @@ public enum Wire {
         """
         let extra = try! decoder.decode(Config.self, from: Data(extraJSON.utf8))
         assert(extra.orderedProjectNames == ["z", "a", "b"])
+
+        // Every settings flag is `omitempty` on the Go side, so "off" arrives
+        // as an absent key and must not decode as nil-shaped garbage.
+        assert(cfg.autoTmux == false && cfg.sortRecentFirst == false)
+        assert(cfg.autoSubmitDefault == false && cfg.compactDetail == false)
+        let flagsJSON = """
+        {"projects":{},"auto_tmux":true,"auto_submit_default":true,
+         "sort_recent_first":true,"compact_detail":true,"appearance":"dark"}
+        """
+        let flags = try! decoder.decode(Config.self, from: Data(flagsJSON.utf8))
+        assert(flags.autoTmux && flags.autoSubmitDefault)
+        assert(flags.sortRecentFirst && flags.compactDetail)
+        assert(flags.appearance == "dark")
+
+        // prompt_agent is the one Project field the app has to honour rather
+        // than merely display: it means "ask for an agent every time" and the
+        // new-session form must not preselect one.
+        let askJSON = """
+        {"projects":{"p":{"repo":"/p","prompt_agent":true,"dangerous":true,"no_worktree":true}}}
+        """
+        let ask = try! decoder.decode(Config.self, from: Data(askJSON.utf8))
+        assert(ask.projects["p"]?.promptAgent == true)
+        assert(ask.projects["p"]?.dangerous == true)
+        assert(ask.projects["p"]?.usesWorktree == false, "no_worktree means sessions run in the repo")
+        assert(cfg.projects["moomux"]?.promptAgent == false, "absent means preselect the default")
+        assert(cfg.projects["moomux"]?.agentName == "codex")
+        assert(cfg.projects["site"]?.agentName == "claude", "an unset agent is claude")
+
+        // A Project goes back out as `ipc.Args.proj`, so its encoding is a wire
+        // contract too: unset optionals must vanish rather than cross as null
+        // (Go would read "" for a string but the shape is the thing being
+        // pinned), and every bool must be explicit so `dangerous: false` can
+        // actually turn the flag off through UpdateProject.
+        let out = JSONEncoder()
+        // Slashes unescaped only so the expected literal below stays readable —
+        // the real encoder writes "\/", which Go decodes identically.
+        out.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let sent = String(decoding: try! out.encode(
+            Project(repo: "/src/x", baseBranch: "main", agent: "codex", dangerous: true)),
+            as: UTF8.self)
+        assert(sent == #"{"agent":"codex","base_branch":"main","dangerous":true,"#
+               + #""no_worktree":false,"prompt_agent":false,"repo":"/src/x"}"#, sent)
+        assert(!sent.contains("null"), "an unset field must vanish, never encode as null")
+        assert(!sent.contains("kind"), "kind is the core's to decide, not ours to send")
+
+        // The agent table the pickers are built from. opencode has no model
+        // list — that is what makes its model control a free-text field.
+        let agents = try! decoder.decode([AgentOption].self, from: Data("""
+        [{"name":"claude","models":["default","sonnet"],"thinking":["default","think"]},
+         {"name":"opencode","thinking":["default"]}]
+        """.utf8))
+        assert(agents.count == 2)
+        assert(agents[0].models == ["default", "sonnet"])
+        assert(agents[1].models.isEmpty, "an absent model list must be empty, not a crash")
+        assert(agents[1].thinking == ["default"])
 
         // prstatus.Info: Go field names, and CI is capitalised.
         let pr = try! decoder.decode(

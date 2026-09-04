@@ -12,12 +12,22 @@ public final class MoomuxClient: Sendable {
     public enum Failure: Error, LocalizedError {
         /// An error the server returned for a call it understood.
         case server(String)
+        /// `AddProject` against a path that is not a git repository —
+        /// `gitwt.ErrNotGitRepo`, tagged `code: "not_git_repo"` on the wire
+        /// because `errors.Is` cannot survive a string round trip.
+        ///
+        /// Its own case and not a `.server` string: it is the one server error
+        /// that is a *question* rather than a failure, and the caller answers it
+        /// with `initProjectAndAdd` or `addPlainProject`. The TUI branches on
+        /// the same sentinel to open its init-choice dialog.
+        case notGitRepo(String)
         case emptyResponse
         case disconnected
 
         public var errorDescription: String? {
             switch self {
             case let .server(message): return message
+            case let .notGitRepo(message): return message
             case .emptyResponse: return "the server closed the connection without answering"
             case .disconnected: return "the status stream ended"
             }
@@ -52,24 +62,31 @@ public final class MoomuxClient: Sendable {
         var project: String?
         var agent: String?
         var branch: String?
+        var baseBranch: String?
         var ticket: String?
         var pr: String?
         var prompt: String?
         var model: String?
         var thinking: String?
+        var theme: String?
+        var appearance: String?
         var tmuxSession: String?
         var delta: Int?
         var dangerous: Bool?
         var openTerminal: Bool?
         var autoSubmit: Bool?
         var on: Bool?
+        /// A whole `config.Project`, for the four project writes. `Project`'s
+        /// own encoder decides which of its fields cross.
+        var proj: Project?
 
-        // Three of `ipc.Args`' json tags are snake_case; the rest already match
+        // Four of `ipc.Args`' json tags are snake_case; the rest already match
         // their property names. A missing entry here is invisible in both
         // directions — Go ignores the unknown key and uses the zero value.
         enum CodingKeys: String, CodingKey {
             case id, name, project, agent, branch, ticket, pr, prompt, model, thinking, delta
-            case dangerous, on
+            case dangerous, on, theme, appearance, proj
+            case baseBranch = "base_branch"
             case tmuxSession = "tmux_session"
             case openTerminal = "open_terminal"
             case autoSubmit = "auto_submit"
@@ -97,6 +114,7 @@ public final class MoomuxClient: Sendable {
         var strings: [String]?
         var alive: [String: Bool]?
         var cfg: Config?
+        var agents: [AgentOption]?
         var hint: String?
         var ok: Bool?
         var dirty: Bool?
@@ -149,13 +167,24 @@ public final class MoomuxClient: Sendable {
         let data = try socket.readToEnd()
         guard !data.isEmpty else { throw Failure.emptyResponse }
         let response = try Wire.decoder.decode(Response.self, from: data)
-        if let err = response.err, !err.isEmpty { throw Failure.server(err) }
+        if let err = response.err, !err.isEmpty {
+            // `code` names the sentinel the caller branches on; every other
+            // error is just its message.
+            throw response.code == "not_git_repo" ? Failure.notGitRepo(err) : Failure.server(err)
+        }
         return response.result ?? CallResult()
     }
 
     public func config() throws -> Config {
         guard let cfg = try call("Config").cfg else { throw Failure.emptyResponse }
         return cfg
+    }
+
+    /// Which agents the core can launch, and the model/thinking choices worth
+    /// offering for each. Fetched once at startup — it is a static table on the
+    /// Go side, and re-polling it every two seconds would buy nothing.
+    public func agentOptions() throws -> [AgentOption] {
+        try call("AgentOptions").agents ?? []
     }
 
     public func sessions() throws -> [Session] {
@@ -216,24 +245,35 @@ public final class MoomuxClient: Sendable {
     /// Returns the new session plus the server's hint — the userscripts'
     /// warnings and "attach with: tmux attach -t …", which is guidance.
     ///
-    /// Agent, model, thinking level, base branch and an existing branch to
-    /// resume are left unset so the core applies the project's own defaults;
-    /// see `AppState.create` for why none of them are offered here, and for why
-    /// `dangerous` is the one the caller has to supply. `open_terminal` stays
-    /// unset too: this app attaches sessions itself.
-    public func createSession(project: String, name: String,
-                              dangerous: Bool) throws -> (Session, String) {
+    /// Every empty string here means "the core decides": an empty `agent`
+    /// takes the project's, an empty `baseBranch` becomes the project's base,
+    /// an empty `model`/`thinking` passes no flag at all. They are sent as ""
+    /// rather than omitted only because Go's `omitempty` makes the two
+    /// identical on the wire — see `AppState.create` for who computes what.
+    ///
+    /// `dangerous` is the exception the caller must always supply: the core
+    /// takes it as a plain bool with no fallback to the project's own setting.
+    /// `open_terminal` stays unset: this app attaches sessions itself.
+    public func createSession(project: String, name: String, agent: String = "",
+                              existingBranch: String = "", ticket: String = "",
+                              dangerous: Bool, baseBranch: String = "",
+                              model: String = "", thinking: String = "") throws -> (Session, String) {
         let result = try call("CreateSession",
-                              Args(name: name, project: project, dangerous: dangerous))
+                              Args(name: name, project: project, agent: agent,
+                                   branch: existingBranch, baseBranch: baseBranch,
+                                   ticket: ticket, model: model, thinking: thinking,
+                                   dangerous: dangerous))
         guard let session = result.session else { throw Failure.emptyResponse }
         return (session, result.hint ?? "")
     }
 
-    /// Types a prompt into a freshly created agent pane. Blocks while the Go
-    /// side waits for that pane to be ready, which is however long the agent
-    /// takes to boot. Never auto-submits — `auto_submit` is left unset.
-    public func startFirstPrompt(tmuxSession: String, prompt: String) throws {
-        try call("StartFirstPrompt", Args(prompt: prompt, tmuxSession: tmuxSession))
+    /// Types a prompt into a freshly created agent pane, pressing Enter when
+    /// `autoSubmit` is set. Blocks while the Go side waits for that pane to be
+    /// ready, which is however long the agent takes to boot.
+    public func startFirstPrompt(tmuxSession: String, prompt: String,
+                                 autoSubmit: Bool = false) throws {
+        try call("StartFirstPrompt",
+                 Args(prompt: prompt, tmuxSession: tmuxSession, autoSubmit: autoSubmit))
     }
 
     /// Kills tmux, removes the worktree and runs the worktree-delete
@@ -268,10 +308,83 @@ public final class MoomuxClient: Sendable {
         try call("SetSessionArchived", Args(id: id, on: archived))
     }
 
+    /// Switches which agent CLI a session launches, from its next open onward —
+    /// a running pane keeps whatever it started. `dangerous` is always explicit
+    /// here (the server reads a nil as false), because the agent and its
+    /// permission flag are one choice.
+    public func setAgent(id: String, agent: String, dangerous: Bool) throws {
+        try call("SetSessionAgent", Args(id: id, agent: agent, dangerous: dangerous))
+    }
+
     /// ±1, within the project group. A move off either end is a no-op on the Go
     /// side rather than an error.
     public func move(id: String, delta: Int) throws {
         try call("MoveSession", Args(id: id, delta: delta))
+    }
+
+    // MARK: - Projects
+
+    /// Requires `p.repo` to already be a git repository: it throws
+    /// `.notGitRepo` otherwise, which is the caller's cue to offer
+    /// `initProjectAndAdd` or `addPlainProject` — not to report a failure.
+    public func addProject(name: String, _ p: Project) throws {
+        try call("AddProject", Args(name: name, proj: p))
+    }
+
+    /// `mkdir -p`, `git init` on the project's base branch, one empty commit,
+    /// then saves the project as a git one.
+    public func initProjectAndAdd(name: String, _ p: Project) throws {
+        try call("InitProjectAndAdd", Args(name: name, proj: p))
+    }
+
+    /// A non-git project: sessions run directly in the folder, with no
+    /// branches and no worktrees. The core clears base branch and branch
+    /// prefix itself.
+    public func addPlainProject(name: String, _ p: Project) throws {
+        try call("AddPlainProject", Args(name: name, proj: p))
+    }
+
+    /// The project's kind is not editable — the core keeps the existing one and
+    /// refuses a worktree-mode flip while the project still has sessions.
+    public func updateProject(name: String, _ p: Project) throws {
+        try call("UpdateProject", Args(name: name, proj: p))
+    }
+
+    /// Config only: the repository and every worktree on disk are left alone.
+    /// The core refuses while the project still has sessions, archived ones
+    /// included.
+    public func removeProject(name: String) throws {
+        try call("RemoveProject", Args(name: name))
+    }
+
+    public func moveProject(name: String, delta: Int) throws {
+        try call("MoveProject", Args(name: name, delta: delta))
+    }
+
+    // MARK: - Settings
+
+    /// The TUI's palette and its light/dark override — this app draws itself
+    /// with semantic colors and ignores both. Here because it is the same
+    /// config file, and a front end that can edit projects but not the theme
+    /// would be an odd place to stop.
+    public func setTheme(_ theme: String, appearance: String) throws {
+        try call("SetTheme", Args(theme: theme, appearance: appearance))
+    }
+
+    public func setAutoSubmitDefault(_ on: Bool) throws {
+        try call("SetAutoSubmitDefault", Args(on: on))
+    }
+
+    public func setSortRecentFirst(_ on: Bool) throws {
+        try call("SetSortRecentFirst", Args(on: on))
+    }
+
+    public func setAutoTmux(_ on: Bool) throws {
+        try call("SetAutoTmux", Args(on: on))
+    }
+
+    public func setCompactDetail(_ on: Bool) throws {
+        try call("SetCompactDetail", Args(on: on))
     }
 
     // MARK: - Status stream
@@ -338,7 +451,9 @@ public final class MoomuxClient: Sendable {
 
     public static func demo() {
         let encoder = JSONEncoder()
-        encoder.outputFormatting = .sortedKeys
+        // `.withoutEscapingSlashes` only so a path in an expected literal below
+        // reads as a path; the shipping encoder writes "\/" and Go is indifferent.
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
 
         // Unset args must vanish, not serialize as null: the Go side decodes
         // into a struct union where an explicit null is fine but an unexpected
@@ -381,15 +496,49 @@ public final class MoomuxClient: Sendable {
         assert(create == #"{"args":{"name":"macos","project":"moomux"},"method":"CreateSession"}"#,
                create)
 
-        // The three keys `ipc.Args` spells differently from their property
-        // names. Checked on a bare Args because no one call sends all three;
+        // The four keys `ipc.Args` spells differently from their property
+        // names. Checked on a bare Args because no one call sends all of them;
         // a missing CodingKeys entry is otherwise silent, and Go would read the
         // zero value while the UI looked merely broken.
         let snake = String(
             decoding: try! encoder.encode(
-                Args(tmuxSession: "moomux-x", openTerminal: true, autoSubmit: true)),
+                Args(baseBranch: "main", tmuxSession: "moomux-x",
+                     openTerminal: true, autoSubmit: true)),
             as: UTF8.self)
-        assert(snake == #"{"auto_submit":true,"open_terminal":true,"tmux_session":"moomux-x"}"#, snake)
+        assert(snake == #"{"auto_submit":true,"base_branch":"main","#
+               + #""open_terminal":true,"tmux_session":"moomux-x"}"#, snake)
+
+        // A fully specified create. `dangerous` is always present — the core
+        // has no fallback to the project's own setting — and every other field
+        // is only there because the user chose it. `open_terminal` stays absent
+        // so the new session lands in this app rather than in iTerm.
+        let full = String(
+            decoding: try! encoder.encode(Request(method: "CreateSession", args: Args(
+                name: "macos", project: "moomux", agent: "codex", branch: "alan/x",
+                baseBranch: "develop", ticket: "T-1", model: "gpt-5.6-sol",
+                thinking: "high", dangerous: true))),
+            as: UTF8.self)
+        assert(full == #"{"args":{"agent":"codex","base_branch":"develop","branch":"alan/x","#
+               + #""dangerous":true,"model":"gpt-5.6-sol","name":"macos","project":"moomux","#
+               + #""thinking":"high","ticket":"T-1"},"method":"CreateSession"}"#, full)
+        assert(!full.contains("open_terminal"), "a new session belongs in this app")
+
+        // A whole config.Project rides in `proj`, encoded by `Project` itself.
+        let addProject = String(
+            decoding: try! encoder.encode(Request(method: "AddProject", args: Args(
+                name: "site", proj: Project(repo: "/src/site", baseBranch: "main")))),
+            as: UTF8.self)
+        assert(addProject == #"{"args":{"name":"site","proj":{"base_branch":"main","#
+               + #""dangerous":false,"no_worktree":false,"prompt_agent":false,"#
+               + #""repo":"/src/site"}},"method":"AddProject"}"#, addProject)
+
+        // The theme call is the only one sending both of these, and clearing
+        // the appearance override means sending "" rather than dropping it.
+        let theme = String(
+            decoding: try! encoder.encode(
+                Request(method: "SetTheme", args: Args(theme: "gruvbox", appearance: ""))),
+            as: UTF8.self)
+        assert(theme == #"{"args":{"appearance":"","theme":"gruvbox"},"method":"SetTheme"}"#, theme)
 
         // A mutating call answers with the updated session, not a bare ok.
         let renamed = #"{"result":{"session":{"id":"p:new","name":"new","project":"p"}}}"#
@@ -404,6 +553,25 @@ public final class MoomuxClient: Sendable {
         let response = try! Wire.decoder.decode(Response.self, from: Data(failed.utf8))
         assert(response.err == "tmux: no server running")
         assert(response.result?.sessions == nil)
+
+        // `code` is how a sentinel survives the round trip, and this one is a
+        // question rather than a failure: "not a git repo" is what the app
+        // answers with "init one" or "add it as a plain folder". Without the
+        // code it would be an unactionable error string, exactly as it would be
+        // for the TUI.
+        let notRepo = try! Wire.decoder.decode(
+            Response.self,
+            from: Data(#"{"err":"/tmp/x: not a git repository","code":"not_git_repo"}"#.utf8))
+        assert(notRepo.code == "not_git_repo")
+
+        // The agent table, as `AgentOptions` answers it.
+        let agentsJSON = """
+        {"result":{"agents":[{"name":"claude","models":["default","opus"],
+                              "thinking":["default","ultrathink"]}]}}
+        """
+        let served = try! Wire.decoder.decode(Response.self, from: Data(agentsJSON.utf8))
+        assert(served.result?.agents?.count == 1)
+        assert(served.result?.agents?.first?.thinking == ["default", "ultrathink"])
 
         // The status calls share one Result union, so an absent field must not
         // read as a zero: `ok:false` with no counts means "don't know", which

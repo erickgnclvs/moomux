@@ -11,8 +11,11 @@ ones that start waiting on you, attaches a session's tmux inside the app — by 
 optionally as one plain `tmux attach`
 — shows every live session at once as read-only snapshots, hands a session to the user's terminal,
 opens its diff for review in a tmux window of its own, and
-creates, renames, tags, archives, reorders, kills and deletes them. Creating one here takes a
-project, a name and a first prompt; anything more unusual is still the TUI's dialog.
+creates, renames, retags, re-agents, archives, reorders, kills and deletes them. Creating one asks
+the same questions the TUI's dialog does — agent, model, thinking level, branch and base branch
+included — because the core serves the table those pickers are built from (`AgentOptions`). ⌘,
+manages projects (add, edit, remove, reorder, and the "that path isn't a git repo" choice) and the
+config flags both front ends share.
 
 ## The environment decides more than you'd think
 
@@ -69,6 +72,9 @@ make dev ARGS="--socket /tmp/mmx.sock" && sleep 8
 make shot OUT=/tmp/moomux-macos.png
 swift Scripts/ui.swift dump                  # the AX tree: labels, roles, frames
 swift Scripts/ui.swift click "moo-hardness"  # drive it without a mouse
+swift Scripts/ui.swift press "Agent, model"  # click the leading edge — for a disclosure chevron
+swift Scripts/ui.swift type "a-name"         # into whatever has focus
+swift Scripts/ui.swift key return            # return|tab|space|escape|up|down
 ```
 
 `Scripts/ui.swift` walks the AXUIElement tree directly — System Events' `entire contents` returns
@@ -231,6 +237,7 @@ Core/ToolPath.swift      finding tmux without a shell's PATH
 Tmux/ControlProtocol.swift  the `tmux -CC` line protocol, pure
 Tmux/TmuxLayout.swift    the layout string -> pane rectangles, pure
 Tmux/ControlClient.swift the control-mode transport: forkpty, commands, events
+App/Forms.swift          the two multi-field forms' state and defaulting rules, pure
 App/AppState.swift       the single root store, poll loop, watch loop
 App/Notifier.swift       the only file allowed to touch UNUserNotificationCenter
 App/MoomuxApp.swift      scenes: main window + MenuBarExtra
@@ -238,6 +245,7 @@ App/SelfTest.swift       --selftest
 UI/RootView.swift        split view, rows, detail, inspector, menu-bar content
 UI/TerminalPane.swift    SwiftTerm hosting a plain `tmux attach`
 UI/ControlModeView.swift native panes over control mode
+UI/SettingsView.swift    project CRUD and the shared config flags, on two tabs
 UI/SessionGrid.swift     every live session at once, as capture-pane snapshots
 ```
 
@@ -253,6 +261,19 @@ to fix in Go, not a reason to link the core.
 
 ## Things that will bite you
 
+- **A tap gesture on a `List` row's content beats the `List`'s own selection.** A
+  `.onTapGesture(count: 2)` added to a project row for double-click-to-edit stopped single clicks
+  selecting it at all, which left Edit and Remove permanently disabled with no hint why. Removed;
+  the buttons are the feature. Check a new row-level gesture by clicking a row and confirming the
+  buttons that key off `selection` actually enable.
+- **A `DisclosureGroup` in a grouped `Form` ignores a click at its centre.** Only the chevron
+  responds, and the AX element spans the whole row, so `Scripts/ui.swift click` lands on empty
+  space and the value stays 0 — indistinguishable from a disclosure that does not work. `press`
+  exists for this; it aims at the leading edge.
+- **`Scripts/ui.swift click` matches the first element with that label, which is rarely the alert's.**
+  A "Remove" in an alert over a pane whose button is also "Remove" gets the pane's, behind the
+  alert, and the stray click dismisses the alert — so the action silently never runs. Click an
+  alert's button by coordinate (`find` prints them) rather than by label.
 - **`prstatus.Info` still spells its JSON keys differently from everything else.** It has no json
   tags, so Go's encoder falls back to the Go field names (`State`, `CI`) instead of snake_case.
   `session.Session`, `config.Config` and `config.Project` all carry `json:"..."` tags now. Every
@@ -429,23 +450,57 @@ Decisions, not oversights. Don't "fix" these without being asked.
 - **No mouse reporting or drag-to-resize panes in control mode.** Clicking selects a pane; that is
   all. Resizing goes through tmux's own keys.
 - **No terminal settings** — font, size, colours and cursor are all SwiftTerm's defaults.
-- **The write paths stop at the session row.** Create, rename, tags, archive, move, kill tmux and
-  delete are there; `SetSessionAgent`, project CRUD
-  (`AddProject`/`UpdateProject`/`RemoveProject`/`MoveProject`) and the settings toggles
-  (`SetTheme`/`SetAutoTmux`/…) are not. All of them already exist on the socket — this is appetite,
-  not a missing boundary. **No drag-to-reorder**, either: `MoveSession` takes a ±1 delta, the sidebar
-  is a sectioned `List`, and `onMove` wants index sets over a bound array, so ⌃⌘↑/↓ is the whole
-  feature for a day less work.
-- **The New Session sheet asks three questions: project, name, first prompt.** The TUI's dialog asks
-  thirteen. Agent, model, thinking level, base branch, "resume this existing branch",
-  ticket/PR and auto-submit are all left to the core, which defaults them from
-  the project's config — and the picker-shaped ones cannot be offered without a second copy of
-  `internal/tui`'s `agentNames` / `thinkingNamesFor` / `modelNamesFor` tables living on this side of
-  the socket, to drift silently the next time Go gains an agent. **The rule for growing this form is
-  that the core must be able to hand over the list it validates against** (there is no IPC method for
-  it today); a field the app can fill from `Config` or from free text is fair game, one that needs a
-  hard-coded table is not. Ticket and PR are a Tags sheet away a second later. `open_terminal` is
-  deliberately unset, so a new session lands in the sidebar rather than in iTerm.
+- **Every write the socket serves is wired up**, session and config alike — the one exception is
+  `SetSessionStatusTitle`, which is the watcher's write path and this app runs no watcher.
+  **No drag-to-reorder**, though, for sessions or projects: `MoveSession`/`MoveProject` take a ±1
+  delta, the lists are plain `List`s, and `onMove` wants index sets over a bound array, so ⌃⌘↑/↓ and
+  two chevron buttons are the whole feature for a day less work.
+- **No client-side validation beyond `ProjectForm.problem`.** No `sanitizeName`, no `~` expansion,
+  no duplicate-name check, no `IsRepo`, no base-branch defaulting, no worktree-mode-flip check: the
+  core does all of it and its refusal is the message the user reads. Two validators are two rules to
+  drift, and `problem`'s strings are `validateProjectLocked`'s verbatim for the same reason.
+- **Project management is a sheet, and everything it can raise is hosted on that sheet.** One
+  `.sheet(item:)` presents one thing, so the project form hangs off `SettingsSheet`'s own
+  `@State`, not off `app.sheet` — and the two alerts it can raise (`not_git_repo`, remove
+  confirmation) are declared there too. An alert bound on a view that a sheet is covering does not
+  appear; SwiftUI defers it until the sheet closes. That is also why a *refused* project write shows
+  as an inline row in the sheet rather than through `RootView`'s "Couldn't do that" alert, and why
+  the sheet clears `actionError` on the way out: left set, the deferred alert fires the moment it
+  closes and says the same thing twice. All three measured, in that order, each one a button that
+  looked like it did nothing.
+- **Settings is a sheet and not a `Settings` scene.** A scene is the macOS-native answer and both
+  alternatives to this were written that way — but a second window breaks the only screenshot path
+  there is (`Scripts/ui.swift` walks the *first* AX window, and `shot.sh` frames it), and a UI
+  change that cannot be photographed cannot be checked. ⌘, still opens it, via
+  `CommandGroup(replacing: .appSettings)`.
+- **No project emoji palette.** `config.ProjectEmojiPalette` is a Go table nothing serves over IPC,
+  so a copy here would drift — the exact rule below. A free-text field plus macOS's own ⌃⌘Space
+  gets there. The cost is that an empty emoji shows nothing in this app's sidebar while the TUI
+  computes a deterministic glyph; the field's help text says so rather than pretending otherwise.
+  The **theme list is the one hardcoded table** (`SettingsSheet.themes`), because `Config.Theme` is
+  free text on the wire and a stale entry costs a wrong palette in another program, not a broken
+  session. The picker unions whatever is stored, so a theme this app has not heard of is neither
+  rendered blank nor silently overwritten. Serve it from the core if Go gains a fifth.
+- **The New Session sheet asks three questions up front and hides the other nine.** Project, name
+  and first prompt are the fast path; agent, the dangerous flag, model, thinking level, existing
+  branch, base branch, ticket and PR live under a `DisclosureGroup`, which opens by itself only for
+  a `prompt_agent` project — where nothing can be submitted until an agent is chosen, so a collapsed
+  section would hide the only control that unblocks it.
+  **The rule for growing this form is unchanged: the core must be able to hand over the list it
+  validates against.** That is now true of the picker-shaped fields — `AgentOptions` serves
+  `internal/app`'s own table, and `AppState.agentNames`/`models(for:)`/`thinking(for:)` mirror
+  `internal/tui`'s three lookup helpers *including their fallbacks*, over the same data. A field the
+  app can fill from `Config`, from that table, or from free text is fair game; one that needs a
+  hardcoded table is still not.
+  **Four semantics the core does not apply live in `AppState.create`**, because a second front end
+  gets every one of them wrong by omission: a changed auto-submit toggle is persisted as the new
+  default first (best effort — a failed config write must not block a session); the PR tag is set
+  *after* creation, since `CreateSession` takes a ticket and no PR; the thinking level is prepended
+  to the first prompt as a phrase for claude and opencode but **not** for codex, whose level is a
+  real `-c model_reasoning_effort` value the core already applied; and ticket/PR are appended as
+  their own lines. `internal/tui/update.go`'s Enter handler is the reference — change them together.
+  `open_terminal` stays deliberately unset, so a new session lands in the sidebar rather than in
+  iTerm.
   **`dangerous` is the exception and the app has to send it**: `App.CreateSession` takes it as a
   plain `bool` and hands it straight to `buildAgentCmd`, with no fallback to `proj.Dangerous` — the
   defaulting lives in `internal/tui/update.go`, not in the core. Leaving it unset created sessions in

@@ -20,6 +20,8 @@ enum SelfTest {
         TmuxProtocolChecks.demo()
         TmuxWindowLayout.demo()
         AppState.demo()
+        NewSessionForm.demo()
+        ProjectForm.demo()
         Notifier.demo()
         TmuxControlClient.demo()
         TmuxSnapshot.demo()
