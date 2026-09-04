@@ -30,6 +30,20 @@ Send the resulting PNG(s) to the user so they can see the change, the same way y
 
 Forms like the new-session dialog track focus as a plain int (`newFormFocus`) and key several independent switches off it — tab-cycling, typing/left-right handling, and focus-in in `internal/tui/update.go`, but also `focusedOverlayLine` in `internal/tui/view.go` (which decides where the overlay viewport scrolls to keep the focused field visible). When adding, removing, or reordering a field, `grep -rn "newFormFocus" internal/tui/*.go` and update every hit, not just the ones in the file you're already touching — a stale `default:` case doesn't fail to compile, it just silently scrolls to the wrong field at runtime, which reads to a user as the whole dialog "resizing" or jumping.
 
+## The macOS app
+
+Lives in its own repo now: [afitzgerald/moomux-mac](https://github.com/afitzgerald/moomux-mac)
+(private). It's a SwiftUI app that drives this same core over the `moomux serve` unix socket
+(`internal/ipc`); its working notes live in that repo's `CLAUDE.md`.
+
+`internal/ipc` is a contract with a second client now, in a separate repo with no CI link back to
+this one. Changing a method's shape, or `session.Session`'s JSON tags, breaks the Swift side
+silently — it decodes into optionals, with no automated cross-repo check. Check
+`moomux-mac`'s `Sources/Moomux/Core/Models.swift` by hand when you touch either. Likewise, the Mac
+app attaches sessions with `tmux -CC` (control mode) and parses tmux's line protocol, so it depends
+on the *names* moomux gives tmux sessions — renaming or restructuring `internal/tmux`'s session
+naming is a change the Swift side feels, invisibly.
+
 ## Releases and commit messages
 
 Every merge to `main` auto-tags and deploys a new version (`.github/workflows/deploy.yml` computes the next tag via `scripts/next_version.sh`, then `release.yml` builds and publishes it) — there's no manual release step, and no way to land a commit on `main` without it shipping.
