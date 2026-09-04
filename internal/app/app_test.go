@@ -1015,7 +1015,7 @@ func TestCreateSessionErrors(t *testing.T) {
 
 	// tmux new-session fails
 	noBranch(git, "tmuxfail")
-	tm.failOn["new-session -d -s "+TmuxSessionName("demo:tmuxfail", "tmuxfail")+" -c "+filepath.Join(a.WorktreeRoot, "demo", "tmuxfail")+" -n 🦊 tmuxfail"] = true
+	tm.failOn["new-session -d -s "+TmuxSessionName("demo:tmuxfail", "tmuxfail")+" -c "+filepath.Join(a.WorktreeRoot, "demo", "tmuxfail")+" -n 🔥 tmuxfail"] = true
 	if _, _, err := a.CreateSession("demo", "tmuxfail", "", "", "", true, boolPtr(false), "", "", ""); err == nil || !strings.Contains(err.Error(), "tmux new-session") {
 		t.Fatalf("err = %v", err)
 	}
@@ -2012,7 +2012,7 @@ func TestSetSessionStatusTitle(t *testing.T) {
 	}
 	wantCalls := [][]string{
 		{"display-message", "-p", "-t", "=moomux-a:", "#{window_name}"},
-		{"rename-window", "-t", "=moomux-a:", "● 🦊 a"},
+		{"rename-window", "-t", "=moomux-a:", "● 🔥 a"},
 	}
 	if !reflect.DeepEqual(tm.calls, wantCalls) {
 		t.Fatalf("calls = %v, want %v", tm.calls, wantCalls)
@@ -2060,7 +2060,7 @@ func TestRenameSession(t *testing.T) {
 	if err := a.Store.Put(s); err != nil {
 		t.Fatal(err)
 	}
-	tm.out["display-message -p -t =moomux-a: #{window_name}"] = "🦊 a"
+	tm.out["display-message -p -t =moomux-a: #{window_name}"] = "🔥 a"
 	tm.calls = nil
 
 	got, err := a.RenameSession(s.ID, "b")
@@ -2075,7 +2075,7 @@ func TestRenameSession(t *testing.T) {
 	wantCalls := [][]string{
 		{"has-session", "-t", "=moomux-a"},
 		{"display-message", "-p", "-t", "=moomux-a:", "#{window_name}"},
-		{"rename-window", "-t", "=moomux-a:", "🦊 b"},
+		{"rename-window", "-t", "=moomux-a:", "🔥 b"},
 		{"rename-session", "-t", "=moomux-a", wantTmux},
 	}
 	if !reflect.DeepEqual(tm.calls, wantCalls) {

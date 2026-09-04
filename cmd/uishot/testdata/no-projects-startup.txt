@@ -35,7 +35,7 @@
            │  repo:          > repo path (e.g. ~/Development/eg_system)                 │           
            │  base branch:   > base branch (default:…                                   │           
            │  branch prefix: > branch prefix (option…                                   │           
-           │  emoji:         [auto]  🐙  🦊  🚀  🔥  🌊  🍀  ⚡  🎯  🐝  🦉             │           
+           │  emoji:         [auto]  🐙  🦊  🚀  🔥  🌊  🍀  ⚡  🎯  🐝  🦉  🐄         │           
            │  agent:         [claude]  codex  opencode  ask each time                   │           
            │  dangerous:     [off]                                                      │           
            │  worktrees:     [on]                                                       │           

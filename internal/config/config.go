@@ -63,13 +63,16 @@ func (p Project) IsPlain() bool { return p.Kind == "plain" }
 // ProjectEmojiPalette is the fallback set for projects that haven't chosen
 // their own emoji (Project.Emoji) — picked deterministically per project
 // name so the same project always gets the same glyph.
-var ProjectEmojiPalette = []string{"🐙", "🦊", "🚀", "🔥", "🌊", "🍀", "⚡", "🎯", "🐝", "🦉"}
+var ProjectEmojiPalette = []string{"🐙", "🦊", "🚀", "🔥", "🌊", "🍀", "⚡", "🎯", "🐝", "🦉", "🐄"}
 
 // ProjectEmoji returns project's configured emoji, falling back to a
 // deterministic pick from ProjectEmojiPalette if none is set.
 func (c *Config) ProjectEmoji(project string) string {
 	if e := c.Projects[project].Emoji; e != "" {
 		return e
+	}
+	if strings.EqualFold(project, "moomux") {
+		return "🐄"
 	}
 	var h int
 	for _, r := range project {
