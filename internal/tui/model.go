@@ -37,8 +37,8 @@ type Backend interface {
 	// not an error.
 	// dangerous is a pointer so the TUI can leave it unset to mean "use the
 	// project's own default"; in practice it always computes and passes an
-	// explicit value (see openNewSessionForm), same as before this was a
-	// pointer.
+	// explicit value (see updateNewForm's Enter-key handling in update.go),
+	// same as before this was a pointer.
 	CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (s session.Session, hint string, err error)
 	// StartFirstPrompt waits for a freshly created session's agent pane to
 	// be ready, then types prompt into it, and — if autoSubmit is true —
@@ -136,6 +136,12 @@ const (
 // hardcoded copy here that could silently drift from what the core actually
 // launches; now the TUI and any other front end read the same table.
 func (m *Model) agentNames() []string {
+	if len(m.agentOptions) == 0 {
+		// A Backend (e.g. an IPC front end) that returns no options at all
+		// would otherwise leave every index/modulo against this list
+		// (newFormAgentIdx and friends) dividing by zero.
+		return []string{"claude"}
+	}
 	names := make([]string, len(m.agentOptions))
 	for i, o := range m.agentOptions {
 		names[i] = o.Name
@@ -808,27 +814,44 @@ func refreshStatusCmd(m *Model) tea.Cmd {
 // — callers (e.g. the delete dialog's "checking..." loader) use that
 // presence to tell "resolved, nothing to show" apart from "hasn't resolved
 // yet".
+// fetchStatusMaxConcurrency caps how many of a status fan-out's per-id
+// fetches run at once, so a sweep over many long-lived sessions doesn't
+// burst that many concurrent git/gh subprocesses — or, over the IPC
+// backend, socket dials — all at the same instant.
+const fetchStatusMaxConcurrency = 8
+
+// fetchStatusFanOut runs fetch for each id, at most fetchStatusMaxConcurrency
+// at a time, and returns the id->result map once every fetch has completed.
+// Shared by fetchGitStatusCmd and fetchPRStatusCmd, which differ only in
+// which per-id backend call they make and what they wrap the result in.
+func fetchStatusFanOut[T any](ids []string, fetch func(id string) T) map[string]T {
+	result := make(map[string]T, len(ids))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, fetchStatusMaxConcurrency)
+	for _, id := range ids {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(id string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			v := fetch(id)
+			mu.Lock()
+			result[id] = v
+			mu.Unlock()
+		}(id)
+	}
+	wg.Wait()
+	return result
+}
+
 func fetchGitStatusCmd(backend Backend, ids []string) tea.Cmd {
 	return func() tea.Msg {
 		now := time.Now()
-		status := make(map[string]gitStatusInfo, len(ids))
-		var mu sync.Mutex
-		var wg sync.WaitGroup
-		// Each id is its own `git status`/`rev-list` call — over a socket
-		// backend that's also its own dial+encode+decode round trip — so
-		// fetching them one at a time makes a stale-session sweep's latency
-		// scale with session count instead of with the slowest single one.
-		for _, id := range ids {
-			wg.Add(1)
-			go func(id string) {
-				defer wg.Done()
-				dirty, unpushed, ok := backend.WorktreeStatus(id)
-				mu.Lock()
-				status[id] = gitStatusInfo{dirty: dirty, unpushed: unpushed, ok: ok, checkedAt: now}
-				mu.Unlock()
-			}(id)
-		}
-		wg.Wait()
+		status := fetchStatusFanOut(ids, func(id string) gitStatusInfo {
+			dirty, unpushed, ok := backend.WorktreeStatus(id)
+			return gitStatusInfo{dirty: dirty, unpushed: unpushed, ok: ok, checkedAt: now}
+		})
 		return GitStatusMsg{Status: status}
 	}
 }
@@ -895,23 +918,10 @@ func (m *Model) fetchStaleGitStatusCmd() tea.Cmd {
 func fetchPRStatusCmd(backend Backend, ids []string) tea.Cmd {
 	return func() tea.Msg {
 		now := time.Now()
-		status := make(map[string]prStatusInfo, len(ids))
-		var mu sync.Mutex
-		var wg sync.WaitGroup
-		// See fetchGitStatusCmd: each id is its own network-bound `gh pr
-		// view`, fanned out rather than chained so N sessions cost one
-		// round trip's worth of latency instead of N.
-		for _, id := range ids {
-			wg.Add(1)
-			go func(id string) {
-				defer wg.Done()
-				info, ok := backend.PRStatus(id)
-				mu.Lock()
-				status[id] = prStatusInfo{info: info, ok: ok, checkedAt: now}
-				mu.Unlock()
-			}(id)
-		}
-		wg.Wait()
+		status := fetchStatusFanOut(ids, func(id string) prStatusInfo {
+			info, ok := backend.PRStatus(id)
+			return prStatusInfo{info: info, ok: ok, checkedAt: now}
+		})
 		return PRStatusMsg{Status: status}
 	}
 }

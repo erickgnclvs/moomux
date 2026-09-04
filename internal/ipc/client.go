@@ -246,7 +246,7 @@ func (c *Client) SetSessionPrompt(id, prompt string) (session.Session, error) {
 }
 
 func (c *Client) SetSessionAgent(id, agent string, dangerous bool) (session.Session, error) {
-	return c.sess("SetSessionAgent", Args{ID: id, Agent: agent, AgentDangerous: dangerous})
+	return c.sess("SetSessionAgent", Args{ID: id, Agent: agent, Dangerous: &dangerous})
 }
 
 func (c *Client) RenameSession(id, newName string) (session.Session, error) {

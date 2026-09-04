@@ -195,7 +195,7 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 	case "SetSessionPrompt":
 		return sessionResult(b.SetSessionPrompt(a.ID, a.Prompt))
 	case "SetSessionAgent":
-		return sessionResult(b.SetSessionAgent(a.ID, a.Agent, a.AgentDangerous))
+		return sessionResult(b.SetSessionAgent(a.ID, a.Agent, a.Dangerous != nil && *a.Dangerous))
 	case "RenameSession":
 		return sessionResult(b.RenameSession(a.ID, a.Name))
 	case "SetSessionArchived":

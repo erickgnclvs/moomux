@@ -268,10 +268,12 @@ func TestRoundTrip(t *testing.T) {
 		}
 	})
 
-	t.Run("SetSessionAgent's dangerous survives the wire as a plain bool", func(t *testing.T) {
-		// Unlike CreateSession's Dangerous, SetSessionAgent's is never
-		// "unset" — it has its own Args field (AgentDangerous) rather than
-		// sharing CreateSession's *bool.
+	t.Run("SetSessionAgent's dangerous survives the wire, including an explicit false", func(t *testing.T) {
+		// SetSessionAgent shares CreateSession's Args.Dangerous *bool field,
+		// but unlike CreateSession it's never "unset" — the client always
+		// sends an explicit pointer, so an explicit false must not collapse
+		// to the same wire value as an absent field (which the server reads
+		// as false too, but for a different reason).
 		s, err := c.SetSessionAgent("moomux:a", "codex", true)
 		if err != nil {
 			t.Fatalf("SetSessionAgent: %v", err)

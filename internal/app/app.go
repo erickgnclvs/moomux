@@ -63,6 +63,13 @@ type App struct {
 	// written its new session, and collide.
 	portMu        sync.Mutex
 	reservedPorts map[int]bool
+
+	// nameMu guards reservedNames, the session-id analogue of reservedPorts:
+	// CreateSession's existence check happens long before its Store.Put, so
+	// two concurrent calls for the same name/project can both pass the
+	// check before either has written its session.
+	nameMu        sync.Mutex
+	reservedNames map[string]bool
 }
 
 // project returns a copy of the named project's config. config.Project is
@@ -432,6 +439,45 @@ func (a *App) nextOpenCodePort() int {
 	return port
 }
 
+// releaseOpenCodePort frees a port reserved by nextOpenCodePort once
+// CreateSession either persisted it (so the Store scan above will find it
+// from then on) or gave up before persisting — either way the reservation
+// has served its purpose and holding onto it would leak the port forever on
+// a failed CreateSession.
+func (a *App) releaseOpenCodePort(port int) {
+	a.portMu.Lock()
+	defer a.portMu.Unlock()
+	delete(a.reservedPorts, port)
+}
+
+// reserveSessionID atomically checks that id isn't already taken — by the
+// Store, or by a concurrent CreateSession call that reserved it but hasn't
+// persisted yet — and reserves it if so. Mirrors reservedPorts/
+// nextOpenCodePort for session names instead of ports.
+func (a *App) reserveSessionID(id string) bool {
+	a.nameMu.Lock()
+	defer a.nameMu.Unlock()
+	if a.reservedNames[id] {
+		return false
+	}
+	if _, exists := a.Store.Get(id); exists {
+		return false
+	}
+	if a.reservedNames == nil {
+		a.reservedNames = map[string]bool{}
+	}
+	a.reservedNames[id] = true
+	return true
+}
+
+// releaseSessionID frees a reservation made by reserveSessionID, whether
+// CreateSession went on to persist the session or gave up first.
+func (a *App) releaseSessionID(id string) {
+	a.nameMu.Lock()
+	defer a.nameMu.Unlock()
+	delete(a.reservedNames, id)
+}
+
 func (a *App) Projects() []string {
 	a.cfgMu.RLock()
 	defer a.cfgMu.RUnlock()
@@ -602,13 +648,15 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 	if err := validateAgent(agent); err != nil {
 		return session.Session{}, "", err
 	}
-	if _, exists := a.Store.Get(session.MakeID(project, name)); exists {
+	id := session.MakeID(project, name)
+	if !a.reserveSessionID(id) {
 		// Same name means the same worktree path — creating it again would
 		// hijack the existing session's checkout.
 		return session.Session{}, "", fmt.Errorf("session %q already exists in project %q", name, project)
 	}
+	defer a.releaseSessionID(id)
 	var wt string
-	tmuxName := TmuxSessionName(session.MakeID(project, name), name)
+	tmuxName := TmuxSessionName(id, name)
 	branch := ""
 	var userscriptHint string
 	baseBranchRef := proj.BaseBranch
@@ -704,6 +752,7 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 	agentPort := 0
 	if agent == "opencode" {
 		agentPort = a.nextOpenCodePort()
+		defer a.releaseOpenCodePort(agentPort)
 		cmd = fmt.Sprintf("opencode --port %d", agentPort)
 		if flag := modelFlag(agent, model); flag != "" {
 			cmd += " " + flag
@@ -742,7 +791,7 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 	hint = joinHints(hint, userscriptHint)
 
 	s := session.Session{
-		ID:           session.MakeID(project, name),
+		ID:           id,
 		Project:      project,
 		Name:         name,
 		Branch:       branch,
@@ -1736,9 +1785,15 @@ func (a *App) DeleteSession(id string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("unknown session %q", id)
 	}
+	// cleanupErr is recorded rather than returned immediately: Store.Delete
+	// below must still run even when tmux or git cleanup fails, or the user
+	// is left with a session record they asked to delete but can never clear
+	// because its worktree/tmux side is already gone or broken (see
+	// KillTmux for the same pattern).
+	var cleanupErr error
 	if has, _ := a.Tmux.HasSession(s.TmuxSession); has {
 		if err := a.Tmux.KillSession(s.TmuxSession); err != nil {
-			return "", fmt.Errorf("tmux kill-session: %w", err)
+			cleanupErr = fmt.Errorf("tmux kill-session: %w", err)
 		}
 	}
 	var hint string
@@ -1758,9 +1813,10 @@ func (a *App) DeleteSession(id string) (string, error) {
 				}
 			}
 			if err := a.Git.RemoveWorktree(proj.Repo, s.WorktreePath); err != nil {
-				return hint, fmt.Errorf("remove worktree: %w", err)
-			}
-			if s.NewBranch && s.Branch != "" {
+				if cleanupErr == nil {
+					cleanupErr = fmt.Errorf("remove worktree: %w", err)
+				}
+			} else if s.NewBranch && s.Branch != "" {
 				_ = a.Git.DeleteBranch(proj.Repo, s.Branch)
 			}
 		}
@@ -1771,5 +1827,8 @@ func (a *App) DeleteSession(id string) (string, error) {
 		// here would wipe their repo.
 		_ = os.RemoveAll(s.WorktreePath)
 	}
-	return hint, a.Store.Delete(id)
+	if err := a.Store.Delete(id); err != nil && cleanupErr == nil {
+		cleanupErr = err
+	}
+	return hint, cleanupErr
 }

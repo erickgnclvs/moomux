@@ -319,6 +319,21 @@ func newApp() (*app.App, error) {
 // agent, same as the TUI's "new session" action) and, if -prompt is given,
 // type it into the agent's pane as its first task. Fire-and-forget — it
 // prints the new tmux session name and exits without waiting on the agent.
+// explicitFlagOverride returns a pointer to value if name was explicitly
+// passed on fs's command line, or nil if it was left at its default — so a
+// caller like CreateSession's dangerous can tell "explicitly false" apart
+// from "not set, use the project's own default", which a plain bool can't.
+func explicitFlagOverride(fs *flag.FlagSet, name string, value bool) *bool {
+	var override *bool
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			v := value
+			override = &v
+		}
+	})
+	return override
+}
+
 func runSpawn(args []string) error {
 	fs := flag.NewFlagSet("spawn", flag.ExitOnError)
 	project := fs.String("project", "", "project name (required; run -list to see configured projects)")
@@ -350,16 +365,7 @@ func runSpawn(args []string) error {
 		return fmt.Errorf("spawn: -project is required (run 'moomux spawn -list' to see configured projects)")
 	}
 
-	// -dangerous is a pointer to CreateSession so an unset flag leaves the
-	// project's own Dangerous setting in effect, instead of forcing every
-	// spawned session non-dangerous the way flag.Bool's default false would.
-	var dangerousOverride *bool
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "dangerous" {
-			v := *dangerous
-			dangerousOverride = &v
-		}
-	})
+	dangerousOverride := explicitFlagOverride(fs, "dangerous", *dangerous)
 
 	a, err := newApp()
 	if err != nil {
