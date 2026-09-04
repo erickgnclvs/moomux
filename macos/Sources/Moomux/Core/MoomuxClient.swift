@@ -383,10 +383,6 @@ public final class MoomuxClient: Sendable {
         try call("SetAutoTmux", Args(on: on))
     }
 
-    public func setCompactDetail(_ on: Bool) throws {
-        try call("SetCompactDetail", Args(on: on))
-    }
-
     // MARK: - Status stream
 
     /// Yields a snapshot per watcher tick until the connection drops, then

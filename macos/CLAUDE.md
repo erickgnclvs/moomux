@@ -470,8 +470,12 @@ Decisions, not oversights. Don't "fix" these without being asked.
   the presentation binding — which cancels the very delete being advanced. `advancingDelete` is the
   guard, and `ackDelete` clears and re-presents one runloop turn later. Measured: without the flag,
   "Continue" is indistinguishable from "Cancel".
-- **Every write the socket serves is wired up**, session and config alike — the one exception is
-  `SetSessionStatusTitle`, which is the watcher's write path and this app runs no watcher.
+- **Every write the socket serves is wired up**, session and config alike, with two exceptions:
+  `SetSessionStatusTitle`, which is the watcher's write path and this app runs no watcher, and
+  `SetCompactDetail`, which trims a detail panel this app does not have. The other TUI-only
+  settings (theme, appearance, auto-tmux) are here because they are one-line flags on a shared
+  config file and a front end that could edit projects but not those would stop somewhere odd; a
+  flag whose *only* meaning is the shape of the TUI's own panel is over that line.
   **No drag-to-reorder**, though, for sessions or projects: `MoveSession`/`MoveProject` take a ±1
   delta, the lists are plain `List`s, and `onMove` wants index sets over a bound array, so ⌃⌘↑/↓ and
   two chevron buttons are the whole feature for a day less work.

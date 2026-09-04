@@ -341,9 +341,6 @@ private struct PreferencesPane: View {
                 get: { cfg?.autoSubmitDefault ?? false },
                 set: { app.setAutoSubmitDefault($0) }))
                 .help("The starting state of the new-session form's send toggle, here and in the TUI")
-            Toggle("Compact detail view", isOn: Binding(
-                get: { cfg?.compactDetail ?? false },
-                set: { app.setCompactDetail($0) }))
             Toggle("Relaunch the TUI inside tmux", isOn: Binding(
                 get: { cfg?.autoTmux ?? false },
                 set: { app.setAutoTmux($0) }))

@@ -226,14 +226,12 @@ public struct Config: Decodable, Sendable {
     /// The Go side applies the sort; this is what tells a front end that its
     /// move-up/move-down actions would be undone by the next open.
     public var sortRecentFirst: Bool
-    public var compactDetail: Bool
 
     enum CodingKeys: String, CodingKey {
         case projects, order, theme, appearance
         case autoTmux = "auto_tmux"
         case autoSubmitDefault = "auto_submit_default"
         case sortRecentFirst = "sort_recent_first"
-        case compactDetail = "compact_detail"
     }
 
     public init(from decoder: Decoder) throws {
@@ -245,7 +243,6 @@ public struct Config: Decodable, Sendable {
         autoTmux = try c.decodeIfPresent(Bool.self, forKey: .autoTmux) ?? false
         autoSubmitDefault = try c.decodeIfPresent(Bool.self, forKey: .autoSubmitDefault) ?? false
         sortRecentFirst = try c.decodeIfPresent(Bool.self, forKey: .sortRecentFirst) ?? false
-        compactDetail = try c.decodeIfPresent(Bool.self, forKey: .compactDetail) ?? false
     }
 
     public var orderedProjectNames: [String] {
@@ -418,14 +415,13 @@ public enum Wire {
         // Every settings flag is `omitempty` on the Go side, so "off" arrives
         // as an absent key and must not decode as nil-shaped garbage.
         assert(cfg.autoTmux == false && cfg.sortRecentFirst == false)
-        assert(cfg.autoSubmitDefault == false && cfg.compactDetail == false)
+        assert(cfg.autoSubmitDefault == false)
         let flagsJSON = """
         {"projects":{},"auto_tmux":true,"auto_submit_default":true,
-         "sort_recent_first":true,"compact_detail":true,"appearance":"dark"}
+         "sort_recent_first":true,"appearance":"dark"}
         """
         let flags = try! decoder.decode(Config.self, from: Data(flagsJSON.utf8))
-        assert(flags.autoTmux && flags.autoSubmitDefault)
-        assert(flags.sortRecentFirst && flags.compactDetail)
+        assert(flags.autoTmux && flags.autoSubmitDefault && flags.sortRecentFirst)
         assert(flags.appearance == "dark")
 
         // prompt_agent is the one Project field the app has to honour rather
