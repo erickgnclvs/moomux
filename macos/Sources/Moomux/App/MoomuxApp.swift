@@ -104,7 +104,9 @@ struct SessionCommands: Commands {
     /// clicked; the menu bar has only the selection to go on.
     @MainActor
     private var selected: Session? {
-        app.visibleSessions.first { $0.id == app.selectedSessionID }
+        // Over every session, not the visible slice: a search can select an
+        // archived row and the menu has to keep acting on it.
+        app.session(id: app.selectedSessionID)
     }
 
     var body: some Commands {
@@ -123,6 +125,15 @@ struct SessionCommands: Commands {
                 .keyboardShortcut(",", modifiers: .command)
         }
         CommandMenu("Session") {
+            // ⌘F is the find shortcut everywhere, and `f` is the TUI's. The
+            // search field lives in the sidebar; this puts the caret in it.
+            // Hidden below macOS 15, where `.searchFocused` does not exist and
+            // the item could only be a no-op — the field is still clickable.
+            if #available(macOS 15, *) {
+                Button("Find Session…") { app.focusSearch() }
+                    .keyboardShortcut("f", modifiers: .command)
+                Divider()
+            }
             // ⌘R is Refresh and ⌘↩ is Attach, both already live here.
             // ⌘G was the last free one, and Review is the action most often
             // wanted while attached, where the SessionInfo button is off screen.
@@ -155,7 +166,7 @@ struct SessionCommands: Commands {
             Button("Kill tmux") { if let s = selected { app.killTmux(s) } }
                 .keyboardShortcut("k", modifiers: [.command, .shift])
                 .disabled(selected.map { !app.isAlive($0) } ?? true)
-            Button("Delete…") { app.pendingDelete = selected }
+            Button("Delete…") { if let s = selected { app.askDelete(s) } }
                 .keyboardShortcut(.delete, modifiers: .command)
                 .disabled(selected == nil)
         }

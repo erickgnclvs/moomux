@@ -15,7 +15,7 @@ creates, renames, retags, re-agents, archives, reorders, kills and deletes them.
 the same questions the TUI's dialog does — agent, model, thinking level, branch and base branch
 included — because the core serves the table those pickers are built from (`AgentOptions`). ⌘,
 manages projects (add, edit, remove, reorder, and the "that path isn't a git repo" choice) and the
-config flags both front ends share.
+config flags both front ends share. ⌘F searches the sidebar by session name.
 
 ## The environment decides more than you'd think
 
@@ -450,6 +450,26 @@ Decisions, not oversights. Don't "fix" these without being asked.
 - **No mouse reporting or drag-to-resize panes in control mode.** Clicking selects a pane; that is
   all. Resizing goes through tmux's own keys.
 - **No terminal settings** — font, size, colours and cursor are all SwiftTerm's defaults.
+- **Search matches names and nothing else**, case-insensitively, over the *whole* store — archived
+  sessions included, whatever the Archived toggle says. Both halves are `internal/tui/search.go`'s
+  `matchSessions`: the session you cannot remember is disproportionately likely to be one you
+  archived and forgot, and a front end that quietly also matched branch or prompt would rank
+  differently for the same typing. ⌘F needs `.searchFocused`, which is macOS 15 while the bundle
+  targets 14, so the shortcut *and* its menu item are behind an availability check — the field
+  itself is there and clickable on 14, and a menu item that could only no-op is worse than none.
+- **Delete asks twice unless the worktree is known clean.** `internal/tui` makes you press `y`
+  twice past a dirty/unpushed warning (`confirmAck`), because one keystroke is too easy to fire by
+  reflex; one click on a destructive button over the same warning is the same weakness. The test is
+  "known clean", not "known dirty": the status is whatever `loadStatus` already fetched for a
+  *selected* session, a row deleted from the context menu has none, and three shell-outs plus a
+  `gh` call is far too slow to block a dialog on — so an unchecked worktree is treated as one with
+  something to lose. An alert also cannot be updated in place the way the TUI's overlay can, which
+  is how it gets to show "checking…".
+  The second dialog is a genuine re-presentation, not a content swap: SwiftUI dismisses an alert on
+  **any** button and will not swap its content in place, and that dismissal writes `false` through
+  the presentation binding — which cancels the very delete being advanced. `advancingDelete` is the
+  guard, and `ackDelete` clears and re-presents one runloop turn later. Measured: without the flag,
+  "Continue" is indistinguishable from "Cancel".
 - **Every write the socket serves is wired up**, session and config alike — the one exception is
   `SetSessionStatusTitle`, which is the watcher's write path and this app runs no watcher.
   **No drag-to-reorder**, though, for sessions or projects: `MoveSession`/`MoveProject` take a ±1

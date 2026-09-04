@@ -51,6 +51,15 @@ public final class AppState {
 
     public var selectedSessionID: Session.ID?
     public var showArchived = false
+    /// The sidebar's search field. Non-empty, it replaces `showArchived` as
+    /// what the list shows — see `listedSessions`.
+    public var searchQuery = ""
+    /// Bumped to put the keyboard in the search field. A token rather than a
+    /// Bool because the menu item has to work when focus is already there and
+    /// the user simply wants to start over; `@FocusState` lives in the view.
+    public private(set) var focusSearchToken = 0
+
+    public func focusSearch() { focusSearchToken += 1 }
     /// Attach with tmux control mode (native panes) rather than a plain
     /// `tmux attach`. The default, because it is the whole reason for a native
     /// app: real per-pane selection and copy, and a layout the app can see.
@@ -99,7 +108,27 @@ public final class AppState {
     public var sheet: Sheet?
     /// The session the delete confirmation is asking about. Its own field, not
     /// a `Sheet` case: an alert is not a sheet and cannot share the modifier.
+    /// Set it through `askDelete(_:)` rather than directly, or the unsaved-work
+    /// step below is skipped.
     public var pendingDelete: Session?
+
+    /// Which half of the delete confirmation is showing.
+    ///
+    /// Delete removes the worktree, so uncommitted or unpushed work goes with
+    /// it. `internal/tui` guards that by making you press `y` **twice** past
+    /// the warning (`confirmAck` in `update.go`) — one keystroke is too easy to
+    /// fire by reflex. A single click on a destructive button over the same
+    /// warning is the same weakness, so this app asks twice too.
+    public enum DeleteStep { case warnUnsaved, confirm }
+    public private(set) var deleteStep: DeleteStep = .confirm
+
+    /// True only between clearing `pendingDelete` and re-presenting it one
+    /// runloop turn later. SwiftUI dismisses an alert on *any* button and will
+    /// not swap its content in place, so the second dialog has to be a genuinely
+    /// new presentation — and the dismissal writes `false` through the
+    /// presentation binding, which would otherwise cancel the delete we are in
+    /// the middle of advancing.
+    public private(set) var advancingDelete = false
     /// The project the remove confirmation is asking about. Same reason.
     public var pendingProjectDelete: String?
 
@@ -161,10 +190,42 @@ public final class AppState {
         showArchived ? sessions : sessions.filter { !$0.archived }
     }
 
+    /// What the sidebar lists: the visible slice normally, and while a search
+    /// is running every session whose name matches — **archived ones
+    /// included**, whatever the Archived toggle says. `internal/tui`'s
+    /// `matchSessions` runs over the whole store for the same reason: the
+    /// session you cannot remember is disproportionately likely to be one you
+    /// archived and forgot.
+    public var listedSessions: [Session] {
+        AppState.matchSessions(searching ? sessions : visibleSessions, query: searchQuery)
+    }
+
+    public var searching: Bool {
+        !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// `internal/tui/search.go`'s `matchSessions`: case-insensitive substring
+    /// against the name and nothing else. Not the branch, not the project, not
+    /// the prompt — the TUI settled on names, and a front end that quietly
+    /// matched more would rank differently for the same typing.
+    nonisolated static func matchSessions(_ all: [Session], query: String) -> [Session] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return all }
+        return all.filter { $0.name.lowercased().contains(query) }
+    }
+
+    /// The session behind an id, from *every* session rather than the visible
+    /// slice: a search can select an archived row, and the detail pane and the
+    /// Session menu both have to keep working on it.
+    public func session(id: Session.ID?) -> Session? {
+        guard let id else { return nil }
+        return sessions.first { $0.id == id }
+    }
+
     /// Project name → its sessions, in the order the server returned them
     /// (which is the user's manual ordering), projects in config order.
     public var sessionsByProject: [(project: String, sessions: [Session])] {
-        let grouped = Dictionary(grouping: visibleSessions, by: \.project)
+        let grouped = Dictionary(grouping: listedSessions, by: \.project)
         let ordered = config?.orderedProjectNames ?? projects
         let known = Set(ordered)
         return (ordered + grouped.keys.filter { !known.contains($0) }.sorted())
@@ -413,6 +474,23 @@ public final class AppState {
         assert(joinHint("a", "b") == "a\nb")
         assert(joinHint("", "b") == "b" && joinHint("a", "") == "a")
 
+        // Search matches `internal/tui/search.go`: name, case-insensitively,
+        // substring — and an all-whitespace query is not a search, or typing a
+        // space would empty the sidebar.
+        // `Session` decodes and is never constructed, so a fixture is JSON.
+        func sample(_ name: String) -> Session {
+            try! Wire.decoder.decode(Session.self, from: Data(
+                #"{"id":"p:\#(name)","project":"p","name":"\#(name)","branch":"feature/x"}"#.utf8))
+        }
+        let rows = [sample("Alpha"), sample("beta"), sample("gamma-ALPHA")]
+        assert(matchSessions(rows, query: "").count == 3)
+        assert(matchSessions(rows, query: "   ").count == 3, "whitespace is not a query")
+        assert(matchSessions(rows, query: "alpha").map(\.name) == ["Alpha", "gamma-ALPHA"])
+        assert(matchSessions(rows, query: "  ALPHA ").count == 2, "trimmed and case-folded")
+        assert(matchSessions(rows, query: "zzz").isEmpty)
+        // The branch is not searched, though it is the most tempting extra.
+        assert(matchSessions(rows, query: "feature").isEmpty)
+
         // The agent table's fallbacks, which decide what every picker in the
         // new-session form contains. Same rules as `internal/tui`'s
         // agentNames / modelNamesFor / thinkingNamesFor.
@@ -440,6 +518,37 @@ public final class AppState {
 
             // Manual reordering is off while the core sorts by last-opened.
             assert(app.canReorder, "no config yet must not disable reordering")
+        }
+
+        // Which delete dialog opens. The safety-critical one: only a worktree
+        // *known* to be clean skips the unsaved-work step, so a session nobody
+        // has looked at is never a single click away from losing work.
+        MainActor.assumeIsolated {
+            let app = AppState()
+            let s = sample("doomed")
+
+            app.askDelete(s)
+            assert(app.deleteStep == .warnUnsaved, "an unchecked worktree must warn first")
+
+            app.statuses[s.id] = .init(known: true)
+            app.askDelete(s)
+            assert(app.deleteStep == .confirm, "a known-clean worktree goes straight to confirm")
+
+            app.statuses[s.id] = .init(known: true, dirty: true)
+            app.askDelete(s)
+            assert(app.deleteStep == .warnUnsaved)
+            app.statuses[s.id] = .init(known: true, unpushed: true)
+            app.askDelete(s)
+            assert(app.deleteStep == .warnUnsaved, "unpushed commits are work too")
+
+            // Advancing past the warning must survive the dismissal that
+            // SwiftUI drives through the presentation binding — without the
+            // guard, "Continue" cancels the delete it is confirming.
+            app.ackDelete()
+            app.dismissDelete()
+            assert(app.pendingDelete == nil, "the alert is down mid-advance")
+            assert(app.advancingDelete, "…but the delete is still in flight")
+            assert(app.deleteStep == .confirm)
         }
 
         // A mutation the server refuses is an answer, not a dead socket. It has
@@ -772,6 +881,48 @@ public final class AppState {
     public func killTmux(_ session: Session) {
         detachIfShowing(session)
         mutate("Kill tmux") { try $0.killTmux(id: session.id); return nil }
+    }
+
+    /// Opens the delete confirmation, at the unsaved-work step unless the
+    /// worktree is known to be clean.
+    ///
+    /// "Unless known clean" and not "if known dirty" on purpose: the status is
+    /// whatever `loadStatus` already fetched for a *selected* session, and a row
+    /// deleted straight from the context menu has none. Three shell-outs and a
+    /// `gh` call over the network is far too slow to block a dialog on, and an
+    /// alert cannot be updated in place the way the TUI's overlay can (which is
+    /// how it gets to show "checking…"). So an unknown worktree is treated as
+    /// one with something to lose — never a weaker guard than the TUI's, at the
+    /// cost of a second click on a session nobody looked at first.
+    public func askDelete(_ session: Session) {
+        let status = statuses[session.id]
+        let known = status?.known == true
+        deleteStep = (known && !(status!.dirty || status!.unpushed)) ? .confirm : .warnUnsaved
+        pendingDelete = session
+        // Not awaited: it is what fills the warning's detail line in for next
+        // time, and the dialog is already up either way.
+        Task { await loadStatus(for: session.id) }
+    }
+
+    /// The unsaved-work step's "Continue" — see `advancingDelete` for why this
+    /// is a dismiss and a re-present rather than a state flip.
+    public func ackDelete() {
+        guard let session = pendingDelete else { return }
+        advancingDelete = true
+        pendingDelete = nil
+        deleteStep = .confirm
+        Task { @MainActor in
+            pendingDelete = session
+            advancingDelete = false
+        }
+    }
+
+    /// Cancels, or finishes, whatever the confirmation was asking. Called by
+    /// the presentation binding, so it has to no-op mid-advance.
+    public func dismissDelete() {
+        guard !advancingDelete else { return }
+        pendingDelete = nil
+        deleteStep = .confirm
     }
 
     public func delete(_ session: Session) {

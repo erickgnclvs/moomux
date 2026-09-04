@@ -30,7 +30,7 @@ struct RootView: View {
             // sidebar and the toolbar keep working while it is up.
             if app.showGrid {
                 SessionGrid()
-            } else if let session = app.visibleSessions.first(where: { $0.id == app.selectedSessionID }) {
+            } else if let session = app.session(id: app.selectedSessionID) {
                 SessionDetail(session: session)
             } else {
                 ContentUnavailableView("No session selected", systemImage: "square.split.2x1")
@@ -99,14 +99,26 @@ struct RootView: View {
                 SettingsSheet()
             }
         }
-        .alert("Delete session?", isPresented: Binding(
+        .alert(app.deleteStep == .warnUnsaved ? "This worktree may have work in it"
+                                              : "Delete session?",
+               isPresented: Binding(
             get: { app.pendingDelete != nil },
-            set: { if !$0 { app.pendingDelete = nil } }
+            set: { if !$0 { app.dismissDelete() } }
         ), presenting: app.pendingDelete) { session in
-            Button("Delete", role: .destructive) { app.delete(session) }
-            Button("Cancel", role: .cancel) {}
+            switch app.deleteStep {
+            case .warnUnsaved:
+                // Not destructive, and not the default button: this step exists
+                // to cost a deliberate second look, so the reflex key (Escape)
+                // and the reflex button (Cancel) both keep the worktree.
+                Button("Continue") { app.ackDelete() }
+                Button("Cancel", role: .cancel) {}
+            case .confirm:
+                Button("Delete", role: .destructive) { app.delete(session) }
+                Button("Cancel", role: .cancel) {}
+            }
         } message: { session in
-            Text(deleteWarning(for: session))
+            Text(app.deleteStep == .warnUnsaved ? unsavedWarning(for: session)
+                                                : deleteWarning(for: session))
         }
         // The whole visible surface of `actionError` for now: a refused action
         // has to say so somewhere, and an alert is the least that qualifies.
@@ -118,6 +130,20 @@ struct RootView: View {
         } message: {
             Text(app.actionError ?? "")
         }
+    }
+
+    /// The first step's message. Says what is actually at stake when the
+    /// status is known, and says it is *unknown* when it is — "moomux hasn't
+    /// looked" is information, and papering over it with the generic sentence
+    /// would imply a check that never ran.
+    private func unsavedWarning(for session: Session) -> String {
+        let changes = app.statuses[session.id]?.changeSummary ?? ""
+        guard !changes.isEmpty else {
+            return "moomux hasn't checked \(session.worktreePath) for uncommitted or unpushed "
+                + "work yet. Deleting removes the worktree either way."
+        }
+        return "\(session.name) has \(changes). Deleting removes the worktree, and that work "
+            + "goes with it."
     }
 
     /// Reuses the status already fetched for the selected session rather than
@@ -249,7 +275,7 @@ private struct NewSessionSheet: View {
         // Seeded from the row being looked at — a second session in the same
         // project is the common case.
         .onAppear {
-            form.project = app.visibleSessions.first { $0.id == app.selectedSessionID }?.project
+            form.project = app.session(id: app.selectedSessionID)?.project
                 ?? projects.first ?? ""
             form.autoSubmit = app.config?.autoSubmitDefault ?? false
             applyProject()
@@ -377,7 +403,41 @@ private struct SessionList: View {
                 }
             }
         }
-        .overlay { if app.sessions.isEmpty { EmptyState() } }
+        .searchable(text: $app.searchQuery, placement: .sidebar, prompt: "Find a session")
+        // `.searchFocused` is macOS 15; the bundle targets 14. The field is
+        // there and clickable either way — only ⌘F is gated, and
+        // `SessionCommands` hides the menu item on the same check so there is
+        // no command that does nothing.
+        .modifier(FocusSearchOnRequest(token: app.focusSearchToken))
+        .overlay {
+            if app.sessions.isEmpty {
+                EmptyState()
+            } else if app.listedSessions.isEmpty {
+                // Only reachable while searching: with no query the list is
+                // `visibleSessions`, and an empty one of those means every
+                // session is archived, which the Archived toggle explains.
+                ContentUnavailableView.search(text: app.searchQuery)
+            }
+        }
+    }
+}
+
+/// Puts the caret in the sidebar's search field whenever `token` changes.
+///
+/// A `ViewModifier` only so the macOS 15 availability check has somewhere to
+/// live that is not the middle of a modifier chain.
+private struct FocusSearchOnRequest: ViewModifier {
+    let token: Int
+    @FocusState private var focused: Bool
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content
+                .searchFocused($focused)
+                .onChange(of: token) { _, _ in focused = true }
+        } else {
+            content
+        }
     }
 }
 
@@ -451,7 +511,7 @@ private struct SessionRow: View {
             // Delete is the irreversible one, and the only thing that asks.
             Button("Kill tmux") { app.killTmux(session) }
                 .disabled(!app.isAlive(session))
-            Button("Delete…", role: .destructive) { app.pendingDelete = session }
+            Button("Delete…", role: .destructive) { app.askDelete(session) }
         }
     }
 }
