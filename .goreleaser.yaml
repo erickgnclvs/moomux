@@ -53,5 +53,5 @@ brews:
     service: |
       run [opt_bin/"moomux", "serve"]
       keep_alive true
-      log_file var/"log/moomux.log"
-      error_log_file var/"log/moomux.log"
+      log_path var/"log/moomux.log"
+      error_log_path var/"log/moomux.log"
