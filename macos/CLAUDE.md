@@ -15,7 +15,7 @@ creates, renames, retags, re-agents, archives, reorders, kills and deletes them.
 the same questions the TUI's dialog does — agent, model, thinking level, branch and base branch
 included — because the core serves the table those pickers are built from (`AgentOptions`). ⌘,
 manages projects (add, edit, remove, reorder, and the "that path isn't a git repo" choice) and the
-config flags both front ends share. ⌘F searches the sidebar by session name.
+config flags both front ends share. ⌘F searches the sidebar by session name, ⌃⌘S hides it.
 
 ## The environment decides more than you'd think
 
@@ -450,6 +450,13 @@ Decisions, not oversights. Don't "fix" these without being asked.
 - **No mouse reporting or drag-to-resize panes in control mode.** Clicking selects a pane; that is
   all. Resizing goes through tmux's own keys.
 - **No terminal settings** — font, size, colours and cursor are all SwiftTerm's defaults.
+- **The sidebar's ⌃⌘S is ours, not SwiftUI's.** `NavigationSplitView` ships a toolbar button and
+  **no** View-menu item, and on macOS a shortcut needs a menu item — so ⌃⌘S, which every other Mac
+  app spells this way, did nothing at all here. Measured before and after. The fix is a
+  `CommandGroup(after: .sidebar)` item over `AppState.sidebarVisible`, which `RootView` maps onto
+  `columnVisibility`; the built-in toolbar button writes back through the same binding, so the two
+  cannot disagree. Keep it a `Bool` on the store rather than a `NavigationSplitViewVisibility`, or
+  `AppState` imports SwiftUI for one enum.
 - **Search matches names and nothing else**, case-insensitively, over the *whole* store — archived
   sessions included, whatever the Archived toggle says. Both halves are `internal/tui/search.go`'s
   `matchSessions`: the session you cannot remember is disproportionately likely to be one you

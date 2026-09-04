@@ -22,7 +22,10 @@ struct RootView: View {
 
     var body: some View {
         @Bindable var app = app
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: Binding(
+            get: { app.sidebarVisible ? .all : .detailOnly },
+            set: { app.sidebarVisible = $0 != .detailOnly }
+        )) {
             SessionList()
                 .navigationSplitViewColumnWidth(min: 240, ideal: 300)
         } detail: {

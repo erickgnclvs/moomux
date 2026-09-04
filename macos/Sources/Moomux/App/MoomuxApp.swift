@@ -124,6 +124,15 @@ struct SessionCommands: Commands {
             Button("Settings…") { app.sheet = .settings }
                 .keyboardShortcut(",", modifiers: .command)
         }
+        // SwiftUI gives `NavigationSplitView` a toolbar button and no menu
+        // item, and a shortcut needs a menu item — so ⌃⌘S, the system-wide
+        // spelling of this, did nothing at all. Verified before and after.
+        CommandGroup(after: .sidebar) {
+            Button(app.sidebarVisible ? "Hide Sidebar" : "Show Sidebar") {
+                app.sidebarVisible.toggle()
+            }
+            .keyboardShortcut("s", modifiers: [.control, .command])
+        }
         CommandMenu("Session") {
             // ⌘F is the find shortcut everywhere, and `f` is the TUI's. The
             // search field lives in the sidebar; this puts the caret in it.

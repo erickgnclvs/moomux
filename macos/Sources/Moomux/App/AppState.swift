@@ -74,6 +74,12 @@ public final class AppState {
     /// sessions. Clicking a tile selects it; Attach is still the full-size,
     /// deliberate thing. No snapshot text lives in the store — see `SessionGrid`.
     public var showGrid = false
+    /// Whether the session list is showing. Here rather than in `RootView` for
+    /// the usual reason: the View menu has to toggle it, and commands can only
+    /// reach the store. A `Bool` and not a `NavigationSplitViewVisibility`, so
+    /// this file does not have to import SwiftUI for one enum — `RootView` maps
+    /// it, and the toolbar's own button writes back through the same binding.
+    public var sidebarVisible = true
     /// Whatever the last `OpenSession` told the user to do, if anything.
     public var hint: String?
     /// A mutation the server refused, until the user dismisses it. See
