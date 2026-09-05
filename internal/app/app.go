@@ -252,9 +252,53 @@ func (a *App) newTmuxSession(tmuxName, cwd, cmd, windowName string) error {
 		spec = nil
 	}
 	if spec == nil {
-		return a.Tmux.NewSession(tmuxName, cwd, cmd, windowName)
+		if err := a.Tmux.NewSession(tmuxName, cwd, cmd, windowName); err != nil {
+			return err
+		}
+		// The launch command is typed into a shell that has *just* forked
+		// (see NewSession's send-keys) — if that shell hasn't finished its
+		// own startup (rc files, prompt theme) by the time the command and
+		// Enter land, the Enter keypress can be swallowed by the shell's
+		// still-initializing line editor, leaving the command sitting typed
+		// but never run. waitForPaneReady then observes the shell's own late
+		// prompt render as "the pane changed and stabilized" and wrongly
+		// declares the agent ready — so StartFirstPrompt pastes the user's
+		// task into a bare shell prompt instead of the agent, with no error
+		// anywhere. Confirming the command actually left the input line
+		// here, and retrying Enter if it didn't, closes that race at its
+		// source rather than papering over it in the readiness check.
+		a.confirmLaunchCommandSubmitted(tmuxName, cmd)
+		return nil
 	}
 	return a.Tmux.NewSessionWithLayout(tmuxName, cwd, windowName, spec, cmd)
+}
+
+// confirmLaunchCommandSubmitted polls tmuxName's pane and, if it still shows
+// cmd sitting unexecuted on the shell's input line after a shell-startup
+// race swallowed the Enter NewSession sent with it, resends a bare Enter —
+// mirroring pressEnterUntilSubmitted's identical retry for the first-prompt
+// case. No-op if cmd is empty (no launch command was sent at all).
+func (a *App) confirmLaunchCommandSubmitted(tmuxName, cmd string) {
+	if cmd == "" {
+		return
+	}
+	for attempt := 0; ; attempt++ {
+		submitted := false
+		for i := 0; i < enterConfirmPolls; i++ {
+			time.Sleep(paneStablePoll)
+			cur, err := a.Tmux.CapturePane(tmuxName)
+			if err == nil && !strings.Contains(cur, cmd) {
+				submitted = true
+				break
+			}
+		}
+		if submitted || attempt >= enterConfirmRetries {
+			return
+		}
+		if err := a.Tmux.PressEnter(tmuxName); err != nil {
+			return
+		}
+	}
 }
 
 // agentInstallers are the per-agent writers that wire moomux's integrations
@@ -862,10 +906,23 @@ const (
 // looks exactly as "stable" as an idle agent input box, but typing the task
 // text into it just spams a wrong-passphrase loop until the text runs out,
 // and the agent itself never receives anything.
+//
+// "do you trust the files" covers Claude Code's own workspace-trust dialog.
+// CreateSession pre-approves every new worktree in ~/.claude.json (see
+// claudehook.TrustDirectory) specifically so this dialog never shows — but
+// that file is a shared, unlocked read-modify-write target: back-to-back
+// `moomux spawn` calls, or the long-running `claude` processes they launch
+// each independently reading and writing it, can race and silently drop an
+// entry another writer just added. When that happens the dialog shows up
+// anyway, looks exactly as "stable" as a real idle prompt, and typing text
+// into it does nothing (it's a Yes/No chooser, not a text field) — Enter
+// just dismisses it, discarding the prompt with no error. Treating it as a
+// stuck prompt turns that into a clear, actionable failure instead.
 var stuckPromptMarkers = []string{
 	"enter passphrase",
 	"password:",
 	"verification code",
+	"do you trust the files",
 }
 
 // stuckPromptMarker returns the first stuckPromptMarkers substring found in

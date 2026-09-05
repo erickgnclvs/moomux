@@ -394,6 +394,40 @@ func TestCreateSessionWorktree(t *testing.T) {
 	}
 }
 
+// TestCreateSessionRetriesLaunchCommandIfShellSwallowsEnter reproduces a real
+// incident: NewSession's send-keys types the agent launch command and Enter
+// into a shell pane that has *just* forked — if the shell hasn't finished its
+// own startup (rc files, prompt theme) yet, that Enter can be swallowed by
+// its still-initializing line editor, leaving the command sitting typed but
+// never run. waitForPaneReady then sees the shell's own late prompt render as
+// "the pane changed and stabilized" and StartFirstPrompt goes on to paste the
+// user's task into a bare shell prompt instead of the agent — with the CLI
+// still reporting success and no error anywhere. CreateSession must notice
+// the launch command never left the input line and retry Enter itself.
+func TestCreateSessionRetriesLaunchCommandIfShellSwallowsEnter(t *testing.T) {
+	a, git, tm, _ := newTestApp(t, gitProject("/repo"))
+	tn := TmuxSessionName("demo:feat", "feat")
+	tm.out["list-panes -t ="+tn+": -F #{pane_id}"] = "%0\n"
+	noBranch(git, "feat")
+	// enterConfirmPolls (5) identical "still pending" captures exhaust the
+	// first wait entirely — only a real retry Enter, not just a slower poll
+	// catching up, can move it past this.
+	tm.seq = map[string][]string{
+		"capture-pane -p -t =" + tn + ":": {
+			"$ claude", "$ claude", "$ claude", "$ claude", "$ claude",
+			"Claude Code\n\nagent idle", // only after the retried Enter
+		},
+	}
+
+	if _, _, err := a.CreateSession("demo", "feat", "", "", "", false, boolPtr(false), "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if !tm.called("send-keys -t =" + tn + ": Enter") {
+		t.Fatalf("launch command never actually ran but no retry Enter was sent; calls = %v", tm.calls)
+	}
+}
+
 // TestCreateSessionStampsLastOpened guards against a session created with
 // openTerminal=true — which drops the user straight into it, same as
 // OpenSession's attach — being treated as "never opened" by the
@@ -2686,6 +2720,38 @@ func TestStartFirstPromptRefusesStuckSSHPassphrasePrompt(t *testing.T) {
 	}
 	if tm.called("load-buffer") || tm.called("paste-buffer") {
 		t.Fatalf("must not type the prompt into a stuck passphrase prompt: %v", tm.calls)
+	}
+}
+
+// TestStartFirstPromptRefusesStuckTrustDialog reproduces a real spawn
+// incident: back-to-back `moomux spawn` calls raced on ~/.claude.json (see
+// claudehook.TrustDirectory) and one session's pre-approval got silently
+// dropped, so `claude` stopped at its own "Do you trust the files in this
+// folder?" dialog instead of ever reaching its chat input. That dialog is a
+// Yes/No chooser, not a text field, so it looks exactly as "stable" as an
+// idle agent — StartFirstPrompt must recognize it and refuse, rather than
+// typing the task text into it (which does nothing) and pressing Enter
+// (which dismisses the dialog and silently discards the prompt while still
+// reporting success).
+func TestStartFirstPromptRefusesStuckTrustDialog(t *testing.T) {
+	a, _, tm, _ := newTestApp(t, map[string]config.Project{})
+	tm.seq = map[string][]string{
+		"capture-pane -p -t =demo:x:": {
+			"$ claude",
+			"Do you trust the files in this folder?",
+			"Do you trust the files in this folder?",
+		},
+	}
+
+	err := a.StartFirstPrompt("demo:x", "do the thing", true)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "trust the files") {
+		t.Fatalf("error %q does not mention the stuck trust dialog", err)
+	}
+	if tm.called("load-buffer") || tm.called("paste-buffer") {
+		t.Fatalf("must not type the prompt into a stuck trust dialog: %v", tm.calls)
 	}
 }
 
