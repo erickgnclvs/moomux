@@ -174,13 +174,19 @@ func (m *Model) focusedOverlayLine(content string) int {
 		case 2:
 			return lineContaining(content, m.branchInput.View())
 		case 3:
-			return lineContaining(content, m.promptInput.View())
+			return lineContaining(content, m.baseBranchInput.View())
 		case 4:
-			return lineContaining(content, m.ticketInput.View())
+			return lineContaining(content, m.promptInput.View())
 		case 5:
+			return lineContaining(content, m.ticketInput.View())
+		case 6:
 			return lineContaining(content, m.prInput.View())
 		case newFormAgentFocus:
 			return lineContaining(content, m.renderNewFormAgentSelector())
+		case newFormModelFocus:
+			return lineContaining(content, muteStyle.Render("model:  ")+m.renderNewFormModelSelector())
+		case newFormThinkingFocus:
+			return lineContaining(content, muteStyle.Render("thinking:  ")+m.renderNewFormThinkingSelector())
 		case newFormDangerousFocus:
 			// Both toggle rows render an identical "[on]"/"[off]" value, so
 			// searching for the value alone can match the wrong row (their
@@ -341,6 +347,10 @@ func (m *Model) renderOverlay(content, footer string, focusedLine int) string {
 }
 
 func (m *Model) View() string {
+	// One backend read per pass — see allSessions. View runs after Update
+	// and may see backend changes a tea.Cmd landed in between, so it takes
+	// its own snapshot rather than reusing Update's.
+	m.invalidateSessions()
 	if m.width == 0 {
 		return "starting…"
 	}
@@ -352,7 +362,7 @@ func (m *Model) View() string {
 	switch m.mode {
 	case ModeNewForm:
 		content := m.compactOverlayContent(m.renderNewForm())
-		footer := m.formFooter(newFormFieldHints[m.newFormFocus], "tab/↑↓ fields  ←→ choose  enter  esc cancel", m.newFormErr)
+		footer := m.formFooter(m.newFormFieldHint(), "tab/↑↓ fields  ←→ choose  enter  esc cancel", m.newFormErr)
 		return m.renderOverlay(content, footer, m.focusedOverlayLine(content))
 	case ModeConfirmDelete:
 		return m.renderOverlay(m.renderConfirm(), "", -1)
@@ -649,7 +659,7 @@ func (m *Model) versionCandidates() []string {
 		return []string{"v" + m.Version}
 	}
 	return []string{
-		"v" + m.Version + " → v" + m.UpdateVersion + " (brew update && brew upgrade moomux)",
+		"v" + m.Version + " → v" + m.UpdateVersion + " (u to update)",
 		"v" + m.Version + " → v" + m.UpdateVersion,
 		"v" + m.Version,
 	}

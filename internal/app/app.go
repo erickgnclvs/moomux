@@ -6,9 +6,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/erickgnclvs/moomux/internal/browser"
@@ -34,7 +36,141 @@ type App struct {
 	Git          *gitwt.Client
 	PR           *prstatus.Client
 	WorktreeRoot string
+
+	// fetchMu guards lastFetch, written concurrently by WorktreeStatus calls
+	// for different sessions running on separate tea.Cmd goroutines.
+	fetchMu   sync.Mutex
+	lastFetch map[string]time.Time // by session id; see gitFetchStaleAfter
+
+	// cfgMu guards Cfg. Mutators (AddProject and friends, the Set* settings)
+	// take it for writing and hold it across their I/O, which also closes
+	// the TOCTOU between validateProjectLocked's duplicate-name check and
+	// saveProjectLocked. Readers copy what they need and let go — several
+	// (CreateSession above all) run for seconds and must not block a write
+	// that whole time.
+	//
+	// The local TUI already needed this: CreateSession and WorktreeStatus
+	// read Cfg.Projects from tea.Cmd goroutines while AddProject writes it
+	// from the Update loop. Serving App over a socket, one goroutine per
+	// connection, made the same race routine rather than narrow.
+	cfgMu sync.RWMutex
+
+	// portMu guards reservedPorts, nextOpenCodePort's in-memory record of
+	// ports already handed out this process but not yet persisted to the
+	// Store — without it, two concurrent CreateSession calls for opencode
+	// sessions (server.go dispatches each on its own goroutine) can both
+	// read the same "highest port so far" from the Store before either has
+	// written its new session, and collide.
+	portMu        sync.Mutex
+	reservedPorts map[int]bool
+
+	// nameMu guards reservedNames, the session-id analogue of reservedPorts:
+	// CreateSession's existence check happens long before its Store.Put, so
+	// two concurrent calls for the same name/project can both pass the
+	// check before either has written its session.
+	nameMu        sync.Mutex
+	reservedNames map[string]bool
 }
+
+// project returns a copy of the named project's config. config.Project is
+// all value types, so the copy is safe to use after the lock is released —
+// which matters for CreateSession, whose work outlives any lock it should
+// hold.
+func (a *App) project(name string) (config.Project, bool) {
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+	p, ok := a.Cfg.Projects[name]
+	return p, ok
+}
+
+// projectsSnapshot copies the project map for callers that iterate it.
+func (a *App) projectsSnapshot() map[string]config.Project {
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+	return maps.Clone(a.Cfg.Projects)
+}
+
+// ConfigSnapshot returns a copy of the live config, with the reference-typed
+// fields cloned so the caller neither races a concurrent write nor holds a
+// handle on App's own state. This is how everything outside App reads Cfg,
+// local TUI included: tui.New clones its own copy of whatever config it's
+// given at construction, and every later config-mutating call hands its
+// result back through a Msg's Cfg field (via this method) for Update() to
+// apply — see tui.Backend.ConfigSnapshot's doc comment.
+func (a *App) ConfigSnapshot() config.Config {
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+	return a.Cfg.Clone()
+}
+
+// gitFetchStaleAfter bounds how long WorktreeStatus trusts a session's
+// remote-tracking refs before running a `git fetch` to refresh them. Without
+// this, moomux's ahead/unpushed counts only ever reflect the last fetch done
+// at session-creation time — accurate right after a push made from within
+// that same worktree (push updates its own local ref), but stale once
+// anything else moves the remote (another worktree pushes the same branch,
+// a PR merges, a force-push). Much longer than gitStatusStaleAfter since
+// this hits the network and only needs to catch up occasionally, not on
+// every status poll.
+const gitFetchStaleAfter = 5 * time.Minute
+
+// dueForFetch reports whether id hasn't been fetched within
+// gitFetchStaleAfter, and marks it as fetched now if so — so concurrent or
+// rapid-fire calls for the same id don't each trigger their own fetch.
+func (a *App) dueForFetch(id string) bool {
+	a.fetchMu.Lock()
+	defer a.fetchMu.Unlock()
+	if a.lastFetch == nil {
+		a.lastFetch = map[string]time.Time{}
+	}
+	if time.Since(a.lastFetch[id]) < gitFetchStaleAfter {
+		return false
+	}
+	a.lastFetch[id] = time.Now()
+	return true
+}
+
+// forgetFetch drops id's fetch timestamp, so lastFetch tracks live sessions
+// rather than every session the process has ever seen.
+func (a *App) forgetFetch(id string) {
+	a.fetchMu.Lock()
+	defer a.fetchMu.Unlock()
+	delete(a.lastFetch, id)
+}
+
+// agentOptionsTable is the single source of truth for which agents moomux
+// can launch and what's worth offering in a model/thinking-level picker for
+// each — both the TUI's new-session form and (over internal/ipc) a second
+// front end read this same table via AgentOptions, instead of each keeping
+// its own copy that silently drifts the next time an agent is added here.
+//
+// opencode has no Models entry: it has no small fixed model list worth
+// hardcoding, so a picker offers a free-text field instead of a selector.
+// Its Thinking list matches claude's — neither has a launch-time
+// reasoning-effort flag, so thinking level is expressed as a phrase
+// prepended to the first prompt instead (see thinkingPromptPrefix in
+// internal/tui), not a real flag like codex's -c model_reasoning_effort.
+var agentOptionsTable = []config.AgentOption{
+	{
+		Name:     "claude",
+		Models:   []string{"default", "sonnet", "opus", "fable"},
+		Thinking: []string{"default", "think", "think hard", "think harder", "ultrathink"},
+	},
+	{
+		Name:     "codex",
+		Models:   []string{"default", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"},
+		Thinking: []string{"default", "minimal", "low", "medium", "high", "xhigh"},
+	},
+	{
+		Name:     "opencode",
+		Thinking: []string{"default", "think", "think hard", "think harder", "ultrathink"},
+	},
+}
+
+// AgentOptions returns agentOptionsTable. A pure static lookup today, but a
+// method (not just an exported var) so a caller — in-process or, via
+// internal/ipc, over the socket — never has to care which.
+func (a *App) AgentOptions() []config.AgentOption { return agentOptionsTable }
 
 // agentCmd returns the CLI binary name for the given agent.
 func agentCmd(agent string) string {
@@ -61,14 +197,46 @@ func dangerousFlag(agent string) string {
 	}
 }
 
+// modelFlag returns the --model flag for agent, or "" if model is empty or
+// "default".
+// ponytail: assumes --model is the right flag name for all three agents;
+// revisit if codex/opencode turn out to use something else.
+func modelFlag(agent, model string) string {
+	if model == "" || model == "default" {
+		return ""
+	}
+	return "--model " + model
+}
+
+// reasoningEffortFlag returns codex's -c model_reasoning_effort="<value>"
+// flag, or "" if thinking is empty/"default" or agent isn't codex. Unlike
+// --model, this isn't assumed to generalize: claude has no CLI flag for
+// extended-thinking effort (it's driven by magic words in the prompt
+// instead, see thinkingPromptPrefix in internal/tui), and opencode's
+// reasoning-effort flag (--variant) only exists on its one-shot `run`
+// subcommand, not the interactive session moomux launches here.
+func reasoningEffortFlag(agent, thinking string) string {
+	if agent != "codex" || thinking == "" || thinking == "default" {
+		return ""
+	}
+	return fmt.Sprintf("-c model_reasoning_effort=%q", thinking)
+}
+
 // buildAgentCmd returns the shell command that launches agent in its tmux
-// pane, appending its dangerous flag when requested and supported.
-func buildAgentCmd(agent string, dangerous bool) string {
+// pane, appending its dangerous flag, --model flag, and (codex only)
+// reasoning-effort flag when requested and supported.
+func buildAgentCmd(agent string, dangerous bool, model, thinking string) string {
 	cmd := agentCmd(agent)
 	if dangerous {
 		if flag := dangerousFlag(agent); flag != "" {
 			cmd += " " + flag
 		}
+	}
+	if flag := modelFlag(agent, model); flag != "" {
+		cmd += " " + flag
+	}
+	if flag := reasoningEffortFlag(agent, thinking); flag != "" {
+		cmd += " " + flag
 	}
 	return cmd
 }
@@ -91,9 +259,9 @@ func (a *App) newTmuxSession(tmuxName, cwd, cmd, windowName string) error {
 
 // agentInstallers are the per-agent writers that wire moomux's integrations
 // into the user's global agent config: the "needs input" hooks, and the
-// /kill, /tag, and /spawn custom commands (so any session can park, tag, or
-// spawn a delegated session without leaving the agent). Each maps an agent
-// name to its installer; an agent with
+// /kill, /tag, /spawn, and /reseed custom commands (so any session can park,
+// tag, or spawn a delegated session without leaving the agent). Each maps an
+// agent name to its installer; an agent with
 // no entry (opencode, everywhere) doesn't support that integration yet — add a
 // sibling package and a map entry to bring one in. changed reports whether the
 // call actually wrote something new (see codexHooksHint).
@@ -116,19 +284,19 @@ var agentInstallers = []struct {
 	}},
 	{"kill command", false, map[string]func(string) (bool, error){
 		"claude": claudehook.EnsureKillCommand,
-		"codex":  codexhook.EnsureKillPrompt,
+		"codex":  codexhook.EnsureKillCommand,
 	}},
 	{"tag command", false, map[string]func(string) (bool, error){
 		"claude": claudehook.EnsureTagCommand,
-		"codex":  codexhook.EnsureTagPrompt,
+		"codex":  codexhook.EnsureTagCommand,
 	}},
 	{"spawn command", false, map[string]func(string) (bool, error){
 		"claude": claudehook.EnsureSpawnCommand,
-		"codex":  codexhook.EnsureSpawnPrompt,
+		"codex":  codexhook.EnsureSpawnCommand,
 	}},
 	{"reseed command", false, map[string]func(string) (bool, error){
 		"claude": claudehook.EnsureReseedCommand,
-		"codex":  codexhook.EnsureReseedPrompt,
+		"codex":  codexhook.EnsureReseedCommand,
 	}},
 }
 
@@ -166,6 +334,46 @@ func installAgentSupport(agent string) string {
 	return hint
 }
 
+// InstallKnownCommands backfills custom commands for every agent referenced
+// by a configured project or existing session. It intentionally skips hook
+// installers: newly written hooks require an in-agent trust prompt, whose hint
+// is only meaningful while creating or opening that agent's session.
+//
+// Running this at ordinary moomux startup makes command upgrades discoverable
+// without requiring the user to reopen a particular session first.
+func (a *App) InstallKnownCommands() {
+	agents := make(map[string]bool)
+	for _, project := range a.projectsSnapshot() {
+		agents[project.AgentName()] = true
+	}
+	for _, s := range a.Store.All() {
+		agents[s.AgentName()] = true
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		slog.Warn("agent command install failed", "err", err)
+		return
+	}
+	for _, agent := range []string{"claude", "codex", "opencode"} {
+		if !agents[agent] {
+			continue
+		}
+		for _, entry := range agentInstallers {
+			if entry.hintOnChange {
+				continue
+			}
+			install, ok := entry.byAgent[agent]
+			if !ok {
+				continue
+			}
+			if _, err := install(home); err != nil {
+				slog.Warn(entry.what+" install failed", "agent", agent, "err", err)
+			}
+		}
+	}
+}
+
 // ReseedWorktree re-runs the worktree-create userscripts for an existing
 // session's worktree with MOOMUX_FORCE=1, so a template update (e.g. to
 // wt-seed-env.sh's templates) can be re-applied without deleting and
@@ -176,10 +384,11 @@ func (a *App) ReseedWorktree(s session.Session) []string {
 	if err != nil {
 		return []string{err.Error()}
 	}
+	proj, _ := a.project(s.Project)
 	return userscript.RunWorktreeCreate(home, userscript.Env{
 		Project:  s.Project,
 		Worktree: s.WorktreePath,
-		Repo:     a.Cfg.Projects[s.Project].Repo,
+		Repo:     proj.Repo,
 		Branch:   s.Branch,
 		Force:    true,
 	})
@@ -213,26 +422,86 @@ func WorktreeRootDefault() string {
 // Starts at 4096 and increments past the highest AgentPort recorded across
 // all sessions; AgentPort is only ever non-zero on OpenCode sessions, so
 // this is effectively scoped to those without needing an explicit filter.
+//
+// The Store won't know about this port until CreateSession's much later
+// Store.Put — worktree creation and the tmux/terminal setup in between run
+// for seconds — so a port is also recorded in reservedPorts the moment it's
+// handed out, and never handed out twice for the life of this App, even to
+// two CreateSession calls racing on separate goroutines.
 func (a *App) nextOpenCodePort() int {
+	a.portMu.Lock()
+	defer a.portMu.Unlock()
 	port := 4096
 	for _, s := range a.Store.All() {
 		if s.AgentPort >= port {
 			port = s.AgentPort + 1
 		}
 	}
+	for a.reservedPorts[port] {
+		port++
+	}
+	if a.reservedPorts == nil {
+		a.reservedPorts = map[int]bool{}
+	}
+	a.reservedPorts[port] = true
 	return port
 }
 
-func (a *App) Projects() []string { return a.Cfg.OrderedProjectNames() }
+// releaseOpenCodePort frees a port reserved by nextOpenCodePort once
+// CreateSession either persisted it (so the Store scan above will find it
+// from then on) or gave up before persisting — either way the reservation
+// has served its purpose and holding onto it would leak the port forever on
+// a failed CreateSession.
+func (a *App) releaseOpenCodePort(port int) {
+	a.portMu.Lock()
+	defer a.portMu.Unlock()
+	delete(a.reservedPorts, port)
+}
+
+// reserveSessionID atomically checks that id isn't already taken — by the
+// Store, or by a concurrent CreateSession call that reserved it but hasn't
+// persisted yet — and reserves it if so. Mirrors reservedPorts/
+// nextOpenCodePort for session names instead of ports.
+func (a *App) reserveSessionID(id string) bool {
+	a.nameMu.Lock()
+	defer a.nameMu.Unlock()
+	if a.reservedNames[id] {
+		return false
+	}
+	if _, exists := a.Store.Get(id); exists {
+		return false
+	}
+	if a.reservedNames == nil {
+		a.reservedNames = map[string]bool{}
+	}
+	a.reservedNames[id] = true
+	return true
+}
+
+// releaseSessionID frees a reservation made by reserveSessionID, whether
+// CreateSession went on to persist the session or gave up first.
+func (a *App) releaseSessionID(id string) {
+	a.nameMu.Lock()
+	defer a.nameMu.Unlock()
+	delete(a.reservedNames, id)
+}
+
+func (a *App) Projects() []string {
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+	return a.Cfg.OrderedProjectNames()
+}
 
 // MoveProject shifts the project with the given name by delta positions (-1
 // left, +1 right) in the manual project order and persists it. It's a no-op
 // if the move would go out of bounds.
 func (a *App) MoveProject(name string, delta int) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
-	order := a.Projects()
+	order := a.Cfg.OrderedProjectNames() // not a.Projects(): we already hold cfgMu
 	idx := -1
 	for i, n := range order {
 		if n == name {
@@ -265,7 +534,10 @@ func (a *App) MoveProject(name string, delta int) error {
 func (a *App) Sessions() []session.Session {
 	_ = a.Store.Reload()
 	all := a.Store.All()
-	if a.Cfg.SortRecentFirst {
+	a.cfgMu.RLock()
+	recentFirst := a.Cfg.SortRecentFirst
+	a.cfgMu.RUnlock()
+	if recentFirst {
 		session.SortByRecent(all)
 	}
 	return all
@@ -335,14 +607,40 @@ func (a *App) tmuxSessionUsingWorktree(path string) (string, error) {
 	return "", nil
 }
 
+// newBranchBaseBranch returns the ref a freshly cut branch was actually
+// based on, for session.Session.BaseBranch — empty when there was no base to
+// record (a resumed branch, or a no-worktree project has no branch at all).
+func newBranchBaseBranch(proj config.Project, newBranch bool, baseBranchRef string) string {
+	if !proj.UsesWorktree() || !newBranch {
+		return ""
+	}
+	return baseBranchRef
+}
+
 // CreateSession's hint, when non-empty, is a user-facing instruction
 // (e.g. "run: tmux attach -t ...") to show alongside success — it is
 // not an error. When openTerminal is false, the tmux session is started
-// detached and no terminal window is opened.
-func (a *App) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool) (session.Session, string, error) {
-	proj, ok := a.Cfg.Projects[project]
+// detached and no terminal window is opened. baseBranch, when set, is used
+// instead of the project's configured base branch as the ref a fresh branch
+// is cut from; it has no effect when existingBranch is set (resuming a
+// branch has no base to cut from). model, when non-empty and not "default",
+// is passed to the agent as --model. thinking, when non-empty and not
+// "default", is passed to codex as -c model_reasoning_effort=<value> (see
+// reasoningEffortFlag); it has no effect for claude/opencode, which have no
+// launch-time reasoning-effort flag — the caller is expected to apply their
+// magic-word prompt prefix itself (see thinkingPromptPrefix in internal/tui).
+// dangerous is a pointer so a caller can leave it unset: nil means "use the
+// project's own Dangerous setting", exactly like every other project-level
+// default here. A caller that wants to force it on or off regardless of the
+// project passes an explicit true/false.
+func (a *App) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
+	proj, ok := a.project(project)
 	if !ok {
 		return session.Session{}, "", fmt.Errorf("unknown project %q", project)
+	}
+	dangerousVal := proj.Dangerous
+	if dangerous != nil {
+		dangerousVal = *dangerous
 	}
 	if name == "" {
 		if existingBranch == "" {
@@ -358,15 +656,21 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 	if err := validateAgent(agent); err != nil {
 		return session.Session{}, "", err
 	}
-	if _, exists := a.Store.Get(session.MakeID(project, name)); exists {
+	id := session.MakeID(project, name)
+	if !a.reserveSessionID(id) {
 		// Same name means the same worktree path — creating it again would
 		// hijack the existing session's checkout.
 		return session.Session{}, "", fmt.Errorf("session %q already exists in project %q", name, project)
 	}
+	defer a.releaseSessionID(id)
 	var wt string
-	tmuxName := TmuxSessionName(session.MakeID(project, name), name)
+	tmuxName := TmuxSessionName(id, name)
 	branch := ""
 	var userscriptHint string
+	baseBranchRef := proj.BaseBranch
+	if baseBranch != "" {
+		baseBranchRef = baseBranch
+	}
 
 	if proj.UsesWorktree() {
 		wt = filepath.Join(a.WorktreeRoot, project, name)
@@ -390,7 +694,7 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 			// user can act on — git's own "fatal: invalid reference" doesn't
 			// say which field was wrong or what to do about it.
 			if !a.Git.BranchExists(proj.Repo, branch) && !a.Git.RemoteBranchExists(proj.Repo, branch) {
-				return session.Session{}, "", fmt.Errorf("no branch %q in %s (checked local and origin) — fix the name, or clear the branch field to start a new branch off %s", branch, proj.Repo, proj.BaseBranch)
+				return session.Session{}, "", fmt.Errorf("no branch %q in %s (checked local and origin) — fix the name, or clear the branch field to start a new branch off %s", branch, proj.Repo, baseBranchRef)
 			}
 		} else {
 			branch = name
@@ -399,7 +703,7 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 			}
 		}
 		if newBranch && hasRemote {
-			_ = a.Git.Fetch(proj.Repo, proj.BaseBranch) // best-effort
+			_ = a.Git.Fetch(proj.Repo, baseBranchRef) // best-effort
 		}
 		var err error
 		if !newBranch {
@@ -423,7 +727,7 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 			}
 			err = a.Git.AddWorktreeExisting(proj.Repo, wt, branch)
 		} else {
-			err = a.Git.AddWorktree(proj.Repo, wt, branch, proj.BaseBranch)
+			err = a.Git.AddWorktree(proj.Repo, wt, branch, baseBranchRef)
 		}
 		if err != nil {
 			slog.Error("git worktree add failed", "repo", proj.Repo, "path", wt, "branch", branch, "err", err)
@@ -452,19 +756,27 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 			slog.Warn("claude trust write failed", "path", wt, "err", err)
 		}
 	}
-	cmd := buildAgentCmd(agent, dangerous)
+	cmd := buildAgentCmd(agent, dangerousVal, model, thinking)
 	agentPort := 0
 	if agent == "opencode" {
 		agentPort = a.nextOpenCodePort()
+		defer a.releaseOpenCodePort(agentPort)
 		cmd = fmt.Sprintf("opencode --port %d", agentPort)
+		if flag := modelFlag(agent, model); flag != "" {
+			cmd += " " + flag
+		}
 	}
 
-	if err := a.newTmuxSession(tmuxName, wt, cmd, name); err != nil {
+	a.cfgMu.RLock()
+	windowName := a.Cfg.ProjectEmoji(project) + " " + name
+	a.cfgMu.RUnlock()
+	if err := a.newTmuxSession(tmuxName, wt, cmd, windowName); err != nil {
 		slog.Error("tmux new-session failed", "name", tmuxName, "cwd", wt, "err", err)
 		return session.Session{}, "", fmt.Errorf("tmux new-session: %w", err)
 	}
 	slog.Info("tmux session created", "name", tmuxName)
 	var tabID, hint string
+	var opened bool
 	if openTerminal {
 		var err error
 		tabID, hint, err = a.openTerminal("", tmuxName, name)
@@ -474,6 +786,8 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 			// manual-attach hint instead.
 			slog.Error("terminal open failed", "tmux_session", tmuxName, "name", name, "err", err)
 			hint = fmt.Sprintf("couldn't open a terminal (%v) — attach yourself: tmux attach -t %s", err, tmuxName)
+		} else {
+			opened = true
 		}
 		if hooksHint != "" {
 			hint = joinHints(hooksHint, hint)
@@ -485,19 +799,27 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 	hint = joinHints(hint, userscriptHint)
 
 	s := session.Session{
-		ID:           session.MakeID(project, name),
+		ID:           id,
 		Project:      project,
 		Name:         name,
 		Branch:       branch,
 		NewBranch:    proj.UsesWorktree() && newBranch,
+		BaseBranch:   newBranchBaseBranch(proj, newBranch, baseBranchRef),
 		WorktreePath: wt,
 		TmuxSession:  tmuxName,
 		CreatedAt:    time.Now().UTC(),
 		Agent:        agent,
-		Dangerous:    dangerous,
+		Dangerous:    dangerousVal,
 		AgentPort:    agentPort,
 		Ticket:       ticket,
 		TermTabID:    tabID,
+	}
+	// A terminal opened right here means the user is dropped straight into
+	// the new session, same as OpenSession's attach — without this, a
+	// never-since-reopened session sorts as if never opened at all and
+	// sinks to the bottom under "most-recently-opened first".
+	if opened {
+		s.LastOpened = time.Now()
 	}
 	if err := a.Store.Put(s); err != nil {
 		slog.Error("store put failed", "id", s.ID, "err", err)
@@ -511,15 +833,6 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 		return s, hint, err
 	}
 	return s, hint, nil
-}
-
-// SendPrompt types text into a session's agent pane, for handing a freshly
-// spawned session its initial task. No-op if prompt is empty.
-func (a *App) SendPrompt(tmuxSession, prompt string) error {
-	if prompt == "" {
-		return nil
-	}
-	return a.Tmux.SendKeys(tmuxSession, prompt)
 }
 
 // paneStablePoll/paneStableChecks/paneReadyTimeout tune StartFirstPrompt's
@@ -541,13 +854,42 @@ const (
 	paneReadyTimeout = 15 * time.Second
 )
 
+// stuckPromptMarkers are substrings seen in real incidents where a pane's
+// tty landed on an interactive credential prompt — e.g. an SSH passphrase
+// prompt, surfaced when a worktree-create userscript or the agent's own
+// launch command needs to auth over SSH and the environment's ssh-agent
+// socket is stale — instead of the agent CLI ever starting. Such a prompt
+// looks exactly as "stable" as an idle agent input box, but typing the task
+// text into it just spams a wrong-passphrase loop until the text runs out,
+// and the agent itself never receives anything.
+var stuckPromptMarkers = []string{
+	"enter passphrase",
+	"password:",
+	"verification code",
+}
+
+// stuckPromptMarker returns the first stuckPromptMarkers substring found in
+// content (case-insensitive), or "" if none match.
+func stuckPromptMarker(content string) string {
+	lower := strings.ToLower(content)
+	for _, m := range stuckPromptMarkers {
+		if strings.Contains(lower, m) {
+			return m
+		}
+	}
+	return ""
+}
+
 // waitForPaneReady blocks until tmuxSession's pane content has visibly
 // changed from its pre-launch state and then stops changing across
 // paneStableChecks consecutive polls, or paneReadyTimeout elapses overall —
 // whichever comes first. Timing out during either phase is not an error: the
 // caller proceeds best-effort regardless, same as the fixed-delay behavior
-// this replaces.
-func (a *App) waitForPaneReady(tmuxSession string) {
+// this replaces. Returns an error, without proceeding, if the pane it landed
+// on looks like a stuck interactive prompt rather than the agent (see
+// stuckPromptMarkers) — sending the caller's text into that would be
+// actively harmful, not just wasted.
+func (a *App) waitForPaneReady(tmuxSession string) error {
 	deadline := time.Now().Add(paneReadyTimeout)
 	before, _ := a.Tmux.CapturePane(tmuxSession)
 
@@ -564,19 +906,24 @@ func (a *App) waitForPaneReady(tmuxSession string) {
 		// Never saw anything but the pre-launch state within the whole
 		// budget — proceeding to check "stability" against it would just
 		// immediately declare it stable, defeating the point of this wait.
-		return
+		return nil
 	}
-	a.waitForPaneStable(tmuxSession, last, deadline)
+	final := a.waitForPaneStable(tmuxSession, last, deadline)
+	if marker := stuckPromptMarker(final); marker != "" {
+		return fmt.Errorf("pane is showing an interactive prompt (%q), not the agent — refusing to type the prompt into it", marker)
+	}
+	return nil
 }
 
 // waitForPaneStable polls tmuxSession's pane, starting from the already-known
 // seed content, until paneStableChecks consecutive captures come back
-// identical (and non-empty) or deadline passes — whichever comes first.
-// Shared by waitForPaneReady (waiting for startup rendering to finish) and
-// StartFirstPrompt (waiting for the just-typed prompt to finish rendering
-// before Enter is pressed) — both are the same "stop guessing a fixed delay,
-// wait for the pane to actually stop changing" problem.
-func (a *App) waitForPaneStable(tmuxSession, seed string, deadline time.Time) {
+// identical (and non-empty) or deadline passes — whichever comes first. It
+// returns the last content it saw, so callers can inspect what the pane
+// settled on. Shared by waitForPaneReady (waiting for startup rendering to
+// finish) and StartFirstPrompt (waiting for the just-typed prompt to finish
+// rendering before Enter is pressed) — both are the same "stop guessing a
+// fixed delay, wait for the pane to actually stop changing" problem.
+func (a *App) waitForPaneStable(tmuxSession, seed string, deadline time.Time) string {
 	last := seed
 	stable := 0
 	for {
@@ -584,12 +931,39 @@ func (a *App) waitForPaneStable(tmuxSession, seed string, deadline time.Time) {
 		if err == nil && cur == last && cur != "" {
 			stable++
 			if stable >= paneStableChecks {
-				return
+				return cur
 			}
 		} else {
 			stable = 0
 		}
 		last = cur
+		if time.Now().After(deadline) {
+			return last
+		}
+		time.Sleep(paneStablePoll)
+	}
+}
+
+// waitForPaneAcceptingPaste blocks until tmuxSession's pane has bracketed
+// paste enabled, or paneReadyTimeout elapses. waitForPaneReady's "the pane
+// stopped changing" proxy for readiness can land on any plateau in a
+// multi-phase startup (splash, then MCP connect, then ready), and pasting
+// into one of those earlier plateaus is how a prompt half-lands: the agent's
+// input layer isn't reading yet, so the tty's own line buffer swallows most
+// of the text and only a tail of it shows up. The bracketed-paste flag is
+// the process's own statement that it is now reading keystrokes — the shell
+// clears it for the duration of the command it launched, so it going back on
+// means the agent, not the shell, is waiting for input. Best-effort: agents
+// that never enable it just fall through to the old timing-based behavior.
+func (a *App) waitForPaneAcceptingPaste(tmuxSession string) {
+	deadline := time.Now().Add(paneReadyTimeout)
+	for {
+		// A transient error (e.g. the window not fully up yet) is not "the
+		// flag is on" — it must keep polling like the flag-is-off case,
+		// not fall through early into pasting against an unready pane.
+		if on, err := a.Tmux.BracketedPaste(tmuxSession); err == nil && on {
+			return
+		}
 		if time.Now().After(deadline) {
 			return
 		}
@@ -608,14 +982,24 @@ func (a *App) StartFirstPrompt(tmuxSession, prompt string, autoSubmit bool) erro
 	if prompt == "" {
 		return nil
 	}
-	a.waitForPaneReady(tmuxSession)
-	if err := a.Tmux.SendLiteral(tmuxSession, prompt); err != nil {
+	if err := a.waitForPaneReady(tmuxSession); err != nil {
+		return err
+	}
+	a.waitForPaneAcceptingPaste(tmuxSession)
+	if err := a.Tmux.PasteText(tmuxSession, prompt); err != nil {
 		return err
 	}
 	if !autoSubmit {
 		return nil
 	}
-	a.waitForPaneStable(tmuxSession, "", time.Now().Add(paneReadyTimeout))
+	settled := a.waitForPaneStable(tmuxSession, "", time.Now().Add(paneReadyTimeout))
+	if marker := stuckPromptMarker(settled); marker != "" {
+		// The prompt text was already typed above — on a real passphrase
+		// prompt (which doesn't echo input) it's already gone, consumed as a
+		// failed auth attempt. Pressing Enter here would only submit another
+		// one; report the failure instead of compounding it.
+		return fmt.Errorf("pane shows an interactive prompt (%q) after typing the prompt — the agent likely never received it", marker)
+	}
 	return a.pressEnterUntilSubmitted(tmuxSession, prompt)
 }
 
@@ -634,7 +1018,7 @@ const (
 // input rather than an earlier pause in a multi-phase startup (splash screen,
 // then connecting to MCP servers, then finally ready). Landing in an earlier
 // plateau can put the Enter in the same narrow window the agent's own
-// paste-safety heuristic swallows (see SendLiteral's doc comment), so instead
+// paste-safety heuristic swallows (see PasteText's doc comment), so instead
 // of trusting the first press, check whether the prompt is still sitting
 // there afterward and press again if so.
 func (a *App) pressEnterUntilSubmitted(tmuxSession, prompt string) error {
@@ -706,6 +1090,15 @@ func stripStatusGlyph(name string) string {
 	return name
 }
 
+// titleName returns s's display name prefixed with its project's emoji, the
+// base (unstatused) form titleGlyph and RenameSession build on.
+func (a *App) titleName(s session.Session) string {
+	a.cfgMu.RLock()
+	emoji := a.Cfg.ProjectEmoji(s.Project)
+	a.cfgMu.RUnlock()
+	return emoji + " " + s.Name
+}
+
 // titleGlyph prefixes name with a marker for the given status so terminals
 // tracking the tmux window name as their tab title (see
 // tmux.Client.ConfigureTitleTracking) show it at a glance.
@@ -731,7 +1124,7 @@ func (a *App) SetSessionStatusTitle(id string, st watcher.State) error {
 	if !ok {
 		return nil
 	}
-	name := s.Name
+	name := a.titleName(s)
 	if current, err := a.Tmux.WindowName(s.TmuxSession); err == nil && current != "" {
 		name = stripStatusGlyph(current)
 	}
@@ -1003,8 +1396,10 @@ func (a *App) RenameSession(id, newName string) (session.Session, error) {
 	newTmux := TmuxSessionName(s.ID, newName)
 	if has, err := a.Tmux.HasSession(oldTmux); err == nil && has {
 		if current, err := a.Tmux.WindowName(oldTmux); err == nil {
-			if stripped := stripStatusGlyph(current); stripped == s.Name {
-				_ = a.Tmux.SetWindowName(oldTmux, current[:len(current)-len(stripped)]+newName)
+			if stripped := stripStatusGlyph(current); stripped == a.titleName(s) {
+				newS := s
+				newS.Name = newName
+				_ = a.Tmux.SetWindowName(oldTmux, current[:len(current)-len(stripped)]+a.titleName(newS))
 			}
 		}
 		if err := a.Tmux.RenameSession(oldTmux, newTmux); err != nil {
@@ -1048,7 +1443,7 @@ func (a *App) SetSessionArchived(id string, archived bool) (session.Session, err
 // sessions created before a given integration existed. See
 // installAgentSupport — this only adds the "still a known project" guard.
 func (a *App) repairAgentSupport(s session.Session) string {
-	if _, ok := a.Cfg.Projects[s.Project]; !ok {
+	if _, ok := a.project(s.Project); !ok {
 		return ""
 	}
 	return installAgentSupport(s.AgentName())
@@ -1085,6 +1480,27 @@ func joinHints(a, b string) string {
 	}
 }
 
+// samePath reports whether two paths name the same directory, resolving
+// symlinks before comparing: tmux always reports a pane's cwd fully
+// resolved, so a worktree reached through a symlink (macOS /tmp and /var, or
+// a symlinked projects directory) compares unequal to the stored path even
+// though it is the same directory — which read as a cwd mismatch and killed
+// a perfectly live session, and the agent running in it, on every open.
+func samePath(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ra, err := filepath.EvalSymlinks(a)
+	if err != nil {
+		return false
+	}
+	rb, err := filepath.EvalSymlinks(b)
+	if err != nil {
+		return false
+	}
+	return ra == rb
+}
+
 func (a *App) OpenSession(id string) (string, error) {
 	s, ok := a.Store.Get(id)
 	if !ok {
@@ -1098,7 +1514,7 @@ func (a *App) OpenSession(id string) (string, error) {
 		return "", err
 	}
 	if has {
-		if cwd, err := a.Tmux.PaneCwd(s.TmuxSession); err == nil && cwd != s.WorktreePath {
+		if cwd, err := a.Tmux.PaneCwd(s.TmuxSession); err == nil && !samePath(cwd, s.WorktreePath) {
 			slog.Info("tmux session cwd mismatch, recreating", "tmux_session", s.TmuxSession, "pane_cwd", cwd, "want", s.WorktreePath)
 			if err := a.Tmux.KillSession(s.TmuxSession); err != nil {
 				slog.Error("KillSession failed", "id", id, "err", err)
@@ -1119,7 +1535,10 @@ func (a *App) OpenSession(id string) (string, error) {
 			}
 		}
 		slog.Info("tmux session absent, recreating", "tmux_session", s.TmuxSession, "cwd", s.WorktreePath)
-		cmd := buildAgentCmd(s.AgentName(), s.Dangerous)
+		// ponytail: session.Session has no stored model/thinking fields, so a
+		// recreated pane always relaunches with the agent's defaults — same
+		// as it always has for everything but the dangerous flag.
+		cmd := buildAgentCmd(s.AgentName(), s.Dangerous, "", "")
 		if s.AgentName() == "opencode" {
 			if s.AgentPort == 0 {
 				s.AgentPort = a.nextOpenCodePort()
@@ -1129,12 +1548,12 @@ func (a *App) OpenSession(id string) (string, error) {
 			}
 			cmd = fmt.Sprintf("opencode --port %d", s.AgentPort)
 		}
-		if err := a.newTmuxSession(s.TmuxSession, s.WorktreePath, cmd, s.Name); err != nil {
+		if err := a.newTmuxSession(s.TmuxSession, s.WorktreePath, cmd, a.titleName(s)); err != nil {
 			slog.Error("NewSession failed", "id", id, "tmux_session", s.TmuxSession, "cwd", s.WorktreePath, "err", err)
 			return "", err
 		}
 	}
-	a.Tmux.ConfigureTitleTracking(s.TmuxSession, s.Name)
+	a.Tmux.ConfigureTitleTracking(s.TmuxSession, a.titleName(s))
 	var tabID, hint string
 	if browser.Remote() {
 		// Over SSH, the desktop terminal (iTerm/kitty/etc.) lives on a
@@ -1194,19 +1613,32 @@ func (a *App) TmuxAliveAll() map[string]bool {
 // cleared on success so a later reopen creates a fresh tab instead of
 // chasing a handle that's gone.
 //
-// The tab is closed before the tmux session is killed, not after: closing
-// it only kills the `tmux attach` client shown there — pane processes
-// belong to the tmux server, not to any attached client (see
-// terminal/processtree.go's attachedClientPID doc comment) — so this order
-// is safe even when KillTmux runs from inside the very pane it's killing
-// (see main.go's runPark, used by the /kill slash command).
+// The tmux session is killed before the terminal tab is closed. `moomux
+// park` runs this method in a detached helper so it survives killing its
+// own pane; closing the tab first can otherwise terminate the command and
+// all of its descendants before the tmux kill is issued.
 func (a *App) KillTmux(id string) error {
 	s, ok := a.Store.Get(id)
 	if !ok {
 		return fmt.Errorf("unknown session %q", id)
 	}
+	slog.Debug("KillTmux: starting", "id", id, "pid", os.Getpid(), "tmux_session", s.TmuxSession, "term_tab_id", s.TermTabID)
+	// tmuxErr is recorded rather than returned immediately: the terminal-tab
+	// cleanup below must still run (and TermTabID still get cleared) even
+	// when tmux itself errored, or a session that fails to kill leaves a
+	// stale tab open forever with no way to close it short of deleting the
+	// session record.
+	var tmuxErr error
+	has, err := a.Tmux.HasSession(s.TmuxSession)
+	if err != nil {
+		tmuxErr = err
+	} else if has {
+		tmuxErr = a.Tmux.KillSession(s.TmuxSession)
+	}
 	if closer, ok := a.Terminal.(terminal.TabCloser); ok && s.TermTabID != "" {
-		if err := closer.CloseTab(s.TermTabID); err != nil {
+		err := closer.CloseTab(s.TermTabID)
+		slog.Debug("KillTmux: CloseTab returned", "id", id, "tab_id", s.TermTabID, "err", err)
+		if err != nil {
 			slog.Warn("close terminal tab failed", "id", id, "tab_id", s.TermTabID, "err", err)
 		}
 		s.TermTabID = ""
@@ -1214,17 +1646,12 @@ func (a *App) KillTmux(id string) error {
 			slog.Warn("clear terminal tab id failed", "id", id, "err", err)
 		}
 	}
-	has, err := a.Tmux.HasSession(s.TmuxSession)
-	if err != nil {
-		return err
-	}
-	if !has {
-		return nil
-	}
-	return a.Tmux.KillSession(s.TmuxSession)
+	return tmuxErr
 }
 
-func (a *App) validateProject(name string, p *config.Project) error {
+// validateProjectLocked requires a.cfgMu held for writing: its duplicate-name
+// check is only meaningful if it can't be overtaken before saveProjectLocked.
+func (a *App) validateProjectLocked(name string, p *config.Project) error {
 	if name == "" {
 		return fmt.Errorf("project name required")
 	}
@@ -1250,7 +1677,8 @@ func (a *App) validateProject(name string, p *config.Project) error {
 	return nil
 }
 
-func (a *App) saveProject(name string, p config.Project) error {
+// saveProjectLocked requires a.cfgMu held for writing.
+func (a *App) saveProjectLocked(name string, p config.Project) error {
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
@@ -1266,33 +1694,39 @@ func (a *App) saveProject(name string, p config.Project) error {
 }
 
 func (a *App) AddProject(name string, p config.Project) error {
-	if err := a.validateProject(name, &p); err != nil {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	if err := a.validateProjectLocked(name, &p); err != nil {
 		return err
 	}
 	if err := gitwt.IsRepo(p.Repo); err != nil {
 		return err
 	}
 	p.Kind = "git"
-	return a.saveProject(name, p)
+	return a.saveProjectLocked(name, p)
 }
 
 // InitProjectAndAdd creates the directory (if missing), runs `git init` with the
 // given base branch + an empty initial commit, then saves the project.
 func (a *App) InitProjectAndAdd(name string, p config.Project) error {
-	if err := a.validateProject(name, &p); err != nil {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	if err := a.validateProjectLocked(name, &p); err != nil {
 		return err
 	}
 	if err := gitwt.Init(p.Repo, p.BaseBranch); err != nil {
 		return err
 	}
 	p.Kind = "git"
-	return a.saveProject(name, p)
+	return a.saveProjectLocked(name, p)
 }
 
 // AddPlainProject saves a non-git project. Sessions run directly in the
 // project folder; no branches, no worktrees, no per-session isolation.
 func (a *App) AddPlainProject(name string, p config.Project) error {
-	if err := a.validateProject(name, &p); err != nil {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	if err := a.validateProjectLocked(name, &p); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(p.Repo, 0o755); err != nil {
@@ -1301,10 +1735,12 @@ func (a *App) AddPlainProject(name string, p config.Project) error {
 	p.Kind = "plain"
 	p.BaseBranch = ""
 	p.BranchPrefix = ""
-	return a.saveProject(name, p)
+	return a.saveProjectLocked(name, p)
 }
 
 func (a *App) UpdateProject(name string, updated config.Project) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
@@ -1362,6 +1798,8 @@ func (a *App) UpdateProject(name string, updated config.Project) error {
 // SetTheme persists the chosen theme name and appearance override to config,
 // following the same reload -> mutate -> save idiom as UpdateProject.
 func (a *App) SetTheme(theme, appearance string) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
@@ -1380,6 +1818,8 @@ func (a *App) SetTheme(theme, appearance string) error {
 // form's auto-submit toggle, following the same reload -> mutate -> save
 // idiom as SetTheme.
 func (a *App) SetAutoSubmitDefault(autoSubmit bool) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
@@ -1396,6 +1836,8 @@ func (a *App) SetAutoSubmitDefault(autoSubmit bool) error {
 // most-recently-opened first), following the same reload -> mutate -> save
 // idiom as SetTheme.
 func (a *App) SetSortRecentFirst(recentFirst bool) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
@@ -1412,6 +1854,8 @@ func (a *App) SetSortRecentFirst(recentFirst bool) error {
 // fields most useful at a glance, following the same reload -> mutate ->
 // save idiom as SetSortRecentFirst.
 func (a *App) SetCompactDetail(compact bool) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
@@ -1430,6 +1874,8 @@ func (a *App) SetCompactDetail(compact bool) error {
 // interactively, by promptAutoTmux in main.go before the TUI starts; this
 // gives it a second, always-available entry point via the settings screen.
 func (a *App) SetAutoTmux(autoTmux bool) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
@@ -1443,6 +1889,8 @@ func (a *App) SetAutoTmux(autoTmux bool) error {
 }
 
 func (a *App) RemoveProject(name string) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
@@ -1477,6 +1925,9 @@ func (a *App) WorktreeStatus(id string) (dirty, unpushed, ok bool) {
 	s, exists := a.Store.Get(id)
 	if !exists {
 		return false, false, false
+	}
+	if s.Branch != "" && a.dueForFetch(id) && a.Git.HasRemote(s.WorktreePath, "origin") {
+		_ = a.Git.Fetch(s.WorktreePath, s.Branch) // best-effort
 	}
 	clean, err := a.Git.IsWorktreeClean(s.WorktreePath)
 	if err != nil {
@@ -1534,13 +1985,19 @@ func (a *App) DeleteSession(id string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("unknown session %q", id)
 	}
+	// cleanupErr is recorded rather than returned immediately: Store.Delete
+	// below must still run even when tmux or git cleanup fails, or the user
+	// is left with a session record they asked to delete but can never clear
+	// because its worktree/tmux side is already gone or broken (see
+	// KillTmux for the same pattern).
+	var cleanupErr error
 	if has, _ := a.Tmux.HasSession(s.TmuxSession); has {
 		if err := a.Tmux.KillSession(s.TmuxSession); err != nil {
-			return "", fmt.Errorf("tmux kill-session: %w", err)
+			cleanupErr = fmt.Errorf("tmux kill-session: %w", err)
 		}
 	}
 	var hint string
-	if proj, ok := a.Cfg.Projects[s.Project]; ok {
+	if proj, ok := a.project(s.Project); ok {
 		if proj.UsesWorktree() {
 			if home, err := os.UserHomeDir(); err != nil {
 				slog.Warn("userscript run skipped", "err", err)
@@ -1556,9 +2013,10 @@ func (a *App) DeleteSession(id string) (string, error) {
 				}
 			}
 			if err := a.Git.RemoveWorktree(proj.Repo, s.WorktreePath); err != nil {
-				return hint, fmt.Errorf("remove worktree: %w", err)
-			}
-			if s.NewBranch && s.Branch != "" {
+				if cleanupErr == nil {
+					cleanupErr = fmt.Errorf("remove worktree: %w", err)
+				}
+			} else if s.NewBranch && s.Branch != "" {
 				_ = a.Git.DeleteBranch(proj.Repo, s.Branch)
 			}
 		}
@@ -1569,5 +2027,9 @@ func (a *App) DeleteSession(id string) (string, error) {
 		// here would wipe their repo.
 		_ = os.RemoveAll(s.WorktreePath)
 	}
-	return hint, a.Store.Delete(id)
+	if err := a.Store.Delete(id); err != nil && cleanupErr == nil {
+		cleanupErr = err
+	}
+	a.forgetFetch(id)
+	return hint, cleanupErr
 }

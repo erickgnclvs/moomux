@@ -5,7 +5,7 @@ import "testing"
 func TestNewer(t *testing.T) {
 	cases := []struct {
 		current, latest string
-		want             bool
+		want            bool
 	}{
 		{"0.5.3", "v0.5.4", true},
 		{"0.5.3", "v0.5.3", false},

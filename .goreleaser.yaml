@@ -50,3 +50,9 @@ brews:
       system "#{bin}/moomux", "--version"
     install: |
       bin.install "moomux"
+    service: |
+      run [opt_bin/"moomux", "serve"]
+      keep_alive true
+      log_path var/"log/moomux.log"
+      error_log_path var/"log/moomux.log"
+      environment_variables PATH: std_service_path_env

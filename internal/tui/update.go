@@ -30,6 +30,8 @@ func updateTitlesCmd(backend Backend, changed map[string]watcher.State) tea.Cmd 
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// One backend read per pass — see allSessions.
+	m.invalidateSessions()
 	switch msg := msg.(type) {
 	case UpdateAvailableMsg:
 		m.UpdateVersion = msg.Version
@@ -37,6 +39,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case UpdateCheckTickMsg:
 		return m, tea.Batch(checkUpdateCmd(m.Version), tickUpdateCheck())
+
+	case UpdateAppliedMsg:
+		m.updating = false
+		m.busy = false
+		if msg.Err != nil {
+			return m.flashError(msg.Err)
+		}
+		// main() checks Relaunch once p.Run() returns and execs the
+		// freshly-installed binary; can't exec here directly since bubbletea
+		// still owns the terminal (raw mode, alt screen) at this point.
+		m.Relaunch = true
+		return m, tea.Quit
 
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -55,15 +69,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// here without wiping every other watcher's entries. Instead prune
 		// against the full live session set so paths from deleted sessions
 		// don't linger forever.
-		live := make(map[string]bool, len(m.backend.Sessions()))
-		for _, s := range m.backend.Sessions() {
-			live[s.WorktreePath] = true
-		}
-		for path := range m.states {
-			if !live[path] {
-				delete(m.states, path)
-			}
-		}
+		m.pruneDeadSessions()
 		m.refreshSessions()
 		if msg.Snap.Err != nil {
 			// Surface once rather than re-flashing on every subsequent tick
@@ -74,14 +80,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		changedTitles := map[string]watcher.State{}
-		for _, s := range m.backend.Sessions() {
+		for _, s := range m.allSessions() {
 			st := m.effectiveState(s)
 			if prev, ok := m.titleState[s.ID]; !ok || prev != st {
 				m.titleState[s.ID] = st
 				changedTitles[s.ID] = st
 			}
 		}
-		cmds := []tea.Cmd{listenStatus(m.statusCh), refreshStatusCmd(m)}
+		cmds := []tea.Cmd{listenStatus(m.statusCh)}
 		if len(changedTitles) > 0 {
 			cmds = append(cmds, updateTitlesCmd(m.backend, changedTitles))
 		}
@@ -93,8 +99,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
+	case TmuxTickMsg:
+		return m, tea.Batch(refreshStatusCmd(m), tickTmux())
+
 	case StatusRefreshedMsg:
 		m.tmuxAlive = msg.TmuxAlive
+		// tmuxAlive drives the live-session float in refreshSessions' sort,
+		// so a change here has to re-sort m.sessions immediately — otherwise
+		// the list only catches up next time something unrelated happens to
+		// call refreshSessions(), which reads as a session jumping into the
+		// middle of the list out of nowhere.
+		m.refreshSessions()
 		for id, p := range msg.Prompts {
 			if m.prompts[id] == "" {
 				m.prompts[id] = p
@@ -175,6 +190,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CreateFailedMsg:
+		if msg.Cfg != nil {
+			*m.cfg = *msg.Cfg
+		}
 		m.busy = false
 		m.flash, m.flashKind = "", ""
 		m.mode = ModeNewForm
@@ -183,6 +201,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case SessionCreatedMsg:
+		if msg.Cfg != nil {
+			*m.cfg = *msg.Cfg
+		}
 		m.busy = false
 		text := "created " + msg.Session.Name
 		if msg.Hint != "" {
@@ -191,6 +212,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setFlash("info", text)
 		// Remove from prompt cache so the next tick scans the new session.
 		delete(m.prompts, msg.Session.ID)
+		delete(m.promptCheckedAt, msg.Session.ID)
 		// A brand-new session is never archived — land on the active view so
 		// it's actually visible, regardless of which view was showing before.
 		m.showArchived = false
@@ -253,6 +275,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshSessions()
 		m.focusSession(msg.Session.ID)
 		delete(m.prompts, msg.Session.ID)
+		delete(m.promptCheckedAt, msg.Session.ID)
 		m.mode = m.sessionDialogReturn
 		m.setFlash("info", "updated session "+msg.Session.Name)
 		return m, refreshStatusCmd(m)
@@ -344,6 +367,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ProjectAddedMsg:
+		if msg.Cfg != nil {
+			*m.cfg = *msg.Cfg
+		}
 		switch msg.Kind {
 		case "add":
 			if msg.Err == nil {
@@ -385,6 +411,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setError(msg.Err)
 			return m, nil
 		}
+		if msg.Cfg != nil {
+			*m.cfg = *msg.Cfg
+		}
 		// Re-anchor by name rather than index on both cursors: the active
 		// project (which may not be the one that just moved, when the
 		// reorder came from the picker) and, while the picker is open, its
@@ -419,6 +448,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.projForm.err = msg.Err.Error()
 			return m, nil
 		}
+		if msg.Cfg != nil {
+			*m.cfg = *msg.Cfg
+		}
 		m.activateProject(msg.Name)
 		m.mode = m.projectDialogReturn
 		m.setFlash("info", "updated project "+msg.Name)
@@ -430,6 +462,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setFlash("error", msg.Err.Error())
 			return m, nil
 		}
+		if msg.Cfg != nil {
+			*m.cfg = *msg.Cfg
+		}
 		m.refreshProjects()
 		m.cursor = 0
 		m.refreshSessions()
@@ -438,6 +473,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ThemeSetMsg:
+		if msg.Cfg != nil {
+			*m.cfg = *msg.Cfg
+		}
 		m.setFlash("info", "theme saved: "+msg.Theme+" / "+appearanceLabel(msg.Appearance))
 		return m, nil
 
@@ -545,11 +583,15 @@ func (m *Model) openNewSessionForm() {
 	m.newFormOpenInBackground = false
 	m.newFormDangerous = false
 	m.newFormAutoSubmit = m.cfg.AutoSubmitDefault
+	m.newFormModelIdx = 0
+	m.newFormThinkingIdx = 0
 	m.nameInput.SetValue("")
 	m.branchInput.SetValue("")
+	m.baseBranchInput.SetValue("")
 	m.ticketInput.SetValue("")
 	m.prInput.SetValue("")
 	m.promptInput.SetValue("")
+	m.newFormModelInput.SetValue("")
 	m.newFormBlurAll()
 	m.newFormFocusInput()
 	m.resetOverlayViewport()
@@ -571,7 +613,7 @@ func (m *Model) newFormApplyProjectDefaults() {
 	if p.PromptAgent {
 		m.newFormAgentIdx = -1
 	} else {
-		m.newFormAgentIdx = agentNameIndex(p.AgentName())
+		m.newFormAgentIdx = m.agentNameIndex(p.AgentName())
 		m.newFormDangerous = p.Dangerous
 	}
 }
@@ -764,7 +806,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = ModeEditSession
 			m.sessionDialogReturn = ModeList
 			m.resetOverlayViewport()
-			m.sessionForm = newSessionForm(s.ID, s.Project, s.Name, agentNameIndex(s.AgentName()), s.Dangerous)
+			m.sessionForm = newSessionForm(s.ID, s.Project, s.Name, m.agentNameIndex(s.AgentName()), s.Dangerous)
 			m.resizeFormInputs()
 		}
 	case key.Matches(msg, m.keys.ProjectPicker):
@@ -804,6 +846,18 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.sessions) > 0 {
 			return m, m.openSessionCmd(m.sessions[m.cursor].ID)
 		}
+	case key.Matches(msg, m.keys.Update):
+		if m.UpdateVersion == "" {
+			m.setFlash("info", "already up to date")
+			return m, nil
+		}
+		if m.updating {
+			return m, nil
+		}
+		m.updating = true
+		m.busy = true
+		m.setFlash("info", "updating to v"+m.UpdateVersion+"…")
+		return m, runUpdateCmd()
 	}
 	return m, nil
 }
@@ -827,9 +881,19 @@ func (m *Model) switchProject(delta int) {
 // renderMultiView's enterSingleProjectContext resyncs m.cursor from that
 // state on every render, so without this a click/wheel-scroll would just get
 // silently overwritten on the next frame. Ticket/PR icon clicks (via
-// m.linkAt) and row taps (via m.sessionRowAt) work identically in all three
-// cases — copy-vs-open over SSH (m.isRemote) isn't mode-specific, so mobile
-// clients see the same behavior whether one panel or several are visible.
+// m.linkAt) work identically in all three cases — copy-vs-open over SSH
+// (m.isRemote) isn't mode-specific, so mobile clients see the same behavior
+// whether one panel or several are visible.
+//
+// A tap on a session row itself no longer opens/attaches it — a stray click
+// used to launch a tmux attach unexpectedly, which is disruptive enough that
+// it's not worth the tap-to-open convenience. In ModeList it just moves the
+// cursor there; in ModeMultiView it does the multi-panel equivalent: pick
+// that row's project (m.multiFocus) the same way Tab would. A click that
+// lands elsewhere in a panel — the detail pane, an empty list, the title
+// line — still picks that project via m.panelHits, just without moving its
+// cursor, so anywhere in a project's square is how you pick which one to
+// act on.
 func (m *Model) handleListMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	var proj string
 	var hasFocus bool
@@ -875,14 +939,29 @@ func (m *Model) handleListMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				return LinkOpenedMsg{URL: url}
 			}
 		}
-		// Not a ticket/PR icon — a tap on the row itself selects and
-		// opens that session in one motion, since mobile clients (mosh
-		// over Moshi, etc.) have no keyboard focus to move a cursor with
-		// first.
+		// Not a ticket/PR icon — a tap on the row selects it (and, in
+		// ModeMultiView, picks that row's project as the focused panel).
 		if id, ok := m.sessionRowAt(msg.X, msg.Y); ok {
-			m.focusSession(id)
-			sync()
-			return m, m.openSessionCmd(id)
+			if m.mode == ModeMultiView {
+				if p, ok := m.projectForSession(id); ok {
+					m.focusMultiProject(p)
+					for i, s := range m.multiViewSessionsFor(p) {
+						if s.ID == id {
+							m.multiCursors[p] = i
+							break
+						}
+					}
+				}
+			} else {
+				m.focusSession(id)
+			}
+		} else if m.mode == ModeMultiView {
+			// Missed every row (e.g. the detail pane, an empty list, the
+			// title line) but still landed inside a panel — pick that
+			// project without touching its cursor.
+			if p, ok := m.panelAt(msg.X, msg.Y); ok {
+				m.focusMultiProject(p)
+			}
 		}
 	}
 	sync()
@@ -934,12 +1013,28 @@ func (m *Model) dispatchReorder() tea.Cmd {
 	return func() tea.Msg { return SessionsReorderedMsg{Err: m.backend.ReorderSessions(ids)} }
 }
 
-func (m *Model) moveProjectCmd(name string, delta int) tea.Cmd {
-	return func() tea.Msg { return ProjectMovedMsg{Name: name, Err: m.backend.MoveProject(name, delta)} }
+// cfgSnapshotOnSuccess returns a fresh ConfigSnapshot for a mutation Msg's
+// Cfg field when err is nil, or nil when the mutation failed (nothing
+// changed, so Update() has nothing to apply). Only ever call this from
+// inside a tea.Cmd closure, right after the mutation call whose err it's
+// given — never from Update()/View() directly.
+func (m *Model) cfgSnapshotOnSuccess(err error) *config.Config {
+	if err != nil {
+		return nil
+	}
+	snap := m.backend.ConfigSnapshot()
+	return &snap
 }
 
-// openSessionCmd returns a Cmd that opens/attaches the given session,
-// shared by the Enter/o key binding and a row click.
+func (m *Model) moveProjectCmd(name string, delta int) tea.Cmd {
+	return func() tea.Msg {
+		err := m.backend.MoveProject(name, delta)
+		return ProjectMovedMsg{Name: name, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
+	}
+}
+
+// openSessionCmd returns a Cmd that opens/attaches the given session, used
+// by the Enter/o key binding.
 func (m *Model) openSessionCmd(id string) tea.Cmd {
 	return func() tea.Msg {
 		hint, err := m.backend.OpenSession(id)
@@ -983,7 +1078,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// The prompt field is a multi-line textarea — leave ↑/↓ to it for
 		// moving the cursor between lines. But if you're on the first
 		// or last line, let it switch fields!
-		if m.newFormFocus == 3 {
+		if m.newFormFocus == 4 {
 			atTop := m.promptInput.Line() == 0
 			atBottom := m.promptInput.Line() == m.promptInput.LineCount()-1
 			if (key.Matches(msg, m.keys.FormUp) && !atTop) || (key.Matches(msg, m.keys.FormDown) && !atBottom) {
@@ -1017,9 +1112,47 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.newFormAgentIdx < 0 {
 				m.newFormAgentIdx = 0
 			} else if key.Matches(msg, m.keys.Left) {
-				m.newFormAgentIdx = (m.newFormAgentIdx - 1 + len(agentNames)) % len(agentNames)
+				m.newFormAgentIdx = (m.newFormAgentIdx - 1 + len(m.agentNames())) % len(m.agentNames())
 			} else {
-				m.newFormAgentIdx = (m.newFormAgentIdx + 1) % len(agentNames)
+				m.newFormAgentIdx = (m.newFormAgentIdx + 1) % len(m.agentNames())
+			}
+			// Each agent has its own model list (or, for opencode, a
+			// free-text field) and thinking-level list; a stale choice from a
+			// previous agent could point at the wrong value, so reset both
+			// whenever the agent changes.
+			m.newFormModelIdx = 0
+			m.newFormModelInput.SetValue("")
+			m.newFormThinkingIdx = 0
+			return m, nil
+		}
+		if m.newFormFocus == newFormModelFocus {
+			agent := ""
+			if m.newFormAgentIdx >= 0 {
+				agent = m.agentNames()[m.newFormAgentIdx]
+			}
+			if agent == "opencode" {
+				// Free-text field: leave ←→ to the text input's own cursor
+				// movement, handled by the default routing below.
+				break
+			}
+			names := m.modelNamesFor(agent)
+			if key.Matches(msg, m.keys.Left) {
+				m.newFormModelIdx = (m.newFormModelIdx - 1 + len(names)) % len(names)
+			} else {
+				m.newFormModelIdx = (m.newFormModelIdx + 1) % len(names)
+			}
+			return m, nil
+		}
+		if m.newFormFocus == newFormThinkingFocus {
+			agent := ""
+			if m.newFormAgentIdx >= 0 {
+				agent = m.agentNames()[m.newFormAgentIdx]
+			}
+			names := m.thinkingNamesFor(agent)
+			if key.Matches(msg, m.keys.Left) {
+				m.newFormThinkingIdx = (m.newFormThinkingIdx - 1 + len(names)) % len(names)
+			} else {
+				m.newFormThinkingIdx = (m.newFormThinkingIdx + 1) % len(names)
 			}
 			return m, nil
 		}
@@ -1036,7 +1169,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case key.Matches(msg, m.keys.Enter):
-		if m.newFormFocus == 3 {
+		if m.newFormFocus == 4 {
 			// Enter inserts a newline in the multi-line prompt field instead
 			// of submitting — tab to another field to submit with Enter.
 			break
@@ -1047,6 +1180,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		name := m.nameInput.Value()
 		branch := m.branchInput.Value()
+		baseBranch := m.baseBranchInput.Value()
 		ticket := m.ticketInput.Value()
 		pr := m.prInput.Value()
 		firstPrompt := m.promptInput.Value()
@@ -1060,7 +1194,12 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.newFormErr = ""
 		proj := m.projects[m.newFormProjIdx]
-		agent := agentNames[m.newFormAgentIdx]
+		agent := m.agentNames()[m.newFormAgentIdx]
+		model := m.newFormModelInput.Value()
+		if agent != "opencode" {
+			model = m.modelNamesFor(agent)[m.newFormModelIdx]
+		}
+		thinking := m.thinkingNamesFor(agent)[m.newFormThinkingIdx]
 		dangerous := m.newFormDangerous
 		openTerminal := !m.newFormOpenInBackground
 		m.mode = m.sessionDialogReturn
@@ -1071,15 +1210,21 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setFlash("info", "creating "+label+"…")
 		m.busy = true
 		autoSubmit := m.newFormAutoSubmit
+		// Captured here, on the Update goroutine, rather than read from
+		// m.cfg inside the closure below — that closure runs concurrently
+		// with Update()/View(), which is the exact race this whole Cfg
+		// plumbing exists to avoid (see New()'s doc comment on m.cfg).
+		autoSubmitDefault := m.cfg.AutoSubmitDefault
 		return m, func() tea.Msg {
-			if autoSubmit != m.cfg.AutoSubmitDefault {
+			var cfgSnap *config.Config
+			if autoSubmit != autoSubmitDefault {
 				// Best-effort: remembering the new default shouldn't block
 				// session creation if the config write fails.
-				_ = m.backend.SetAutoSubmitDefault(autoSubmit)
+				cfgSnap = m.cfgSnapshotOnSuccess(m.backend.SetAutoSubmitDefault(autoSubmit))
 			}
-			s, hint, err := m.backend.CreateSession(proj, name, agent, branch, ticket, openTerminal, dangerous)
+			s, hint, err := m.backend.CreateSession(proj, name, agent, branch, ticket, openTerminal, &dangerous, baseBranch, model, thinking)
 			if err != nil {
-				return CreateFailedMsg{Err: err}
+				return CreateFailedMsg{Err: err, Cfg: cfgSnap}
 			}
 			// The session (worktree + tmux pane) already exists at this
 			// point — a PR-tag or first-prompt failure below must not
@@ -1095,6 +1240,12 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if firstPrompt != "" {
+				if agent != "codex" {
+					// codex's thinking level is a real -c model_reasoning_effort
+					// flag (already applied to the launch command above), not a
+					// prompt phrase.
+					firstPrompt = thinkingPromptPrefix(thinking) + firstPrompt
+				}
 				if extra := newFormPromptExtras(ticket, pr); extra != "" {
 					firstPrompt += "\n\n" + extra
 				}
@@ -1105,7 +1256,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					hint = joinHint(hint, fmt.Sprintf("couldn't send first prompt: %v", err))
 				}
 			}
-			return SessionCreatedMsg{Session: s, Hint: hint}
+			return SessionCreatedMsg{Session: s, Hint: hint, Cfg: cfgSnap}
 		}
 	}
 	// Any other focus is a selector or toggle row, with no text input to type
@@ -1117,11 +1268,17 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case 2:
 		m.branchInput, cmd = m.branchInput.Update(msg)
 	case 3:
-		m.promptInput, cmd = m.promptInput.Update(msg)
+		m.baseBranchInput, cmd = m.baseBranchInput.Update(msg)
 	case 4:
-		m.ticketInput, cmd = m.ticketInput.Update(msg)
+		m.promptInput, cmd = m.promptInput.Update(msg)
 	case 5:
+		m.ticketInput, cmd = m.ticketInput.Update(msg)
+	case 6:
 		m.prInput, cmd = m.prInput.Update(msg)
+	case newFormModelFocus:
+		if m.newFormAgentIdx >= 0 && m.agentNames()[m.newFormAgentIdx] == "opencode" {
+			m.newFormModelInput, cmd = m.newFormModelInput.Update(msg)
+		}
 	}
 	return m, cmd
 }
@@ -1154,6 +1311,18 @@ func newFormPromptExtras(ticket, pr string) string {
 	return strings.Join(lines, "\n")
 }
 
+// thinkingPromptPrefix returns level+": " to prepend to the first prompt, or
+// "" for "default". There's no CLI flag for extended-thinking effort, so this
+// leans on the same magic words a user would type by hand.
+// ponytail: a no-op when there's no first prompt to prepend to — the form
+// doesn't warn about that combination, it just has no effect.
+func thinkingPromptPrefix(level string) string {
+	if level == "" || level == "default" {
+		return ""
+	}
+	return level + ": "
+}
+
 // newFormMoveFocus blurs the currently focused field and shifts focus by
 // delta (wrapping), then focuses whatever field lands there.
 func (m *Model) newFormMoveFocus(delta int) {
@@ -1165,13 +1334,17 @@ func (m *Model) newFormMoveFocus(delta int) {
 func (m *Model) newFormBlurAll() {
 	m.nameInput.Blur()
 	m.branchInput.Blur()
+	m.baseBranchInput.Blur()
 	m.ticketInput.Blur()
 	m.prInput.Blur()
 	m.promptInput.Blur()
+	m.newFormModelInput.Blur()
 }
 
 // newFormFocusInput focuses the text input at the current focus, if any — the
-// selector and toggle rows have nothing to focus.
+// selector and toggle rows have nothing to focus. The model row is a text
+// input only for opencode; for claude/codex it's a selector, so it's left
+// unfocused there.
 func (m *Model) newFormFocusInput() {
 	switch m.newFormFocus {
 	case 1:
@@ -1179,11 +1352,17 @@ func (m *Model) newFormFocusInput() {
 	case 2:
 		m.branchInput.Focus()
 	case 3:
-		m.promptInput.Focus()
+		m.baseBranchInput.Focus()
 	case 4:
-		m.ticketInput.Focus()
+		m.promptInput.Focus()
 	case 5:
+		m.ticketInput.Focus()
+	case 6:
 		m.prInput.Focus()
+	case newFormModelFocus:
+		if m.newFormAgentIdx >= 0 && m.agentNames()[m.newFormAgentIdx] == "opencode" {
+			m.newFormModelInput.Focus()
+		}
 	}
 }
 
@@ -1244,14 +1423,15 @@ func cycleFormFocus(inputs []textinput.Model, focus *int, total int, forward boo
 // cycleProjectAgentIdx moves idx (a projectForm.agentIdx, possibly
 // askAgentIdx) by delta across agentNames plus the trailing "ask each
 // time" entry, wrapping in both directions.
-func cycleProjectAgentIdx(idx, delta int) int {
+func (m *Model) cycleProjectAgentIdx(idx, delta int) int {
+	names := m.agentNames()
 	pos := idx
 	if pos == askAgentIdx {
-		pos = len(agentNames)
+		pos = len(names)
 	}
-	n := len(agentNames) + 1
+	n := len(names) + 1
 	pos = (pos + delta + n) % n
-	if pos == len(agentNames) {
+	if pos == len(names) {
 		return askAgentIdx
 	}
 	return pos
@@ -1267,7 +1447,7 @@ func (m *Model) adjustProjFormField(delta int) bool {
 	case projFormInputCount:
 		m.projForm.emojiIdx = cycleProjectEmojiIdx(m.projForm.emojiChoices, m.projForm.emojiIdx, delta)
 	case projFormInputCount + 1:
-		m.projForm.agentIdx = cycleProjectAgentIdx(m.projForm.agentIdx, delta)
+		m.projForm.agentIdx = m.cycleProjectAgentIdx(m.projForm.agentIdx, delta)
 	case projFormInputCount + 2:
 		m.projForm.dangerous = !m.projForm.dangerous
 	case projFormInputCount + 3:
@@ -1281,11 +1461,11 @@ func (m *Model) adjustProjFormField(delta int) bool {
 // projectAgentFields returns the Agent, Dangerous and PromptAgent values a
 // submitted project form should store, given its agentIdx (possibly
 // askAgentIdx) and its independent dangerous toggle.
-func projectAgentFields(agentIdx int, dangerous bool) (agent string, dangerousOut, promptAgent bool) {
+func (m *Model) projectAgentFields(agentIdx int, dangerous bool) (agent string, dangerousOut, promptAgent bool) {
 	if agentIdx == askAgentIdx {
 		return "", false, true
 	}
-	return agentNames[agentIdx], dangerous, false
+	return m.agentNames()[agentIdx], dangerous, false
 }
 
 func (m *Model) updateNewProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1320,11 +1500,11 @@ func (m *Model) updateNewProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if base == "" {
 			base = "main"
 		}
-		agent, dangerous, promptAgent := projectAgentFields(m.projForm.agentIdx, m.projForm.dangerous)
+		agent, dangerous, promptAgent := m.projectAgentFields(m.projForm.agentIdx, m.projForm.dangerous)
 		p := config.Project{Repo: repo, BaseBranch: base, BranchPrefix: prefix, Emoji: emoji, Agent: agent, Dangerous: dangerous, PromptAgent: promptAgent, NoWorktree: m.projForm.noWorktree}
 		return m, func() tea.Msg {
 			err := m.backend.AddProject(name, p)
-			return ProjectAddedMsg{Kind: "add", Name: name, Project: p, Err: err}
+			return ProjectAddedMsg{Kind: "add", Name: name, Project: p, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
 		}
 	}
 	if m.projForm.focus < projFormInputCount {
@@ -1364,9 +1544,9 @@ func (m *Model) updateEditSession(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch m.sessionForm.focus {
 		case sessionFormAgentFocus:
 			if key.Matches(msg, m.keys.Left) {
-				m.sessionForm.agentIdx = (m.sessionForm.agentIdx - 1 + len(agentNames)) % len(agentNames)
+				m.sessionForm.agentIdx = (m.sessionForm.agentIdx - 1 + len(m.agentNames())) % len(m.agentNames())
 			} else {
-				m.sessionForm.agentIdx = (m.sessionForm.agentIdx + 1) % len(agentNames)
+				m.sessionForm.agentIdx = (m.sessionForm.agentIdx + 1) % len(m.agentNames())
 			}
 		case sessionFormDangerousFocus:
 			m.sessionForm.dangerous = !m.sessionForm.dangerous
@@ -1378,7 +1558,7 @@ func (m *Model) updateEditSession(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Enter):
 		id := m.sessionForm.id
 		newName := m.sessionForm.nameInput.Value()
-		agent := agentNames[m.sessionForm.agentIdx]
+		agent := m.agentNames()[m.sessionForm.agentIdx]
 		dangerous := m.sessionForm.dangerous
 		m.busy = true
 		m.sessionForm.err = ""
@@ -1458,7 +1638,7 @@ func (m *Model) updateEditProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Enter):
 		project.Repo = m.projForm.inputs[1].Value()
 		project.Emoji = projectEmojiFieldValue(m.projForm.emojiChoices, m.projForm.emojiIdx)
-		project.Agent, project.Dangerous, project.PromptAgent = projectAgentFields(m.projForm.agentIdx, m.projForm.dangerous)
+		project.Agent, project.Dangerous, project.PromptAgent = m.projectAgentFields(m.projForm.agentIdx, m.projForm.dangerous)
 		if !project.IsPlain() {
 			project.BaseBranch = m.projForm.inputs[2].Value()
 			project.BranchPrefix = m.projForm.inputs[3].Value()
@@ -1469,7 +1649,7 @@ func (m *Model) updateEditProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.projForm.err = ""
 		return m, func() tea.Msg {
 			err := m.backend.UpdateProject(name, project)
-			return ProjectUpdatedMsg{Name: name, Err: err}
+			return ProjectUpdatedMsg{Name: name, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
 		}
 	}
 	if m.projForm.focus < len(m.projForm.inputs) {
@@ -1559,14 +1739,14 @@ func (m *Model) updateProjectInitChoice(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		p := m.pending.p
 		return m, func() tea.Msg {
 			err := m.backend.InitProjectAndAdd(name, p)
-			return ProjectAddedMsg{Kind: "init", Name: name, Project: p, Err: err}
+			return ProjectAddedMsg{Kind: "init", Name: name, Project: p, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
 		}
 	case "s":
 		name := m.pending.name
 		p := m.pending.p
 		return m, func() tea.Msg {
 			err := m.backend.AddPlainProject(name, p)
-			return ProjectAddedMsg{Kind: "plain", Name: name, Project: p, Err: err}
+			return ProjectAddedMsg{Kind: "plain", Name: name, Project: p, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
 		}
 	case "esc", "b":
 		m.mode = ModeNewProject
@@ -1586,7 +1766,7 @@ func (m *Model) updateConfirmDeleteProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 		m.mode = m.projectDialogReturn
 		return m, func() tea.Msg {
 			err := m.backend.RemoveProject(name)
-			return ProjectRemovedMsg{Name: name, Err: err}
+			return ProjectRemovedMsg{Name: name, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
 		}
 	case "n", "esc":
 		m.mode = m.projectDialogReturn
@@ -1708,7 +1888,7 @@ func (m *Model) updateProjectPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.projects) > 0 && !m.busy {
 			name := m.projects[m.pickerCursor]
 			m.editProjectName = name
-			m.projForm = editProjectForm(name, m.cfg.Projects[name])
+			m.projForm = m.editProjectForm(name, m.cfg.Projects[name])
 			m.activateProject(name) // keeps m.sessions/m.cursor in sync — see the delete case above
 			m.projectDialogReturn = ModeProjectPicker
 			m.mode = ModeEditProject
@@ -1803,6 +1983,16 @@ func (m *Model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // persisting it through the backend (errors aren't surfaced — same as the O
 // key this replaces, config saves have no user-visible failure mode worth a
 // dialog), or — for the theme row — drilling into ModeThemePicker.
+//
+// row.set(m.cfg, ...) writes m.cfg directly rather than going through a
+// Msg's Cfg field like every other config mutation (see cfgSnapshotOnSuccess)
+// — safe only because row.persist below runs synchronously, still on the
+// Update() goroutine, unlike every other backend mutator which runs inside a
+// tea.Cmd closure on its own goroutine. If SetSortRecentFirst/SetAutoTmux/
+// SetCompactDetail/SetAutoSubmitDefault's blocking socket round trip
+// (ipc.Client.mut) is ever moved into a Cmd to stop it freezing the UI over a
+// slow connection, this direct write becomes racy too and needs the same
+// Msg.Cfg treatment as the rest.
 func (m *Model) applySettingsRow(i int) (tea.Model, tea.Cmd) {
 	row := settingsRows[i]
 	if row.kind == settingsRowDrill {
@@ -1849,7 +2039,8 @@ func (m *Model) updateThemePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if err := m.backend.SetTheme(theme, appearance); err != nil {
 				return ErrorMsg{Err: err}
 			}
-			return ThemeSetMsg{Theme: theme, Appearance: appearance}
+			snap := m.backend.ConfigSnapshot()
+			return ThemeSetMsg{Theme: theme, Appearance: appearance, Cfg: &snap}
 		}
 	}
 	return m, nil

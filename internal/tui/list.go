@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
@@ -138,7 +139,7 @@ func (m *Model) folderMemberCount(folder string) int {
 	}
 	proj := m.projects[m.activeProj]
 	n := 0
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if s.Project == proj && s.Folder == folder && s.Archived == m.showArchived {
 			n++
 		}
@@ -161,7 +162,8 @@ type linkHit struct {
 
 // rowHit records a session row's line within the rendered list (local
 // coordinates, like linkHit), so a mouse click landing anywhere on the row —
-// not just on a ticket/PR icon — can select and open that session.
+// not just on a ticket/PR icon — can select that session (or, in
+// ModeMultiView, pick that row's project as the focused panel).
 type rowHit struct {
 	sessionID string
 	line      int
@@ -270,19 +272,29 @@ func scrollWindow(cursor, total, visible int) (start, end int) {
 	if total <= visible {
 		return 0, total
 	}
-	start, end = clampWindow(cursor, total, visible)
-	reserve := 0
-	if start > 0 {
-		reserve++
+	// Shrinking the window to make room for a hint can itself expose a new
+	// cut-off edge (centering on the cursor pulls start off 0, say), which
+	// needs a hint row of its own — so re-check until rows + hints fit.
+	// Otherwise the panel renders one line too many at that cursor and the
+	// bottom hint gets clipped off for a frame as you scroll past it.
+	v := visible
+	for {
+		start, end = clampWindow(cursor, total, v)
+		reserve := 0
+		if start > 0 {
+			reserve++
+		}
+		if end < total {
+			reserve++
+		}
+		if end-start+reserve <= visible || v <= 1 {
+			return start, end
+		}
+		v = visible - reserve
+		if v < 1 {
+			v = 1
+		}
 	}
-	if end < total {
-		reserve++
-	}
-	v := visible - reserve
-	if v < 1 {
-		v = 1
-	}
-	return clampWindow(cursor, total, v)
 }
 
 // clampWindow centers a visible-row window on cursor within [0, total),
@@ -441,7 +453,7 @@ func renderRow(s session.Session, st watcher.State, width int, selected bool, pr
 // projectEmojiPalette is the fallback set for projects that haven't chosen
 // their own emoji (config.Project.Emoji) — picked deterministically per
 // project name so the same project always gets the same glyph.
-var projectEmojiPalette = []string{"🐙", "🦊", "🚀", "🔥", "🌊", "🍀", "⚡", "🎯", "🐝", "🦉"}
+var projectEmojiPalette = config.ProjectEmojiPalette
 
 // projectEmojiChoices is the project-form emoji selector's cycle order:
 // "auto" (index 0, the deterministic-pick sentinel) followed by the palette.
@@ -466,17 +478,7 @@ func cycleProjectEmojiIdx(choices []string, idx, delta int) int {
 // projectEmoji returns the project's configured emoji, falling back to a
 // deterministic pick from projectEmojiPalette if none is set.
 func (m *Model) projectEmoji(project string) string {
-	if e := m.cfg.Projects[project].Emoji; e != "" {
-		return e
-	}
-	var h int
-	for _, r := range project {
-		h = h*31 + int(r)
-	}
-	if h < 0 {
-		h = -h
-	}
-	return projectEmojiPalette[h%len(projectEmojiPalette)]
+	return m.cfg.ProjectEmoji(project)
 }
 
 func truncate(s string, n int) string {

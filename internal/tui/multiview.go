@@ -35,7 +35,7 @@ func (m *Model) multiViewEligibleProjects() []string {
 		return nil
 	}
 	has := make(map[string]bool, len(m.projects))
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if s.Archived == m.showArchived {
 			has[s.Project] = true
 		}
@@ -122,7 +122,7 @@ func (m *Model) ensureMultiFocusVisible() {
 // moving to the adjacent one.
 func (m *Model) multiViewSessionsFor(proj string) []session.Session {
 	var out []session.Session
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if s.Project == proj && s.Archived == m.showArchived {
 			out = append(out, s)
 		}
@@ -188,29 +188,47 @@ func (m *Model) updateMultiView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // advanceMultiFocus moves multi-view's focus by delta among eligible
-// projects (wrapping). If that lands on a different project than
-// m.multiPinned, the pin is cleared — Tab/Shift-Tab means "move to a
-// different real project," and a pinned empty one only exists to be looked
-// at once (see updateProjectPicker's Open case), not to stay in rotation.
-//
-// The target is tracked by name, not index: clearing the pin can shrink the
-// eligible list out from under whatever index a naive delta-move would have
-// landed on (every project after the removed pin shifts left by one), so
-// the post-clear index is looked up by name instead of reused.
+// projects (wrapping) — see focusMultiProject for how the target is applied.
 func (m *Model) advanceMultiFocus(delta int) {
 	projs := m.multiViewEligibleProjects()
 	n := len(projs)
 	if n == 0 {
 		return
 	}
-	target := projs[(m.multiFocus+delta+n)%n]
-	if target != m.multiPinned {
+	m.focusMultiProject(projs[(m.multiFocus+delta+n)%n])
+}
+
+// focusMultiProject points m.multiFocus at the named project (a click on its
+// panel, or a Tab/Shift-Tab/arrow step landing on it). If that's a different
+// project than m.multiPinned, the pin is cleared — moving focus means "to a
+// different real project," and a pinned empty one only exists to be looked
+// at once (see updateProjectPicker's Open case), not to stay in rotation.
+//
+// The target is tracked by name, not index: clearing the pin can shrink the
+// eligible list out from under whatever index the caller computed (every
+// project after the removed pin shifts left by one), so the post-clear index
+// is looked up by name instead of reused.
+func (m *Model) focusMultiProject(name string) {
+	if name != m.multiPinned {
 		m.multiPinned = ""
 	}
-	if idx := indexOfProject(m.multiViewEligibleProjects(), target); idx >= 0 {
+	if idx := indexOfProject(m.multiViewEligibleProjects(), name); idx >= 0 {
 		m.multiFocus = idx
 	}
 	m.ensureMultiFocusVisible()
+}
+
+// projectForSession returns the project owning session id, scanning the
+// backend's full session list rather than m.sessions — a mouse hit's session
+// ID isn't scoped to whichever project happens to be "entered" via
+// enterSingleProjectContext at click time.
+func (m *Model) projectForSession(id string) (string, bool) {
+	for _, s := range m.allSessions() {
+		if s.ID == id {
+			return s.Project, true
+		}
+	}
+	return "", false
 }
 
 // delegateToList runs msg through updateList as if the focused panel's
@@ -329,10 +347,10 @@ func (m *Model) refreshSessionsAndSync() {
 // renderMultiView is ModeMultiView's whole-screen render, replacing the
 // normal single-project body with one panel per visible project — the base
 // View() dispatches straight here instead of computing the usual list+detail
-// layout. It records its own link/row hits directly into m.linkHits/
-// m.rowHits (in absolute terminal coordinates, one panel-local origin per
-// panel) rather than going through updateLinkHits, which only knows how to
-// place a single list+detail pair.
+// layout. It records its own link/row/panel hits directly into m.linkHits/
+// m.rowHits/m.panelHits (in absolute terminal coordinates, one panel-local
+// origin per panel) rather than going through updateLinkHits, which only
+// knows how to place a single list+detail pair.
 func (m *Model) renderMultiView() string {
 	m.ensureMultiFocusVisible()
 
@@ -357,6 +375,7 @@ func (m *Model) renderMultiView() string {
 
 	m.linkHits = nil
 	m.rowHits = nil
+	m.panelHits = nil
 
 	projs := m.multiViewProjects()
 	offset := m.multiOffset
@@ -411,6 +430,17 @@ func (m *Model) renderMultiView() string {
 					x1:        originX + w - 2,
 				})
 			}
+			// The panel's own full rectangle, border included (+2 in each
+			// dimension, matching panelBorder's NormalBorder), so a click
+			// anywhere in it — the detail pane, an empty list, the title
+			// line, even the border itself — resolves back to this project.
+			m.panelHits = append(m.panelHits, resolvedPanelHit{
+				project: proj,
+				x0:      panelX,
+				x1:      panelX + w + 2,
+				y0:      lipgloss.Height(header),
+				y1:      lipgloss.Height(header) + bodyHeight + 2,
+			})
 			// +2 for this panel's own border, matching the +2*n reserved by
 			// multiViewPanelWidths so successive panels' origins line up
 			// with where lipgloss.JoinHorizontal actually places them.

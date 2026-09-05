@@ -2,12 +2,16 @@ package tui
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"hash/fnv"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -32,7 +36,11 @@ type Backend interface {
 	// CreateSession's hint, when non-empty, is a user-facing instruction
 	// (e.g. "run: tmux attach -t ...") to show alongside success — it is
 	// not an error.
-	CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool) (s session.Session, hint string, err error)
+	// dangerous is a pointer so the TUI can leave it unset to mean "use the
+	// project's own default"; in practice it always computes and passes an
+	// explicit value (see updateNewForm's Enter-key handling in update.go),
+	// same as before this was a pointer.
+	CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (s session.Session, hint string, err error)
 	// StartFirstPrompt waits for a freshly created session's agent pane to
 	// be ready, then types prompt into it, and — if autoSubmit is true —
 	// presses Enter to start the agent working on it. No-op if prompt is
@@ -105,6 +113,14 @@ type Backend interface {
 	// SetCompactDetail persists whether the detail panel trims itself to the
 	// fields most useful at a glance.
 	SetCompactDetail(compact bool) error
+	// ConfigSnapshot returns the backend's current config. Only ever call
+	// this from inside a tea.Cmd closure, after the mutation it's reporting
+	// on — never from Update()/View() directly (it may do I/O, e.g. an IPC
+	// round trip). The result is handed back via a Msg's Cfg field for
+	// Update() to apply with *m.cfg = *msg.Cfg — see ProjectAddedMsg and
+	// friends in messages.go for why the model never touches the backend's
+	// live config directly.
+	ConfigSnapshot() config.Config
 }
 
 type Mode int
@@ -129,17 +145,71 @@ const (
 	ModeFolders
 )
 
-// agentNames lists the agent CLIs a session/project can run. Every form
-// pairs a selector over this list with its own independent "dangerous"
-// toggle row, rather than a single combined "codex (dangerous)"-style list
-// — opencode has no permission-skipping flag (see dangerousFlag in
-// internal/app), so its toggle is simply a no-op.
-var agentNames = []string{"claude", "codex", "opencode"}
+// agentNames lists the agent CLIs a session/project can run, in the core's
+// order. Every form pairs a selector over this list with its own independent
+// "dangerous" toggle row, rather than a single combined "codex (dangerous)"
+// -style list — opencode has no permission-skipping flag (see dangerousFlag
+// in internal/app), so its toggle is simply a no-op.
+//
+// Sourced from m.agentOptions, fetched from the backend once at startup
+// (App.AgentOptions, served remotely by internal/ipc) — this used to be a
+// hardcoded copy here that could silently drift from what the core actually
+// launches; now the TUI and any other front end read the same table.
+func (m *Model) agentNames() []string {
+	if len(m.agentOptions) == 0 {
+		// A Backend (e.g. an IPC front end) that returns no options at all
+		// would otherwise leave every index/modulo against this list
+		// (newFormAgentIdx and friends) dividing by zero.
+		return []string{"claude"}
+	}
+	names := make([]string, len(m.agentOptions))
+	for i, o := range m.agentOptions {
+		names[i] = o.Name
+	}
+	return names
+}
+
+// modelNamesFor returns agent's model choices, defaulting to claude's list
+// for an unrecognized agent (or one with none of its own) so the selector
+// always has at least "default". Never called for "opencode" — its form row
+// is a free-text input (newFormModelInput) instead of a selector, since it
+// has no small fixed model list worth hardcoding.
+func (m *Model) modelNamesFor(agent string) []string {
+	var fallback []string
+	for _, o := range m.agentOptions {
+		if o.Name == agent && len(o.Models) > 0 {
+			return o.Models
+		}
+		if o.Name == "claude" {
+			fallback = o.Models
+		}
+	}
+	return fallback
+}
+
+// thinkingNamesFor returns agent's thinking/reasoning-level choices. Claude
+// and opencode share a list of prompt phrases prepended to the first prompt
+// (see thinkingPromptPrefix in update.go) — neither has a launch-time
+// reasoning-effort flag; codex's are real values for its
+// -c model_reasoning_effort flag (see reasoningEffortFlag in internal/app).
+// "default" always means "pass/prepend nothing".
+func (m *Model) thinkingNamesFor(agent string) []string {
+	var fallback []string
+	for _, o := range m.agentOptions {
+		if o.Name == agent {
+			return o.Thinking
+		}
+		if o.Name == "claude" {
+			fallback = o.Thinking
+		}
+	}
+	return fallback
+}
 
 // agentNameIndex finds agent's position in agentNames, defaulting to 0
 // (claude) if it's unrecognized.
-func agentNameIndex(agent string) int {
-	for i, a := range agentNames {
+func (m *Model) agentNameIndex(agent string) int {
+	for i, a := range m.agentNames() {
 		if a == agent {
 			return i
 		}
@@ -255,12 +325,23 @@ func newTagForm(ticket, pr string) tagForm {
 type Model struct {
 	cfg     *config.Config
 	backend Backend
-	keys    KeyMap
+	// agentOptions is the core's agent/model/thinking-level tables, fetched
+	// once at startup (see New) — the single source every form's agent,
+	// model and thinking selectors read from instead of a copy of their own.
+	agentOptions []config.AgentOption
+	keys         KeyMap
 	// Version is shown in the bottom-right corner of the footer; empty hides it.
 	Version string
 	// UpdateVersion is the latest GitHub release, set by checkUpdateCmd once
 	// it resolves; empty unless it's newer than Version.
 	UpdateVersion string
+	// updating is true while runUpdateCmd's `brew upgrade` is in flight, so
+	// a repeat press of Update doesn't shell out twice concurrently.
+	updating bool
+	// Relaunch is set right before quitting once an update installs
+	// successfully. main() checks it after p.Run() returns and, if set,
+	// execs the freshly-installed binary in place of this process.
+	Relaunch bool
 
 	projects     []string
 	activeProj   int
@@ -286,18 +367,31 @@ type Model struct {
 	// prStatusPending mirrors gitStatusPending for fetchPRStatusCmd.
 	prStatusPending map[string]bool
 	prompts         map[string]string
+	// promptCheckedAt records when each session was last scanned for its
+	// first prompt, so a session whose prompt can't be found isn't
+	// re-scanned on every single status tick — see promptRetryAfter.
+	promptCheckedAt map[string]time.Time
 	statusCh        <-chan watcher.Snapshot
 	cancelPoll      context.CancelFunc
+
+	// sessCache memoizes backend.Sessions() for the duration of one Update
+	// or one View pass — see allSessions.
+	sessCache      []session.Session
+	sessCacheValid bool
 
 	mode                    Mode
 	nameInput               textinput.Model
 	branchInput             textinput.Model
+	baseBranchInput         textinput.Model
 	ticketInput             textinput.Model
 	prInput                 textinput.Model
 	promptInput             textarea.Model
-	newFormFocus            int // 0=project selector, 1=nameInput, 2=branchInput, 3=promptInput, 4=ticketInput, 5=prInput, 6=agent selector, 7=dangerous toggle, 8=open-terminal toggle, 9=auto-submit toggle
+	newFormModelInput       textinput.Model // opencode's free-text model field; unused for claude/codex
+	newFormFocus            int             // 0=project selector, 1=nameInput, 2=branchInput, 3=baseBranchInput, 4=promptInput, 5=ticketInput, 6=prInput, 7=agent selector, 8=model selector, 9=thinking selector, 10=dangerous toggle, 11=open-terminal toggle, 12=auto-submit toggle
 	newFormErr              string
 	newFormAgentIdx         int  // index into agentNames; -1 means "not chosen yet"
+	newFormModelIdx         int  // index into modelNamesFor(chosen agent); 0 ("default") initially, reset on agent change
+	newFormThinkingIdx      int  // index into thinkingNamesFor(chosen agent); 0 ("default") initially, reset on agent change
 	newFormDangerous        bool // whether to run the chosen agent with its permission-skipping flag; off by default
 	newFormProjIdx          int  // project selector in the new-session form; index into m.projects
 	newFormOpenInBackground bool // whether to skip opening a terminal window for the new session; off by default
@@ -411,6 +505,7 @@ type Model struct {
 
 	linkHits        []resolvedLinkHit
 	rowHits         []resolvedRowHit
+	panelHits       []resolvedPanelHit
 	overlayViewport viewport.Model
 	overlayMode     Mode
 	overlayFocus    int
@@ -437,14 +532,42 @@ type resolvedRowHit struct {
 	x0, x1    int // half-open column range
 }
 
+// resolvedPanelHit records one ModeMultiView panel's full rendered
+// rectangle (border included) in absolute terminal coordinates, computed
+// fresh by renderMultiView on every View() call. It's the fallback the mouse
+// handler in Update() consults when a click doesn't land on a link or a
+// session row — e.g. the detail pane, the panel's title line, or empty
+// space below a short list — so clicking anywhere in a project's panel
+// picks that project, not just its session rows.
+type resolvedPanelHit struct {
+	project string
+	x0, x1  int // half-open column range
+	y0, y1  int // half-open row range
+}
+
+// panelAt returns the project whose panel rectangle contains absolute
+// terminal coordinates (x, y), if any.
+func (m *Model) panelAt(x, y int) (string, bool) {
+	for _, h := range m.panelHits {
+		if x >= h.x0 && x < h.x1 && y >= h.y0 && y < h.y1 {
+			return h.project, true
+		}
+	}
+	return "", false
+}
+
 // updateLinkHits recomputes m.linkHits and m.rowHits in absolute terminal
 // coordinates from the list- and detail-local hits produced during
 // rendering. It's a no-op (clearing hits) outside ModeList and ModeMultiView,
 // since panels aren't clickable behind an overlay. ModeMultiView only ever
 // reaches here via renderListView's own single-project fallback (see
 // renderMultiView) — its actual multi-panel layout computes and appends its
-// own hits directly (one origin per panel) and never calls this.
+// own hits directly (one origin per panel) and never calls this. Either way
+// m.panelHits (the real multi-panel layout's own project-rectangle hits) is
+// cleared here too — it's stale outside that layout, e.g. right after a
+// resize drops down to a single panel.
 func (m *Model) updateLinkHits(header string, listHits, detailHits []linkHit, detailX, detailY int, listRows []rowHit, listWidth int) {
+	m.panelHits = nil
 	if m.mode != ModeList && m.mode != ModeMultiView {
 		m.linkHits = nil
 		m.rowHits = nil
@@ -511,7 +634,7 @@ func (m *Model) linkAt(x, y int) (string, bool) {
 	return "", false
 }
 
-func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, cancel context.CancelFunc) *Model {
+func New(cfg *config.Config, backend Backend, agentOptions []config.AgentOption, statusCh <-chan watcher.Snapshot, cancel context.CancelFunc) *Model {
 	ti := textinput.New()
 	ti.Placeholder = "session name (optional if branch set)"
 	ti.CharLimit = 64
@@ -522,6 +645,11 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 	bi.CharLimit = 128
 	bi.Width = 40
 
+	bbi := textinput.New()
+	bbi.Placeholder = "base branch (optional, defaults to project's)"
+	bbi.CharLimit = 128
+	bbi.Width = 40
+
 	tki := textinput.New()
 	tki.Placeholder = "ticket url (optional)"
 	tki.CharLimit = 256
@@ -531,6 +659,14 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 	pri.Placeholder = "PR url (optional)"
 	pri.CharLimit = 256
 	pri.Width = 40
+
+	// opencode has no fixed model list of its own worth hardcoding — it's a
+	// free-text field instead of a selector like modelNamesByAgent's other
+	// entries.
+	mi := textinput.New()
+	mi.Placeholder = "model (optional, e.g. anthropic/claude-sonnet-4-5)"
+	mi.CharLimit = 128
+	mi.Width = 40
 
 	si := textinput.New()
 	si.Placeholder = "session name"
@@ -551,30 +687,43 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 	// submit outside this field.
 	pi.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("enter", "ctrl+j", "ctrl+m"), key.WithHelp("enter", "newline"))
 
+	// own decouples m.cfg from cfg: locally cfg is the same *config.Config
+	// App itself mutates from tea.Cmd goroutines (see App.Cfg's doc
+	// comment), and over the socket ipc.Client used to keep it refreshed in
+	// place from a Cmd goroutine too — either way, Update()/View() read
+	// m.cfg's fields unlocked from the event-loop goroutine, so the model
+	// must own memory nothing else ever writes. Every config-mutating Cmd
+	// instead hands Update() a fresh snapshot via a Msg's Cfg field (see
+	// ProjectAddedMsg and friends), applied with *m.cfg = *msg.Cfg.
+	own := cfg.Clone()
 	m := &Model{
-		cfg:              cfg,
-		backend:          backend,
-		keys:             DefaultKeyMap(),
-		states:           map[string]watcher.State{},
-		titleState:       map[string]watcher.State{},
-		tmuxAlive:        map[string]bool{},
-		gitStatus:        map[string]gitStatusInfo{},
-		gitStatusPending: map[string]bool{},
-		prStatus:         map[string]prStatusInfo{},
-		prStatusPending:  map[string]bool{},
-		prompts:          map[string]string{},
-		statusCh:         statusCh,
-		cancelPoll:       cancel,
-		nameInput:        ti,
-		branchInput:      bi,
-		ticketInput:      tki,
-		prInput:          pri,
-		promptInput:      pi,
-		searchInput:      si,
-		overlayViewport:  viewport.New(1, 1),
-		overlayMode:      ModeList,
-		overlayFocus:     -1,
-		multiCursors:     map[string]int{},
+		cfg:               &own,
+		backend:           backend,
+		agentOptions:      agentOptions,
+		keys:              DefaultKeyMap(),
+		states:            map[string]watcher.State{},
+		titleState:        map[string]watcher.State{},
+		tmuxAlive:         map[string]bool{},
+		gitStatus:         map[string]gitStatusInfo{},
+		gitStatusPending:  map[string]bool{},
+		prStatus:          map[string]prStatusInfo{},
+		prStatusPending:   map[string]bool{},
+		prompts:           map[string]string{},
+		promptCheckedAt:   map[string]time.Time{},
+		statusCh:          statusCh,
+		cancelPoll:        cancel,
+		nameInput:         ti,
+		branchInput:       bi,
+		baseBranchInput:   bbi,
+		ticketInput:       tki,
+		prInput:           pri,
+		promptInput:       pi,
+		newFormModelInput: mi,
+		searchInput:       si,
+		overlayViewport:   viewport.New(1, 1),
+		overlayMode:       ModeList,
+		overlayFocus:      -1,
+		multiCursors:      map[string]int{},
 	}
 	m.projects = cfg.OrderedProjectNames()
 	// Land on the first project with active sessions rather than always
@@ -612,13 +761,100 @@ func New(cfg *config.Config, backend Backend, statusCh <-chan watcher.Snapshot, 
 
 func (m *Model) refreshPrompts() {
 	home, _ := os.UserHomeDir()
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if p := m.prompts[s.ID]; p != "" {
 			continue
 		}
 		m.prompts[s.ID] = prompt.ForAgent(home, s.AgentName(), s.WorktreePath)
 	}
 }
+
+// pruneDeadSessions drops per-session bookkeeping for sessions that no
+// longer exist. m.states is keyed by worktree path and the rest by session
+// id, but they rot the same way: without this, every map here grows for the
+// life of the process, keeping entries (including whole prompt strings) for
+// every session ever deleted.
+func (m *Model) pruneDeadSessions() {
+	all := m.allSessions()
+	livePaths := make(map[string]bool, len(all))
+	liveIDs := make(map[string]bool, len(all))
+	for _, s := range all {
+		livePaths[s.WorktreePath] = true
+		liveIDs[s.ID] = true
+	}
+	for path := range m.states {
+		if !livePaths[path] {
+			delete(m.states, path)
+		}
+	}
+	for _, byID := range []map[string]bool{m.gitStatusPending, m.prStatusPending} {
+		for id := range byID {
+			if !liveIDs[id] {
+				delete(byID, id)
+			}
+		}
+	}
+	for id := range m.titleState {
+		if !liveIDs[id] {
+			delete(m.titleState, id)
+		}
+	}
+	for id := range m.gitStatus {
+		if !liveIDs[id] {
+			delete(m.gitStatus, id)
+		}
+	}
+	for id := range m.prStatus {
+		if !liveIDs[id] {
+			delete(m.prStatus, id)
+		}
+	}
+	for id := range m.prompts {
+		if !liveIDs[id] {
+			delete(m.prompts, id)
+		}
+	}
+	for id := range m.promptCheckedAt {
+		if !liveIDs[id] {
+			delete(m.promptCheckedAt, id)
+		}
+	}
+}
+
+// allSessions returns backend.Sessions(), memoized for the rest of the
+// current Update or View pass.
+//
+// Both passes ask for the session list many times over — measured at 15
+// calls for one View of an eight-project list and 6 more for one
+// StatusTickMsg, since every panel-count, eligible-project and per-project
+// filter helper fetches it again — and each call is a full sessions.json
+// read, unmarshal and sort (57us and 45 KB with 29 sessions), or, on the
+// socket-backed backend, its own unix connect and round trip. Nothing
+// mutates the backend from the Update goroutine — every mutator runs inside
+// a tea.Cmd and reports back as a message — so one snapshot per pass is
+// exactly as fresh as re-reading it 21 times.
+func (m *Model) allSessions() []session.Session {
+	if !m.sessCacheValid {
+		m.sessCache = m.backend.Sessions()
+		m.sessCacheValid = true
+	}
+	return m.sessCache
+}
+
+// invalidateSessions drops the memoized snapshot. Called at the top of both
+// Update and View, so each pass reads the backend at most once but never
+// carries a snapshot across passes.
+func (m *Model) invalidateSessions() { m.sessCacheValid = false }
+
+// promptRetryAfter bounds how often a session with no discoverable first
+// prompt is re-scanned. Without it, every such session re-ran
+// prompt.ForAgent on every status tick forever — a line-by-line JSON scan
+// of every .jsonl under ~/.claude/projects/<cwd>/, or a sqlite3 subprocess
+// per codex/opencode database — because a scan that comes back empty leaves
+// m.prompts[id] empty, which is the very condition that selects it for
+// scanning. Prompts do appear late (the agent writes its log a moment after
+// the session exists), so this backs the retry off rather than giving up.
+const promptRetryAfter = 30 * time.Second
 
 // gitStatusStaleAfter bounds how long a cached gitStatusInfo is trusted
 // before it's worth a fresh `git status`/`rev-list` call — see
@@ -695,27 +931,35 @@ func prStatusStaleThreshold(id string) time.Duration {
 }
 
 // refreshStatusCmd returns a tea.Cmd that computes the tmux-alive map and
-// missing prompts off the Bubble Tea event-loop goroutine. It must not
-// mutate m — only Update may mutate model state. m.prompts is also written
-// concurrently by Update, so we snapshot the keys we already know about here
-// (on the caller's goroutine) rather than reading m.prompts from the
-// returned closure, which would race.
+// missing prompts off the Bubble Tea event-loop goroutine. The returned
+// closure must not touch m — only Update may — so the set of sessions to
+// scan for a prompt is chosen here, on the caller's goroutine, and passed in
+// by value. Selecting them here is also what marks them checked, so a slow
+// scan isn't re-issued for the same session on the next tick.
 func refreshStatusCmd(m *Model) tea.Cmd {
 	backend := m.backend
-	known := make(map[string]string, len(m.prompts))
-	for id, p := range m.prompts {
-		known[id] = p
+
+	type scan struct{ id, agent, path string }
+	var toScan []scan
+	now := time.Now()
+	for _, s := range m.allSessions() {
+		if m.prompts[s.ID] != "" {
+			continue
+		}
+		if last, ok := m.promptCheckedAt[s.ID]; ok && now.Sub(last) < promptRetryAfter {
+			continue
+		}
+		m.promptCheckedAt[s.ID] = now
+		toScan = append(toScan, scan{id: s.ID, agent: s.AgentName(), path: s.WorktreePath})
 	}
 
 	return func() tea.Msg {
 		tmuxAlive := backend.TmuxAliveAll()
 
 		home, _ := os.UserHomeDir()
-		prompts := make(map[string]string)
-		for _, s := range backend.Sessions() {
-			if p := known[s.ID]; p == "" {
-				prompts[s.ID] = prompt.ForAgent(home, s.AgentName(), s.WorktreePath)
-			}
+		prompts := make(map[string]string, len(toScan))
+		for _, s := range toScan {
+			prompts[s.id] = prompt.ForAgent(home, s.agent, s.path)
 		}
 
 		return StatusRefreshedMsg{TmuxAlive: tmuxAlive, Prompts: prompts}
@@ -731,14 +975,44 @@ func refreshStatusCmd(m *Model) tea.Cmd {
 // — callers (e.g. the delete dialog's "checking..." loader) use that
 // presence to tell "resolved, nothing to show" apart from "hasn't resolved
 // yet".
+// fetchStatusMaxConcurrency caps how many of a status fan-out's per-id
+// fetches run at once, so a sweep over many long-lived sessions doesn't
+// burst that many concurrent git/gh subprocesses — or, over the IPC
+// backend, socket dials — all at the same instant.
+const fetchStatusMaxConcurrency = 8
+
+// fetchStatusFanOut runs fetch for each id, at most fetchStatusMaxConcurrency
+// at a time, and returns the id->result map once every fetch has completed.
+// Shared by fetchGitStatusCmd and fetchPRStatusCmd, which differ only in
+// which per-id backend call they make and what they wrap the result in.
+func fetchStatusFanOut[T any](ids []string, fetch func(id string) T) map[string]T {
+	result := make(map[string]T, len(ids))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, fetchStatusMaxConcurrency)
+	for _, id := range ids {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(id string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			v := fetch(id)
+			mu.Lock()
+			result[id] = v
+			mu.Unlock()
+		}(id)
+	}
+	wg.Wait()
+	return result
+}
+
 func fetchGitStatusCmd(backend Backend, ids []string) tea.Cmd {
 	return func() tea.Msg {
 		now := time.Now()
-		status := make(map[string]gitStatusInfo, len(ids))
-		for _, id := range ids {
+		status := fetchStatusFanOut(ids, func(id string) gitStatusInfo {
 			dirty, unpushed, ok := backend.WorktreeStatus(id)
-			status[id] = gitStatusInfo{dirty: dirty, unpushed: unpushed, ok: ok, checkedAt: now}
-		}
+			return gitStatusInfo{dirty: dirty, unpushed: unpushed, ok: ok, checkedAt: now}
+		})
 		return GitStatusMsg{Status: status}
 	}
 }
@@ -770,13 +1044,24 @@ func fetchChangeSummaryCmd(backend Backend, id string) tea.Cmd {
 // a fetch already in flight (gitStatusPending) are skipped so a slow
 // `git status` call doesn't get re-issued for the same session every tick
 // until it finally returns.
+//
+// A Parked session (tmux dead — see effectiveState) is fetched once, the
+// same as any other session with no cached status yet, but is then excluded
+// from every routine re-check regardless of how stale that cached status
+// gets: its worktree has no agent running in it, so dirty/unpushed can't
+// change on their own. It starts being re-checked again the moment it stops
+// being parked — checkedAt hasn't advanced while parked, so it's already
+// past gitStatusStaleThreshold as soon as tmux comes back.
 func (m *Model) staleGitStatusIDs() []string {
 	var ids []string
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if m.gitStatusPending[s.ID] {
 			continue
 		}
 		st, ok := m.gitStatus[s.ID]
+		if ok && m.effectiveState(s) == watcher.Parked {
+			continue
+		}
 		if !ok || time.Since(st.checkedAt) > gitStatusStaleThreshold(s.ID) {
 			ids = append(ids, s.ID)
 		}
@@ -805,11 +1090,10 @@ func (m *Model) fetchStaleGitStatusCmd() tea.Cmd {
 func fetchPRStatusCmd(backend Backend, ids []string) tea.Cmd {
 	return func() tea.Msg {
 		now := time.Now()
-		status := make(map[string]prStatusInfo, len(ids))
-		for _, id := range ids {
+		status := fetchStatusFanOut(ids, func(id string) prStatusInfo {
 			info, ok := backend.PRStatus(id)
-			status[id] = prStatusInfo{info: info, ok: ok, checkedAt: now}
-		}
+			return prStatusInfo{info: info, ok: ok, checkedAt: now}
+		})
 		return PRStatusMsg{Status: status}
 	}
 }
@@ -819,7 +1103,7 @@ func fetchPRStatusCmd(backend Backend, ids []string) tea.Cmd {
 // mirroring staleGitStatusIDs.
 func (m *Model) stalePRStatusIDs() []string {
 	var ids []string
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if s.PR == "" || m.prStatusPending[s.ID] {
 			continue
 		}
@@ -892,7 +1176,7 @@ func newProjectForm() projectForm {
 	return pf
 }
 
-func editProjectForm(name string, p config.Project) projectForm {
+func (m *Model) editProjectForm(name string, p config.Project) projectForm {
 	pf := newProjectForm()
 	pf.inputs[0].SetValue(name)
 	pf.inputs[1].SetValue(p.Repo)
@@ -919,7 +1203,7 @@ func editProjectForm(name string, p config.Project) projectForm {
 	if p.PromptAgent {
 		pf.agentIdx = askAgentIdx
 	} else {
-		pf.agentIdx = agentNameIndex(p.AgentName())
+		pf.agentIdx = m.agentNameIndex(p.AgentName())
 		pf.dangerous = p.Dangerous
 	}
 	pf.noWorktree = p.NoWorktree
@@ -940,7 +1224,7 @@ func (m *Model) projectSessionCount() int {
 // not be the active one.
 func (m *Model) projectSessionCountFor(proj string) int {
 	n := 0
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if s.Project == proj {
 			n++
 		}
@@ -954,7 +1238,7 @@ func (m *Model) projectSessionCountFor(proj string) int {
 // archived sessions is "empty" while viewing the active list, else cycling
 // lands you on a project whose list renders empty anyway.
 func (m *Model) projectHasSessions(name string) bool {
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if s.Project == name && s.Archived == m.showArchived {
 			return true
 		}
@@ -993,7 +1277,7 @@ func (m *Model) archivedCount() int {
 	}
 	proj := m.projects[m.activeProj]
 	n := 0
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if s.Project == proj && s.Archived {
 			n++
 		}
@@ -1072,7 +1356,7 @@ func (m *Model) refreshSessions() {
 	// project's list regardless of order otherwise.
 	proj := m.projects[m.activeProj]
 	folders := m.cfg.Projects[proj].Folders
-	all := m.backend.Sessions()
+	all := m.allSessions()
 	out := make([]session.Session, 0, len(all))
 	for _, s := range all {
 		if s.Project != proj || s.Archived != m.showArchived {
@@ -1112,13 +1396,13 @@ func (m *Model) Init() tea.Cmd {
 	// the startup tmux-alive check runs immediately rather than waiting for
 	// the first tick — see the StatusRefreshedMsg case for what happens once
 	// it resolves.
-	return tea.Batch(listenStatus(m.statusCh), tickFlash(), refreshStatusCmd(m), checkUpdateCmd(m.Version), tickUpdateCheck())
+	return tea.Batch(listenStatus(m.statusCh), tickFlash(), refreshStatusCmd(m), tickTmux(), checkUpdateCmd(m.Version), tickUpdateCheck())
 }
 
 // updateCheckInterval is how often a long-running session re-polls GitHub
 // Releases, so a session left open for days still notices new versions
 // instead of only checking once at startup.
-const updateCheckInterval = 6 * time.Hour
+const updateCheckInterval = 1 * time.Hour
 
 // checkUpdateCmd asynchronously checks GitHub Releases for a version newer
 // than current. It's a background nicety, not a feature — any failure
@@ -1134,20 +1418,87 @@ func checkUpdateCmd(current string) tea.Cmd {
 	}
 }
 
+// runUpdateCmd shells out to the same command the footer/help already tell
+// users to run by hand. Homebrew-only: a go install/git clone build has no
+// self-update path, so this just fails with brew's own error in that case,
+// which flashError surfaces as-is.
+func runUpdateCmd() tea.Cmd {
+	return func() tea.Msg {
+		out, err := exec.Command("sh", "-c", "brew update && brew upgrade moomux").CombinedOutput()
+		if err != nil {
+			return UpdateAppliedMsg{Err: fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))}
+		}
+		return UpdateAppliedMsg{}
+	}
+}
+
 // tickUpdateCheck schedules the next recheck; see UpdateCheckTickMsg handling
 // in Update() for what fires when it lands.
 func tickUpdateCheck() tea.Cmd {
 	return tea.Tick(updateCheckInterval, func(t time.Time) tea.Msg { return UpdateCheckTickMsg{} })
 }
 
+// listenStatus waits for the next snapshot, then folds in every other
+// snapshot already queued behind it before handing one message to Update.
+//
+// The watchers run independently and each tick costs the TUI a full
+// handler pass plus a re-render, so a burst — three watchers coming due
+// together, or a flurry of filesystem events under an active agent — would
+// otherwise be processed one whole pass at a time for state that the last
+// snapshot in the burst already supersedes.
 func listenStatus(ch <-chan watcher.Snapshot) tea.Cmd {
 	return func() tea.Msg {
 		snap, ok := <-ch
 		if !ok {
 			return StatusChannelClosedMsg{}
 		}
-		return StatusTickMsg{Snap: snap}
+		for {
+			select {
+			case next, ok := <-ch:
+				if !ok {
+					// Deliver what we have; the next listenStatus reads the
+					// closed channel and reports it.
+					return StatusTickMsg{Snap: snap}
+				}
+				snap = mergeSnapshots(snap, next)
+			default:
+				return StatusTickMsg{Snap: snap}
+			}
+		}
 	}
+}
+
+// mergeSnapshots folds newer into older, newer winning per path. That
+// matches how Update applies a single snapshot — merge into m.states, never
+// replace — so coalescing a burst leaves exactly the state the snapshots
+// would have produced one at a time. Neither input map is mutated: they
+// belong to the watcher goroutines that built them.
+func mergeSnapshots(older, newer watcher.Snapshot) watcher.Snapshot {
+	states := make(map[string]watcher.State, len(older.States)+len(newer.States))
+	for p, st := range older.States {
+		states[p] = st
+	}
+	for p, st := range newer.States {
+		states[p] = st
+	}
+	out := watcher.Snapshot{States: states, PollTime: newer.PollTime, Err: errors.Join(older.Err, newer.Err)}
+	if out.PollTime.Before(older.PollTime) {
+		out.PollTime = older.PollTime
+	}
+	return out
+}
+
+// tmuxRefreshInterval is how often the tmux-alive map and any missing
+// prompts are refreshed. This used to ride on the watcher snapshot stream,
+// which meant a `tmux list-sessions` subprocess (~4.5ms of fork and exec)
+// per snapshot from any of the three watchers — several a second at idle,
+// and up to ten a second while an agent's filesystem writes drove the
+// debounced rescans. Whether a tmux session is alive has nothing to do with
+// an agent touching a JSON file, so it gets its own timer.
+var tmuxRefreshInterval = 2 * time.Second
+
+func tickTmux() tea.Cmd {
+	return tea.Tick(tmuxRefreshInterval, func(t time.Time) tea.Msg { return TmuxTickMsg{} })
 }
 
 func tickFlash() tea.Cmd {

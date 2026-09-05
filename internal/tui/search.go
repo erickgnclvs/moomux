@@ -45,7 +45,7 @@ func matchSessions(all []session.Session, query string) []session.Session {
 // refreshSearchResults recomputes m.searchResults from the current query,
 // clamping m.searchCursor back into range if the new result set shrank.
 func (m *Model) refreshSearchResults() {
-	m.searchResults = matchSessions(m.backend.Sessions(), m.searchInput.Value())
+	m.searchResults = matchSessions(m.allSessions(), m.searchInput.Value())
 	if m.searchCursor >= len(m.searchResults) {
 		m.searchCursor = 0
 	}

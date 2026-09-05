@@ -3,10 +3,7 @@ package watcher
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -56,34 +53,21 @@ type Watcher interface {
 	Run(ctx context.Context, out chan<- Snapshot)
 }
 
-// DirWatcher polls a directory of JSON session files (used by Claude and Codex).
+// DirWatcher watches a directory of JSON session files (used by Claude and
+// Codex) for changes. Run is implemented per-platform: dirwatcher_fsevents.go
+// (darwin) watches the directory for filesystem events instead of polling it
+// on a timer; dirwatcher_poll.go (everywhere else) ticks Interval (default
+// 2s) as before.
 type DirWatcher struct {
 	Dir      string
 	Interval time.Duration
-}
 
-// Run polls until ctx is canceled. Each tick produces one Snapshot on out.
-func (w *DirWatcher) Run(ctx context.Context, out chan<- Snapshot) {
-	interval := w.Interval
-	if interval == 0 {
-		interval = 2 * time.Second
-	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	w.tick(ctx, out)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			w.tick(ctx, out)
-		}
-	}
+	scanner dirScanner
 }
 
 func (w *DirWatcher) tick(ctx context.Context, out chan<- Snapshot) {
 	snap := Snapshot{PollTime: time.Now()}
-	states, readErr, parseErr := scanDir(w.Dir)
+	states, readErr, parseErr := w.scanner.scan(w.Dir)
 	if readErr != nil {
 		snap.States = map[string]State{}
 		snap.Err = fmt.Errorf("read %s: %w", w.Dir, readErr)
@@ -93,44 +77,6 @@ func (w *DirWatcher) tick(ctx context.Context, out chan<- Snapshot) {
 	snap.States = states
 	snap.Err = parseErr
 	send(ctx, out, snap)
-}
-
-// scanDir reads dir for *.json session/marker files, classifies each, and
-// max-merges the result by cwd. Shared by DirWatcher (Claude's session dir)
-// and SQLiteWatcher's optional MarkerDir (Codex's needs-input markers) —
-// both watch a directory of small JSON files keyed by cwd. readErr means dir
-// itself couldn't be read (states is unpopulated); parseErr (an errors.Join
-// of per-file failures) leaves states populated with everything that did
-// parse, so one half-written file doesn't blind the caller to every other
-// session in the directory.
-func scanDir(dir string) (states map[string]State, readErr, parseErr error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err, nil
-	}
-	states = map[string]State{}
-	var parseErrs []error
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
-			continue
-		}
-		rs, err := parseFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			parseErrs = append(parseErrs, fmt.Errorf("parse %s: %w", e.Name(), err))
-			continue
-		}
-		if rs.CWD == "" {
-			continue
-		}
-		st := classify(rs)
-		if prev, ok := states[rs.CWD]; !ok || st > prev {
-			states[rs.CWD] = st
-		}
-	}
-	if len(parseErrs) > 0 {
-		parseErr = errors.Join(parseErrs...)
-	}
-	return states, nil, parseErr
 }
 
 func send(ctx context.Context, out chan<- Snapshot, snap Snapshot) {

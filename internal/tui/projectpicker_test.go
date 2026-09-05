@@ -493,7 +493,7 @@ func TestProjectPickerOpensWithZeroProjects(t *testing.T) {
 	be := &fakeBackend{}
 	cfg := &config.Config{Projects: map[string]config.Project{}}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList // New() auto-opens ModeNewProject with zero projects
 

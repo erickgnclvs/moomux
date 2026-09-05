@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,6 +13,36 @@ import (
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/tmux"
 )
+
+// explicitFlagOverride must tell an unset -dangerous apart from an
+// explicitly passed one — a plain flag.Bool default can't, and runSpawn used
+// to force every spawned session non-dangerous regardless of the project's
+// configured default before this distinction existed.
+func TestExplicitFlagOverride(t *testing.T) {
+	newFlagSet := func(args []string) (*flag.FlagSet, *bool) {
+		fs := flag.NewFlagSet("spawn", flag.ContinueOnError)
+		dangerous := fs.Bool("dangerous", false, "")
+		if err := fs.Parse(args); err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		return fs, dangerous
+	}
+
+	fs, dangerous := newFlagSet(nil)
+	if got := explicitFlagOverride(fs, "dangerous", *dangerous); got != nil {
+		t.Fatalf("unset flag: got override %v, want nil", *got)
+	}
+
+	fs, dangerous = newFlagSet([]string{"-dangerous=true"})
+	if got := explicitFlagOverride(fs, "dangerous", *dangerous); got == nil || !*got {
+		t.Fatalf("-dangerous=true: got %v, want pointer to true", got)
+	}
+
+	fs, dangerous = newFlagSet([]string{"-dangerous=false"})
+	if got := explicitFlagOverride(fs, "dangerous", *dangerous); got == nil || *got {
+		t.Fatalf("-dangerous=false: got %v, want pointer to false", got)
+	}
+}
 
 // saveConfig must log a Save failure rather than silently discard it —
 // otherwise cfg.TmuxSetupAsked/AutoTmuxAsked being lost would reopen the
@@ -82,6 +113,40 @@ func TestCurrentSessionPrefersTmuxOverStaleCwd(t *testing.T) {
 	}
 	if s.ID != "demo:a" {
 		t.Fatalf("currentSession = %+v, want session a (the tmux session we're actually in), not the stale-cwd session", s)
+	}
+}
+
+// TestParkHelperCommandIsDetached reproduces the Codex /kill failure where
+// closing the iTerm tab killed `moomux park` before it reached tmux. The
+// helper must have its own session so it survives closing the invoking tab.
+func TestParkHelperCommandIsDetached(t *testing.T) {
+	for _, subcommand := range []string{"__park-detached", "__park-worker"} {
+		cmd := newParkHelperCommand("/tmp/moomux", subcommand, "demo:a")
+		if cmd.Path != "/tmp/moomux" {
+			t.Fatalf("helper path = %q, want /tmp/moomux", cmd.Path)
+		}
+		wantArgs := []string{"/tmp/moomux", subcommand, "demo:a"}
+		if len(cmd.Args) != len(wantArgs) {
+			t.Fatalf("helper args = %q, want %q", cmd.Args, wantArgs)
+		}
+		for i := range wantArgs {
+			if cmd.Args[i] != wantArgs[i] {
+				t.Fatalf("helper args = %q, want %q", cmd.Args, wantArgs)
+			}
+		}
+		if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setsid {
+			t.Fatal("park helper must start in a detached process session")
+		}
+		// Regression: a /kill invocation's stdout is a pipe the host CLI
+		// reads to capture command output, not a stable tty. Wiring the
+		// detached helper's stdio to it (as runPark used to, via
+		// cmd.Stdout/Stderr = os.Stdout/os.Stderr after construction) ties
+		// the helper's lifetime to that pipe staying open, so the read side
+		// blocking on/timing out waiting for EOF can kill the helper before
+		// it reaches CloseTab — closing tmux but leaving the tab open.
+		if cmd.Stdin != nil || cmd.Stdout != nil || cmd.Stderr != nil {
+			t.Fatal("park helper must not inherit the caller's stdio — leave it unset so it goes to /dev/null")
+		}
 	}
 }
 

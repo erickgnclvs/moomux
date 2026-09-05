@@ -21,10 +21,16 @@ func TestApplyThemeRebuildsPrerenderedDots(t *testing.T) {
 	// that actually emits escape codes, like list_test.go does.
 	origProfile := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor) // avoids ANSI256/ANSI quantization coincidentally mapping two distinct hex colors to the same code
-	defer lipgloss.SetColorProfile(origProfile)
-
-	defer applyTheme("default")
-	defer applyAppearance("")
+	// Order matters: the profile has to go back *before* the styles are
+	// rebuilt, or applyTheme bakes truecolor escapes into the pre-rendered
+	// globals (iconTicket and friends) and leaves them there for every later
+	// test in this binary, which then renders under a different profile —
+	// order-dependent failures that only show up under -shuffle.
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(origProfile)
+		applyAppearance("")
+		applyTheme("default")
+	})
 	// Appearance fixed so only the theme changes between the two renders.
 	applyAppearance("dark")
 

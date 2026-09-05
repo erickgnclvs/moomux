@@ -1,0 +1,54 @@
+=== 40x20 ===
+                                        
+                                        
+                                        
+╭──────────────────────────────────────╮
+│                                      │
+│  SEARCH SESSIONS                     │
+│                                      │
+│  > session name                      │
+│                                      │
+│   ▸ bugfix-timeout            demo   │
+│     feature-auth              demo   │
+│     old-spike        demo archived   │
+│                                      │
+│  ↑↓ select  enter open  esc cancel   │
+│                                      │
+╰──────────────────────────────────────╯
+                                        
+                                        
+                                        
+                                        
+=== 100x32 ===
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+           ╭────────────────────────────────────────────────────────────────────────────╮           
+           │                                                                            │           
+           │  SEARCH SESSIONS                                                           │           
+           │                                                                            │           
+           │  > session name                                                            │           
+           │                                                                            │           
+           │   ▸ bugfix-timeout                                                  demo   │           
+           │     feature-auth                                                    demo   │           
+           │     old-spike                                              demo archived   │           
+           │                                                                            │           
+           │  ↑↓ select  enter open  esc cancel                                         │           
+           │                                                                            │           
+           ╰────────────────────────────────────────────────────────────────────────────╯           
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    

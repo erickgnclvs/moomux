@@ -42,12 +42,23 @@ type fakeTmuxRunner struct {
 	calls  [][]string
 	out    map[string]string
 	failOn map[string]bool
+	// failWithOutput, unlike failOn, fails with a non-empty diagnostic —
+	// tmux.Client.HasSession treats an exit-1 with empty/"can't find
+	// session" output as "no session" (no error); this is for simulating a
+	// genuine tmux error instead.
+	failWithOutput map[string]string
+	events         *[]string
 	// seq, when set for a key, returns successive values on each call to
 	// that key (staying on the last one once exhausted) instead of out's
 	// fixed value — used to simulate pane content actually changing across
 	// polls (e.g. idle shell prompt -> agent startup -> agent idle).
 	seq    map[string][]string
 	seqIdx map[string]int
+	// failFirstN[key], when >0, fails that key's next N calls with a
+	// transient error before it starts answering normally — for simulating
+	// a command that briefly errors (e.g. right after window creation)
+	// rather than one that's simply off/absent.
+	failFirstN map[string]int
 }
 
 type exitErr struct{}
@@ -56,10 +67,36 @@ func (exitErr) Error() string { return "exit status 1" }
 func (exitErr) ExitCode() int { return 1 }
 
 func (f *fakeTmuxRunner) Run(args ...string) (string, error) {
-	key := strings.Join(args, " ")
-	f.calls = append(f.calls, append([]string(nil), args...))
+	recorded := append([]string(nil), args...)
+	if len(args) == 2 && args[0] == "load-buffer" {
+		// PasteText hands load-buffer a temp file path (unpredictable across
+		// runs) rather than the text itself; record what it actually staged
+		// so assertions can check on content instead of a throwaway path.
+		if data, err := os.ReadFile(args[1]); err == nil {
+			recorded = []string{"load-buffer", string(data)}
+		}
+	}
+	key := strings.Join(recorded, " ")
+	f.calls = append(f.calls, recorded)
+	if f.events != nil {
+		*f.events = append(*f.events, "tmux "+key)
+	}
 	if f.failOn[key] {
 		return "", exitErr{}
+	}
+	if out, ok := f.failWithOutput[key]; ok {
+		return out, exitErr{}
+	}
+	if f.failFirstN[key] > 0 {
+		f.failFirstN[key]--
+		return "", exitErr{}
+	}
+	if _, ok := f.out[key]; !ok {
+		if _, seqOK := f.seq[key]; !seqOK && strings.HasSuffix(key, "#{bracket_paste_flag}") {
+			// Default panes to "ready for a paste" so tests that aren't
+			// about the readiness wait don't have to opt in to it.
+			return "1", nil
+		}
 	}
 	if vals, ok := f.seq[key]; ok && len(vals) > 0 {
 		if f.seqIdx == nil {
@@ -120,6 +157,7 @@ func (f *fakeTabTerminal) OpenTab(tabID, tmuxSession, title string) (string, str
 type fakeCloseTabTerminal struct {
 	closed []string
 	err    error
+	events *[]string
 }
 
 func (f *fakeCloseTabTerminal) OpenSession(tmuxSession, title string) (string, error) {
@@ -128,6 +166,9 @@ func (f *fakeCloseTabTerminal) OpenSession(tmuxSession, title string) (string, e
 
 func (f *fakeCloseTabTerminal) CloseTab(tabID string) error {
 	f.closed = append(f.closed, tabID)
+	if f.events != nil {
+		*f.events = append(*f.events, "close "+tabID)
+	}
 	return f.err
 }
 
@@ -136,6 +177,10 @@ func (f *fakeCloseTabTerminal) CloseTab(tabID string) error {
 func noBranch(fr *fakeGitRunner, branch string) {
 	fr.failOn["rev-parse --verify --quiet refs/heads/"+branch] = true
 }
+
+// boolPtr is CreateSession's dangerous argument: non-nil forces the value
+// regardless of the project's own Dangerous setting.
+func boolPtr(b bool) *bool { return &b }
 
 func newTestApp(t *testing.T, projects map[string]config.Project) (*App, *fakeGitRunner, *fakeTmuxRunner, *fakeTerminal) {
 	t.Helper()
@@ -152,7 +197,7 @@ func newTestApp(t *testing.T, projects map[string]config.Project) (*App, *fakeGi
 	t.Setenv("SSH_TTY", "")
 	t.Setenv("MOSHI_CLIENT", "")
 	git := &fakeGitRunner{failOn: map[string]bool{}, out: map[string]string{}}
-	tm := &fakeTmuxRunner{out: map[string]string{}, failOn: map[string]bool{}}
+	tm := &fakeTmuxRunner{out: map[string]string{}, failOn: map[string]bool{}, failWithOutput: map[string]string{}, failFirstN: map[string]int{}}
 	term := &fakeTerminal{}
 	store := &session.Store{Path: filepath.Join(dir, "sessions.json")}
 	if err := store.Load(); err != nil {
@@ -196,24 +241,33 @@ func TestAgentCmd(t *testing.T) {
 	}
 }
 
-func TestSendPromptTypesIntoSession(t *testing.T) {
-	a, _, tm, _ := newTestApp(t, gitProject("/repo"))
-	if err := a.SendPrompt("moomux-foo", "fix the bug"); err != nil {
-		t.Fatal(err)
+// TestAgentOptionsCoversEveryLaunchableAgent guards AgentOptions against
+// silently falling out of sync with what CreateSession actually accepts
+// (validateAgent) and what buildAgentCmd knows how to launch — the whole
+// point of a second front end reading this table instead of a copy of its
+// own is that it can't drift from the core.
+func TestAgentOptionsCoversEveryLaunchableAgent(t *testing.T) {
+	a := &App{}
+	opts := a.AgentOptions()
+	if len(opts) == 0 {
+		t.Fatal("AgentOptions() returned nothing")
 	}
-	want := []string{"send-keys", "-t", "=moomux-foo:", "fix the bug", "Enter"}
-	if len(tm.calls) != 1 || !reflect.DeepEqual(tm.calls[0], want) {
-		t.Fatalf("calls = %v", tm.calls)
+	for _, o := range opts {
+		if err := validateAgent(o.Name); err != nil {
+			t.Errorf("AgentOptions() includes %q, which validateAgent rejects: %v", o.Name, err)
+		}
+		if len(o.Thinking) == 0 || o.Thinking[0] != "default" {
+			t.Errorf("%s: Thinking = %v, want it to start with \"default\"", o.Name, o.Thinking)
+		}
+		if len(o.Models) > 0 && o.Models[0] != "default" {
+			t.Errorf("%s: Models = %v, want it to start with \"default\"", o.Name, o.Models)
+		}
 	}
-}
-
-func TestSendPromptEmptyIsNoop(t *testing.T) {
-	a, _, tm, _ := newTestApp(t, gitProject("/repo"))
-	if err := a.SendPrompt("moomux-foo", ""); err != nil {
-		t.Fatal(err)
-	}
-	if len(tm.calls) != 0 {
-		t.Fatalf("expected no tmux calls, got %v", tm.calls)
+	for _, agent := range []string{"claude", "codex", "opencode"} {
+		found := slices.ContainsFunc(opts, func(o config.AgentOption) bool { return o.Name == agent })
+		if !found {
+			t.Errorf("AgentOptions() is missing agent %q, which validateAgent still accepts", agent)
+		}
 	}
 }
 
@@ -302,7 +356,7 @@ func TestCreateSessionWorktree(t *testing.T) {
 	tm.out["list-panes -t ="+tn+": -F #{pane_id}"] = "%0\n"
 	noBranch(git, "feat")
 
-	s, hint, err := a.CreateSession("demo", "feat", "", "", "https://ticket/1", true, false)
+	s, hint, err := a.CreateSession("demo", "feat", "", "", "https://ticket/1", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,6 +366,9 @@ func TestCreateSessionWorktree(t *testing.T) {
 	wantWt := filepath.Join(a.WorktreeRoot, "demo", "feat")
 	if s.WorktreePath != wantWt || s.Branch != "feat" || !s.NewBranch || s.TmuxSession != tn || s.Ticket != "https://ticket/1" {
 		t.Fatalf("session = %+v", s)
+	}
+	if s.BaseBranch != "main" {
+		t.Fatalf("session.BaseBranch = %q, want the project's configured %q", s.BaseBranch, "main")
 	}
 	if s.AgentName() != "claude" {
 		t.Fatalf("agent = %q", s.AgentName())
@@ -337,6 +394,45 @@ func TestCreateSessionWorktree(t *testing.T) {
 	}
 }
 
+// TestCreateSessionStampsLastOpened guards against a session created with
+// openTerminal=true — which drops the user straight into it, same as
+// OpenSession's attach — being treated as "never opened" by the
+// most-recently-opened sort (see OpenSession's own LastOpened stamp and
+// session.SortByRecent) just because it was never *re*-opened afterward.
+func TestCreateSessionStampsLastOpened(t *testing.T) {
+	a, git, tm, _ := newTestApp(t, gitProject("/repo"))
+	tn := TmuxSessionName("demo:feat", "feat")
+	tm.out["list-panes -t ="+tn+": -F #{pane_id}"] = "%0\n"
+	noBranch(git, "feat")
+
+	before := time.Now()
+	s, _, err := a.CreateSession("demo", "feat", "", "", "", true, boolPtr(false), "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.LastOpened.Before(before) {
+		t.Fatalf("LastOpened = %v, want at/after %v", s.LastOpened, before)
+	}
+}
+
+// TestCreateSessionBackgroundLeavesLastOpenedZero covers the openTerminal=false
+// path (e.g. `moomux spawn`): nothing actually attached the user to the
+// session, so it should sort as never-opened, not as just-opened.
+func TestCreateSessionBackgroundLeavesLastOpenedZero(t *testing.T) {
+	a, git, tm, _ := newTestApp(t, gitProject("/repo"))
+	tn := TmuxSessionName("demo:feat", "feat")
+	tm.out["list-panes -t ="+tn+": -F #{pane_id}"] = "%0\n"
+	noBranch(git, "feat")
+
+	s, _, err := a.CreateSession("demo", "feat", "", "", "", false, boolPtr(false), "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.LastOpened.IsZero() {
+		t.Fatalf("LastOpened = %v, want zero", s.LastOpened)
+	}
+}
+
 func TestCreateSessionInstallsClaudeHooks(t *testing.T) {
 	// Claude hooks install globally (see claudehook.EnsureHooksInstalled's
 	// doc comment), not per-worktree — newTestApp already sandboxes HOME so
@@ -347,7 +443,7 @@ func TestCreateSessionInstallsClaudeHooks(t *testing.T) {
 	tm.out["list-panes -t ="+tn+": -F #{pane_id}"] = "%0\n"
 	noBranch(git, "feat")
 
-	if _, _, err := a.CreateSession("demo", "feat", "claude", "", "", true, false); err != nil {
+	if _, _, err := a.CreateSession("demo", "feat", "claude", "", "", true, boolPtr(false), "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
@@ -366,7 +462,7 @@ func TestCreateSessionInstallsTagCommand(t *testing.T) {
 	tm.out["list-panes -t ="+tn+": -F #{pane_id}"] = "%0\n"
 	noBranch(git, "feat")
 
-	if _, _, err := a.CreateSession("demo", "feat", "claude", "", "", true, false); err != nil {
+	if _, _, err := a.CreateSession("demo", "feat", "claude", "", "", true, boolPtr(false), "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "commands", "tag.md")); err != nil {
@@ -385,7 +481,7 @@ func TestCreateSessionSkipsClaudeHooksForOtherAgents(t *testing.T) {
 	// picking it here keeps this test's assertion (no settings.json)
 	// meaningful without also asserting anything about claude's or codex's
 	// own hooks file.
-	if _, _, err := a.CreateSession("demo", "feat", "opencode", "", "", true, false); err != nil {
+	if _, _, err := a.CreateSession("demo", "feat", "opencode", "", "", true, boolPtr(false), "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
@@ -403,7 +499,7 @@ func TestCreateSessionInstallsCodexHooks(t *testing.T) {
 	tm.out["list-panes -t ="+tn+": -F #{pane_id}"] = "%0\n"
 	noBranch(git, "feat")
 
-	if _, _, err := a.CreateSession("demo", "feat", "codex", "", "", true, false); err != nil {
+	if _, _, err := a.CreateSession("demo", "feat", "codex", "", "", true, boolPtr(false), "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(home, ".codex", "hooks.json"))
@@ -422,7 +518,7 @@ func TestCreateSessionInstallsKillCommand(t *testing.T) {
 	tm.out["list-panes -t ="+tn+": -F #{pane_id}"] = "%0\n"
 	noBranch(git, "feat")
 
-	if _, _, err := a.CreateSession("demo", "feat", "claude", "", "", true, false); err != nil {
+	if _, _, err := a.CreateSession("demo", "feat", "claude", "", "", true, boolPtr(false), "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "commands", "kill.md")); err != nil {
@@ -430,18 +526,43 @@ func TestCreateSessionInstallsKillCommand(t *testing.T) {
 	}
 }
 
-func TestCreateSessionInstallsKillPrompt(t *testing.T) {
+func TestCreateSessionInstallsCodexKillCommand(t *testing.T) {
 	a, git, tm, _ := newTestApp(t, gitProject("/repo"))
 	home, _ := os.UserHomeDir()
 	tn := TmuxSessionName("demo:feat", "feat")
 	tm.out["list-panes -t ="+tn+": -F #{pane_id}"] = "%0\n"
 	noBranch(git, "feat")
 
-	if _, _, err := a.CreateSession("demo", "feat", "codex", "", "", true, false); err != nil {
+	if _, _, err := a.CreateSession("demo", "feat", "codex", "", "", true, boolPtr(false), "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".codex", "prompts", "kill.md")); err != nil {
-		t.Fatalf("expected ~/.codex/prompts/kill.md to be written: %v", err)
+		t.Fatalf("expected legacy ~/.codex/prompts/kill.md to be written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", "kill", "SKILL.md")); err != nil {
+		t.Fatalf("expected current ~/.agents/skills/kill/SKILL.md to be written: %v", err)
+	}
+}
+
+func TestInstallKnownCommandsBackfillsExistingCodexSessions(t *testing.T) {
+	a, _, _, _ := newTestApp(t, gitProject("/repo"))
+	home, _ := os.UserHomeDir()
+	if err := a.Store.Put(session.Session{
+		ID: "demo:codex", Project: "demo", Name: "codex", Agent: "codex",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	a.InstallKnownCommands()
+
+	for _, name := range []string{"kill", "tag", "spawn", "reseed"} {
+		path := filepath.Join(home, ".agents", "skills", name, "SKILL.md")
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected existing Codex session to backfill %s: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf("startup command backfill must not install untrusted hooks: %v", err)
 	}
 }
 
@@ -461,12 +582,134 @@ func TestCreateSessionDangerousAppendsAgentFlag(t *testing.T) {
 			tm.out["list-panes -t ="+tn+": -F #{pane_id}"] = "%0\n"
 			noBranch(git, "feat")
 
-			s, _, err := a.CreateSession("demo", "feat", tc.agent, "", "", true, true)
+			s, _, err := a.CreateSession("demo", "feat", tc.agent, "", "", true, boolPtr(true), "", "", "")
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !s.Dangerous {
 				t.Fatalf("session.Dangerous = false, want true")
+			}
+			found := false
+			for _, c := range tm.calls {
+				if slices.Contains(c, tc.wantCmd) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("no send-keys with %q; calls = %v", tc.wantCmd, tm.calls)
+			}
+		})
+	}
+}
+
+// TestCreateSessionDangerousDefaultsFromProject guards the fix for a real
+// cross-front-end bug: a caller that leaves dangerous unset (nil) — which is
+// what a client with no way to know the project's own setting does, e.g. the
+// macOS app — must get the project's Dangerous value, not a hardcoded false.
+// An explicit true or false must still override the project regardless.
+func TestCreateSessionDangerousDefaultsFromProject(t *testing.T) {
+	cases := []struct {
+		name          string
+		projDangerous bool
+		override      *bool
+		want          bool
+	}{
+		{"unset inherits a dangerous project", true, nil, true},
+		{"unset inherits a non-dangerous project", false, nil, false},
+		{"explicit true overrides a non-dangerous project", false, boolPtr(true), true},
+		{"explicit false overrides a dangerous project", true, boolPtr(false), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			projects := gitProject("/repo")
+			p := projects["demo"]
+			p.Dangerous = tc.projDangerous
+			projects["demo"] = p
+			a, git, tm, _ := newTestApp(t, projects)
+			tm.out["list-panes -t ="+TmuxSessionName("demo:feat", "feat")+": -F #{pane_id}"] = "%0\n"
+			noBranch(git, "feat")
+
+			s, _, err := a.CreateSession("demo", "feat", "claude", "", "", true, tc.override, "", "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s.Dangerous != tc.want {
+				t.Fatalf("session.Dangerous = %v, want %v", s.Dangerous, tc.want)
+			}
+			gotFlag := slices.ContainsFunc(tm.calls, func(c []string) bool {
+				return slices.Contains(c, "claude --dangerously-skip-permissions")
+			})
+			if gotFlag != tc.want {
+				t.Fatalf("--dangerously-skip-permissions present = %v, want %v; calls = %v", gotFlag, tc.want, tm.calls)
+			}
+		})
+	}
+}
+
+// TestCreateSessionModelAppendsFlag guards buildAgentCmd/modelFlag: a chosen
+// model must be appended as --model, and "default" (or empty) must omit the
+// flag entirely rather than passing it through literally.
+func TestCreateSessionModelAppendsFlag(t *testing.T) {
+	cases := []struct {
+		agent   string
+		model   string
+		wantCmd string
+	}{
+		{"claude", "sonnet", "claude --model sonnet"},
+		{"codex", "opus", "codex --model opus"},
+		{"opencode", "haiku", "opencode --port 4096 --model haiku"},
+		{"claude", "default", "claude"},
+		{"claude", "", "claude"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.agent+"/"+tc.model, func(t *testing.T) {
+			a, git, tm, _ := newTestApp(t, gitProject("/repo"))
+			tn := TmuxSessionName("demo:feat", "feat")
+			tm.out["list-panes -t ="+tn+": -F #{pane_id}"] = "%0\n"
+			noBranch(git, "feat")
+
+			if _, _, err := a.CreateSession("demo", "feat", tc.agent, "", "", true, boolPtr(false), "", tc.model, ""); err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, c := range tm.calls {
+				if slices.Contains(c, tc.wantCmd) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("no send-keys with %q; calls = %v", tc.wantCmd, tm.calls)
+			}
+		})
+	}
+}
+
+// TestCreateSessionThinkingAppendsCodexFlag guards reasoningEffortFlag: a
+// chosen thinking level is a real -c model_reasoning_effort flag for codex,
+// "default"/empty omits it, and claude/opencode never get the flag at all
+// (they have no such launch-time flag — see thinkingPromptPrefix in
+// internal/tui instead).
+func TestCreateSessionThinkingAppendsCodexFlag(t *testing.T) {
+	cases := []struct {
+		agent    string
+		thinking string
+		wantCmd  string
+	}{
+		{"codex", "high", `codex -c model_reasoning_effort="high"`},
+		{"codex", "default", "codex"},
+		{"codex", "", "codex"},
+		{"claude", "high", "claude"},
+		{"opencode", "high", "opencode --port 4096"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.agent+"/"+tc.thinking, func(t *testing.T) {
+			a, git, tm, _ := newTestApp(t, gitProject("/repo"))
+			tn := TmuxSessionName("demo:feat", "feat")
+			tm.out["list-panes -t ="+tn+": -F #{pane_id}"] = "%0\n"
+			noBranch(git, "feat")
+
+			if _, _, err := a.CreateSession("demo", "feat", tc.agent, "", "", true, boolPtr(false), "", "", tc.thinking); err != nil {
+				t.Fatal(err)
 			}
 			found := false
 			for _, c := range tm.calls {
@@ -489,7 +732,7 @@ func TestCreateSessionBranchPrefix(t *testing.T) {
 	tm.out["list-panes -t ="+TmuxSessionName("demo:feat", "feat")+": -F #{pane_id}"] = "%0\n"
 	noBranch(git, "user/feat")
 
-	s, _, err := a.CreateSession("demo", "feat", "", "", "", true, false)
+	s, _, err := a.CreateSession("demo", "feat", "", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,7 +749,7 @@ func TestCreateSessionBranchPrefixTrailingSlash(t *testing.T) {
 	tm.out["list-panes -t ="+TmuxSessionName("demo:feat", "feat")+": -F #{pane_id}"] = "%0\n"
 	noBranch(git, "user/feat")
 
-	s, _, err := a.CreateSession("demo", "feat", "", "", "", true, false)
+	s, _, err := a.CreateSession("demo", "feat", "", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,16 +758,49 @@ func TestCreateSessionBranchPrefixTrailingSlash(t *testing.T) {
 	}
 }
 
+// TestCreateSessionBaseBranchOverride guards the new-session "base branch"
+// field: when set, a fresh branch must be cut from it instead of the
+// project's configured BaseBranch.
+func TestCreateSessionBaseBranchOverride(t *testing.T) {
+	a, git, tm, _ := newTestApp(t, gitProject("/repo"))
+	tm.out["list-panes -t ="+TmuxSessionName("demo:feat", "feat")+": -F #{pane_id}"] = "%0\n"
+	noBranch(git, "feat")
+
+	s, _, err := a.CreateSession("demo", "feat", "", "", "", true, boolPtr(false), "develop", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Branch != "feat" {
+		t.Fatalf("branch = %q", s.Branch)
+	}
+	if s.BaseBranch != "develop" {
+		t.Fatalf("session.BaseBranch = %q, want %q (the review feature needs this to diff against the right ref)", s.BaseBranch, "develop")
+	}
+	wantWt := filepath.Join(a.WorktreeRoot, "demo", "feat")
+	found := false
+	for _, c := range git.calls {
+		if strings.Join(c, " ") == "@/repo worktree add "+wantWt+" -b feat origin/develop" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no worktree add cut from the overridden base branch; calls = %v", git.calls)
+	}
+}
+
 func TestCreateSessionExistingBranch(t *testing.T) {
 	a, git, tm, _ := newTestApp(t, gitProject("/repo"))
 	tm.out["list-panes -t ="+TmuxSessionName("demo:login-page", "login-page")+": -F #{pane_id}"] = "%0\n"
 
-	s, _, err := a.CreateSession("demo", "", "", "feature/login-page", "", true, false)
+	s, _, err := a.CreateSession("demo", "", "", "feature/login-page", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.Name != "login-page" || s.Branch != "feature/login-page" || s.NewBranch {
 		t.Fatalf("session = %+v", s)
+	}
+	if s.BaseBranch != "" {
+		t.Fatalf("session.BaseBranch = %q, want empty — a resumed branch has no base to diff against", s.BaseBranch)
 	}
 	wantWt := filepath.Join(a.WorktreeRoot, "demo", "login-page")
 	found := false
@@ -547,7 +823,7 @@ func TestCreateSessionUnknownBranchFailsWithoutCreating(t *testing.T) {
 	noBranch(git, "merchant-physical")
 	git.failOn["rev-parse --verify --quiet refs/remotes/origin/merchant-physical"] = true
 
-	_, _, err := a.CreateSession("demo", "", "", "merchant-physical", "", true, false)
+	_, _, err := a.CreateSession("demo", "", "", "merchant-physical", "", true, boolPtr(false), "", "", "")
 	if err == nil {
 		t.Fatal("want an error for a branch that doesn't exist")
 	}
@@ -570,7 +846,7 @@ func TestCreateSessionExistingBranchRemovesStaleCleanWorktree(t *testing.T) {
 	staleWT := filepath.Join(a.WorktreeRoot, "demo", "old-login-page")
 	git.out["worktree list --porcelain"] = "worktree " + staleWT + "\nbranch refs/heads/feature/login-page\n"
 
-	s, _, err := a.CreateSession("demo", "", "", "feature/login-page", "", true, false)
+	s, _, err := a.CreateSession("demo", "", "", "feature/login-page", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -607,7 +883,7 @@ func TestCreateSessionExistingBranchLiveStaleWorktreeBlocks(t *testing.T) {
 	}
 	// has-session succeeds by default (no failOn entry), simulating a still-live pane.
 
-	_, _, err := a.CreateSession("demo", "", "", "feature/login-page", "", true, false)
+	_, _, err := a.CreateSession("demo", "", "", "feature/login-page", "", true, boolPtr(false), "", "", "")
 	if err == nil {
 		t.Fatal("expected error for stale worktree still in use by a live tmux session")
 	}
@@ -627,7 +903,7 @@ func TestCreateSessionExistingBranchDirtyStaleWorktreeBlocks(t *testing.T) {
 	git.out["worktree list --porcelain"] = "worktree " + staleWT + "\nbranch refs/heads/feature/login-page\n"
 	git.out["status --porcelain"] = " M dirty/file.go\n"
 
-	_, _, err := a.CreateSession("demo", "", "", "feature/login-page", "", true, false)
+	_, _, err := a.CreateSession("demo", "", "", "feature/login-page", "", true, boolPtr(false), "", "", "")
 	if err == nil {
 		t.Fatal("expected error for dirty stale worktree")
 	}
@@ -645,14 +921,14 @@ func TestCreateSessionOpenCodePorts(t *testing.T) {
 	noBranch(git, "one")
 	noBranch(git, "two")
 
-	s1, _, err := a.CreateSession("demo", "one", "opencode", "", "", true, false)
+	s1, _, err := a.CreateSession("demo", "one", "opencode", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s1.AgentPort != 4096 {
 		t.Fatalf("port = %d", s1.AgentPort)
 	}
-	s2, _, err := a.CreateSession("demo", "two", "opencode", "", "", true, false)
+	s2, _, err := a.CreateSession("demo", "two", "opencode", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -665,6 +941,22 @@ func TestCreateSessionOpenCodePorts(t *testing.T) {
 	}
 }
 
+// TestNextOpenCodePortAvoidsCollisionBeforePersisting guards a TOCTOU race:
+// CreateSession doesn't persist a session's AgentPort until well after
+// nextOpenCodePort is called (worktree creation and tmux/terminal setup run
+// in between), so two concurrent CreateSession calls for opencode sessions
+// would otherwise both read the same "highest port so far" from the Store
+// and collide. nextOpenCodePort must remember a port the moment it hands it
+// out, not just infer availability from what's already persisted.
+func TestNextOpenCodePortAvoidsCollisionBeforePersisting(t *testing.T) {
+	a, _, _, _ := newTestApp(t, gitProject("/repo"))
+	p1 := a.nextOpenCodePort()
+	p2 := a.nextOpenCodePort()
+	if p1 == p2 {
+		t.Fatalf("nextOpenCodePort returned %d twice before either session was persisted", p1)
+	}
+}
+
 func TestCreateSessionPlainProject(t *testing.T) {
 	projects := map[string]config.Project{
 		"notes": {Kind: "plain", Repo: "/notes"},
@@ -672,11 +964,11 @@ func TestCreateSessionPlainProject(t *testing.T) {
 	a, git, tm, _ := newTestApp(t, projects)
 	tm.out["list-panes -t ="+TmuxSessionName("notes:todo", "todo")+": -F #{pane_id}"] = "%0\n"
 
-	s, _, err := a.CreateSession("notes", "todo", "", "", "", true, false)
+	s, _, err := a.CreateSession("notes", "todo", "", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.WorktreePath != "/notes" || s.Branch != "" || s.NewBranch {
+	if s.WorktreePath != "/notes" || s.Branch != "" || s.NewBranch || s.BaseBranch != "" {
 		t.Fatalf("session = %+v", s)
 	}
 	if len(git.calls) != 0 {
@@ -686,7 +978,7 @@ func TestCreateSessionPlainProject(t *testing.T) {
 
 func TestCreateSessionRejectsBogusAgent(t *testing.T) {
 	a, _, _, _ := newTestApp(t, gitProject("/repo"))
-	if _, _, err := a.CreateSession("demo", "feat", "clude", "", "", true, false); err == nil {
+	if _, _, err := a.CreateSession("demo", "feat", "clude", "", "", true, boolPtr(false), "", "", ""); err == nil {
 		t.Fatal("bogus agent must be rejected, not silently coerced to claude")
 	}
 }
@@ -699,7 +991,7 @@ func TestCreateSessionRejectsProjectDefaultBogusAgent(t *testing.T) {
 		"demo": {Kind: "git", Repo: "/repo", BaseBranch: "main", Agent: "clude"},
 	}
 	a, _, _, _ := newTestApp(t, projects)
-	if _, _, err := a.CreateSession("demo", "feat", "", "", "", true, false); err == nil {
+	if _, _, err := a.CreateSession("demo", "feat", "", "", "", true, boolPtr(false), "", "", ""); err == nil {
 		t.Fatal("bogus project-level agent must be rejected")
 	}
 }
@@ -707,24 +999,24 @@ func TestCreateSessionRejectsProjectDefaultBogusAgent(t *testing.T) {
 func TestCreateSessionErrors(t *testing.T) {
 	a, git, tm, term := newTestApp(t, gitProject("/repo"))
 
-	if _, _, err := a.CreateSession("nope", "x", "", "", "", true, false); err == nil {
+	if _, _, err := a.CreateSession("nope", "x", "", "", "", true, boolPtr(false), "", "", ""); err == nil {
 		t.Fatal("unknown project must fail")
 	}
-	if _, _, err := a.CreateSession("demo", "", "", "", "", true, false); err == nil {
+	if _, _, err := a.CreateSession("demo", "", "", "", "", true, boolPtr(false), "", "", ""); err == nil {
 		t.Fatal("empty name+branch must fail")
 	}
 
 	// git worktree add fails
 	noBranch(git, "bad")
 	git.failOn["worktree add "+filepath.Join(a.WorktreeRoot, "demo", "bad")+" -b bad origin/main"] = true
-	if _, _, err := a.CreateSession("demo", "bad", "", "", "", true, false); err == nil || !strings.Contains(err.Error(), "git worktree add") {
+	if _, _, err := a.CreateSession("demo", "bad", "", "", "", true, boolPtr(false), "", "", ""); err == nil || !strings.Contains(err.Error(), "git worktree add") {
 		t.Fatalf("err = %v", err)
 	}
 
 	// tmux new-session fails
 	noBranch(git, "tmuxfail")
-	tm.failOn["new-session -d -s "+TmuxSessionName("demo:tmuxfail", "tmuxfail")+" -c "+filepath.Join(a.WorktreeRoot, "demo", "tmuxfail")+" -n tmuxfail"] = true
-	if _, _, err := a.CreateSession("demo", "tmuxfail", "", "", "", true, false); err == nil || !strings.Contains(err.Error(), "tmux new-session") {
+	tm.failOn["new-session -d -s "+TmuxSessionName("demo:tmuxfail", "tmuxfail")+" -c "+filepath.Join(a.WorktreeRoot, "demo", "tmuxfail")+" -n 🔥 tmuxfail"] = true
+	if _, _, err := a.CreateSession("demo", "tmuxfail", "", "", "", true, boolPtr(false), "", "", ""); err == nil || !strings.Contains(err.Error(), "tmux new-session") {
 		t.Fatalf("err = %v", err)
 	}
 
@@ -735,7 +1027,7 @@ func TestCreateSessionErrors(t *testing.T) {
 	termfailTn := TmuxSessionName("demo:termfail", "termfail")
 	tm.out["list-panes -t ="+termfailTn+": -F #{pane_id}"] = "%0\n"
 	term.err = errors.New("no terminal")
-	s, hint, err := a.CreateSession("demo", "termfail", "", "", "", true, false)
+	s, hint, err := a.CreateSession("demo", "termfail", "", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -758,7 +1050,7 @@ func TestCreateSessionErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.Store.Path = filepath.Join(blocker, "sessions.json")
-	_, hint, err = a.CreateSession("demo", "storefail", "", "", "", true, false)
+	_, hint, err = a.CreateSession("demo", "storefail", "", "", "", true, boolPtr(false), "", "", "")
 	if err == nil || !strings.Contains(err.Error(), "store:") {
 		t.Fatalf("err = %v", err)
 	}
@@ -950,6 +1242,31 @@ func TestOpenSessionCwdMismatchRecreates(t *testing.T) {
 	}
 }
 
+// A worktree reached through a symlink is not a cwd mismatch: tmux reports
+// the pane's cwd resolved, so comparing it verbatim against the stored path
+// killed a live session (and its agent) on every open. Common on macOS,
+// where /tmp and /var are symlinks, and anywhere the projects directory is.
+func TestOpenSessionSymlinkedWorktreeIsNotAMismatch(t *testing.T) {
+	a, _, tm, _ := newTestApp(t, gitProject("/repo"))
+	real := filepath.Join(t.TempDir(), "real")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	_ = a.Store.Put(session.Session{ID: "demo:feat", Project: "demo", Name: "feat", TmuxSession: "moomux-feat", WorktreePath: link})
+	tm.out["list-panes -t =moomux-feat: -F #{pane_current_path}"] = real + "\n"
+
+	if _, err := a.OpenSession("demo:feat"); err != nil {
+		t.Fatal(err)
+	}
+	if tm.called("kill-session") {
+		t.Fatalf("live session killed over a symlinked worktree path; calls = %v", tm.calls)
+	}
+}
+
 func TestOpenSessionDeadRecreatesWithAgent(t *testing.T) {
 	a, _, tm, _ := newTestApp(t, gitProject("/repo"))
 	_ = a.Store.Put(session.Session{
@@ -1059,7 +1376,7 @@ func TestOpenSessionRepairsMissingKillCommand(t *testing.T) {
 	}
 }
 
-func TestOpenSessionRepairsMissingKillPrompt(t *testing.T) {
+func TestOpenSessionRepairsMissingCodexKillCommand(t *testing.T) {
 	a, _, tm, term := newTestApp(t, gitProject("/repo"))
 	home, _ := os.UserHomeDir()
 	term.hint = "run: tmux attach -t moomux-feat"
@@ -1070,12 +1387,16 @@ func TestOpenSessionRepairsMissingKillPrompt(t *testing.T) {
 	})
 	tm.out["list-panes -t =moomux-feat: -F #{pane_current_path}"] = wt + "\n"
 
-	// Session predates the /kill feature: no ~/.codex/prompts/kill.md yet.
+	// Session predates the Codex command: neither the legacy prompt nor current
+	// skill exists yet.
 	if _, err := a.OpenSession("demo:feat"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".codex", "prompts", "kill.md")); err != nil {
-		t.Fatalf("expected OpenSession to backfill ~/.codex/prompts/kill.md: %v", err)
+		t.Fatalf("expected OpenSession to backfill legacy ~/.codex/prompts/kill.md: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", "kill", "SKILL.md")); err != nil {
+		t.Fatalf("expected OpenSession to backfill current ~/.agents/skills/kill/SKILL.md: %v", err)
 	}
 }
 
@@ -1165,6 +1486,28 @@ func TestKillTmuxClosesTerminalTab(t *testing.T) {
 	}
 }
 
+func TestKillTmuxKillsSessionBeforeClosingTerminalTab(t *testing.T) {
+	a, _, tm, _ := newTestApp(t, gitProject("/repo"))
+	var events []string
+	tm.events = &events
+	a.Terminal = &fakeCloseTabTerminal{events: &events}
+	_ = a.Store.Put(session.Session{
+		ID: "demo:a", Project: "demo", Name: "a", TmuxSession: "moomux-a", TermTabID: "tab-7",
+	})
+
+	if err := a.KillTmux("demo:a"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"tmux has-session -t =moomux-a",
+		"tmux kill-session -t =moomux-a",
+		"close tab-7",
+	}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("park events = %q, want %q", events, want)
+	}
+}
+
 func TestKillTmuxSkipsTabCloseWhenNoTabRecorded(t *testing.T) {
 	a, _, _, _ := newTestApp(t, gitProject("/repo"))
 	fakeTerm := &fakeCloseTabTerminal{}
@@ -1176,6 +1519,75 @@ func TestKillTmuxSkipsTabCloseWhenNoTabRecorded(t *testing.T) {
 	}
 	if len(fakeTerm.closed) != 0 {
 		t.Fatalf("want no close attempt without a recorded tab, got %v", fakeTerm.closed)
+	}
+}
+
+// TestKillTmuxClosesTerminalTabDespiteTmuxError guards against a session
+// whose tmux side genuinely errors (not just "already gone") leaking its
+// terminal tab open forever: the tab-close/TermTabID cleanup must still run,
+// with the tmux error still surfaced to the caller.
+func TestKillTmuxClosesTerminalTabDespiteTmuxError(t *testing.T) {
+	a, _, tm, _ := newTestApp(t, gitProject("/repo"))
+	tm.failWithOutput["has-session -t =moomux-a"] = "lost server\n"
+	fakeTerm := &fakeCloseTabTerminal{}
+	a.Terminal = fakeTerm
+	_ = a.Store.Put(session.Session{
+		ID: "demo:a", Project: "demo", Name: "a", TmuxSession: "moomux-a", TermTabID: "tab-7",
+	})
+
+	if err := a.KillTmux("demo:a"); err == nil {
+		t.Fatal("want the tmux error surfaced, got nil")
+	}
+	if len(fakeTerm.closed) != 1 || fakeTerm.closed[0] != "tab-7" {
+		t.Fatalf("want tab-7 closed despite the tmux error, got %v", fakeTerm.closed)
+	}
+	s, _ := a.Store.Get("demo:a")
+	if s.TermTabID != "" {
+		t.Fatalf("want tab id cleared despite the tmux error, got %q", s.TermTabID)
+	}
+}
+
+// TestWorktreeStatusFetchesOnceUntilStale guards gitFetchStaleAfter: without
+// it, WorktreeStatus's ahead/unpushed counts would only ever reflect
+// whatever was fetched at session-creation time, never picking up a push
+// made elsewhere (another worktree, a merged PR) — see dueForFetch.
+func TestWorktreeStatusFetchesOnceUntilStale(t *testing.T) {
+	a, git, _, _ := newTestApp(t, gitProject("/repo"))
+	_ = a.Store.Put(session.Session{
+		ID: "demo:feat", Project: "demo", Name: "feat", Branch: "feat",
+		WorktreePath: "/wt/feat",
+	})
+
+	fetchCalls := func() int {
+		n := 0
+		for _, c := range git.calls {
+			if len(c) >= 4 && c[1] == "fetch" && c[2] == "origin" && c[3] == "feat" {
+				n++
+			}
+		}
+		return n
+	}
+
+	if _, _, ok := a.WorktreeStatus("demo:feat"); !ok {
+		t.Fatal("WorktreeStatus not ok")
+	}
+	if n := fetchCalls(); n != 1 {
+		t.Fatalf("fetch calls after first check = %d, want 1", n)
+	}
+
+	if _, _, ok := a.WorktreeStatus("demo:feat"); !ok {
+		t.Fatal("WorktreeStatus not ok")
+	}
+	if n := fetchCalls(); n != 1 {
+		t.Fatalf("fetch calls after second immediate check = %d, want still 1 (not due yet)", n)
+	}
+
+	a.lastFetch["demo:feat"] = time.Now().Add(-gitFetchStaleAfter - time.Second)
+	if _, _, ok := a.WorktreeStatus("demo:feat"); !ok {
+		t.Fatal("WorktreeStatus not ok")
+	}
+	if n := fetchCalls(); n != 2 {
+		t.Fatalf("fetch calls after threshold elapsed = %d, want 2", n)
 	}
 }
 
@@ -1829,7 +2241,7 @@ func TestSetSessionStatusTitle(t *testing.T) {
 	}
 	wantCalls := [][]string{
 		{"display-message", "-p", "-t", "=moomux-a:", "#{window_name}"},
-		{"rename-window", "-t", "=moomux-a:", "● a"},
+		{"rename-window", "-t", "=moomux-a:", "● 🔥 a"},
 	}
 	if !reflect.DeepEqual(tm.calls, wantCalls) {
 		t.Fatalf("calls = %v, want %v", tm.calls, wantCalls)
@@ -1877,7 +2289,7 @@ func TestRenameSession(t *testing.T) {
 	if err := a.Store.Put(s); err != nil {
 		t.Fatal(err)
 	}
-	tm.out["display-message -p -t =moomux-a: #{window_name}"] = "a"
+	tm.out["display-message -p -t =moomux-a: #{window_name}"] = "🔥 a"
 	tm.calls = nil
 
 	got, err := a.RenameSession(s.ID, "b")
@@ -1892,7 +2304,7 @@ func TestRenameSession(t *testing.T) {
 	wantCalls := [][]string{
 		{"has-session", "-t", "=moomux-a"},
 		{"display-message", "-p", "-t", "=moomux-a:", "#{window_name}"},
-		{"rename-window", "-t", "=moomux-a:", "b"},
+		{"rename-window", "-t", "=moomux-a:", "🔥 b"},
 		{"rename-session", "-t", "=moomux-a", wantTmux},
 	}
 	if !reflect.DeepEqual(tm.calls, wantCalls) {
@@ -2021,13 +2433,13 @@ func TestValidateProjectErrors(t *testing.T) {
 	}
 	for _, c := range cases {
 		p := c.p
-		if err := a.validateProject(c.name, &p); err == nil {
-			t.Errorf("validateProject(%q, %+v) should fail", c.name, c.p)
+		if err := a.validateProjectLocked(c.name, &p); err == nil {
+			t.Errorf("validateProjectLocked(%q, %+v) should fail", c.name, c.p)
 		}
 	}
 	// home expansion + base branch default
 	p := config.Project{Repo: "~/somewhere"}
-	if err := a.validateProject("ok", &p); err != nil {
+	if err := a.validateProjectLocked("ok", &p); err != nil {
 		t.Fatal(err)
 	}
 	home, _ := os.UserHomeDir()
@@ -2145,10 +2557,10 @@ func TestCreateSessionDuplicateName(t *testing.T) {
 	a, git, tm, _ := newTestApp(t, gitProject("/repo"))
 	tm.out["list-panes -t =moomux-feat: -F #{pane_id}"] = "%0\n"
 	noBranch(git, "feat")
-	if _, _, err := a.CreateSession("demo", "feat", "", "", "", true, false); err != nil {
+	if _, _, err := a.CreateSession("demo", "feat", "", "", "", true, boolPtr(false), "", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := a.CreateSession("demo", "feat", "", "", "", true, false)
+	_, _, err := a.CreateSession("demo", "feat", "", "", "", true, boolPtr(false), "", "", "")
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("err = %v", err)
 	}
@@ -2165,7 +2577,7 @@ func TestCreateSessionTrustsClaudeWorktree(t *testing.T) {
 	tm.out["list-panes -t =moomux-feat: -F #{pane_id}"] = "%0\n"
 	noBranch(git, "feat")
 
-	s, _, err := a.CreateSession("demo", "feat", "claude", "", "", true, false)
+	s, _, err := a.CreateSession("demo", "feat", "claude", "", "", true, boolPtr(false), "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2202,7 +2614,7 @@ func TestCreateSessionDoesNotTrustNonClaudeAgent(t *testing.T) {
 	tm.out["list-panes -t =moomux-feat: -F #{pane_id}"] = "%0\n"
 	noBranch(git, "feat")
 
-	if _, _, err := a.CreateSession("demo", "feat", "codex", "", "", true, false); err != nil {
+	if _, _, err := a.CreateSession("demo", "feat", "codex", "", "", true, boolPtr(false), "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2310,7 +2722,7 @@ func TestDeleteSessionOrphanedProjectKeepsRealFolder(t *testing.T) {
 	}
 }
 
-func TestStartFirstPromptWaitsForPaneThenSendsLiteralTextThenSeparateEnter(t *testing.T) {
+func TestStartFirstPromptWaitsForPaneThenPastesTextThenSeparateEnter(t *testing.T) {
 	a, _, tm, _ := newTestApp(t, map[string]config.Project{})
 	// A transition from the pre-launch shell to the agent's idle screen —
 	// see waitForPaneReady's doc comment for why a constant value here
@@ -2328,15 +2740,19 @@ func TestStartFirstPromptWaitsForPaneThenSendsLiteralTextThenSeparateEnter(t *te
 	if !tm.called("capture-pane -p -t =demo:x:") {
 		t.Fatalf("did not poll pane readiness before sending: %v", tm.calls)
 	}
-	// Text and Enter must be two separate send-keys calls — bundling them
-	// into one is what a terminal-raw-mode TUI's paste detection swallows
-	// (see Client.SendLiteral's doc comment).
-	if tm.called("send-keys -t =demo:x: do the thing Enter") {
-		t.Fatalf("text and Enter must not be sent in the same call: %v", tm.calls)
+	// The prompt must be delivered via tmux's paste buffer (load-buffer +
+	// paste-buffer), not send-keys -l: send-keys submits text as individual
+	// synthetic keystrokes, so a multi-line prompt's embedded newlines each
+	// arrive as their own Enter — paste-buffer hands the terminal one atomic
+	// block instead (see Client.PasteText's doc comment).
+	if !tm.called("load-buffer do the thing") {
+		t.Fatalf("did not stage the prompt via load-buffer: %v", tm.calls)
 	}
-	if !tm.called("send-keys -t =demo:x: -l -- do the thing") {
-		t.Fatalf("did not type the prompt as a literal, Enter-less call: %v", tm.calls)
+	if !tm.called("paste-buffer -p -d -t =demo:x:") {
+		t.Fatalf("did not paste the staged buffer into the pane: %v", tm.calls)
 	}
+	// Enter must be a separate step from the paste — bundling it in is what a
+	// terminal-raw-mode TUI's paste detection swallows.
 	if !tm.called("send-keys -t =demo:x: Enter") {
 		t.Fatalf("did not send a separate Enter to actually start the work: %v", tm.calls)
 	}
@@ -2370,7 +2786,7 @@ func TestStartFirstPromptWaitsForActualPaneChangeBeforeStabilizing(t *testing.T)
 		if sendIdx == -1 && strings.HasPrefix(joined, "capture-pane") {
 			captureBeforeSend++
 		}
-		if strings.HasPrefix(joined, "send-keys -t =demo:x: -l --") {
+		if strings.HasPrefix(joined, "paste-buffer") {
 			sendIdx = i
 			break
 		}
@@ -2389,8 +2805,8 @@ func TestStartFirstPromptWaitsForActualPaneChangeBeforeStabilizing(t *testing.T)
 
 // TestStartFirstPromptWaitsForPaneToSettleAfterTypingBeforePressingEnter
 // guards the same class of race waitForPaneReady already guards against
-// before typing, but on the other side of SendLiteral: a CLI that's still
-// re-rendering the just-typed text (e.g. collapsing a multi-line paste, or
+// before typing, but on the other side of PasteText: a CLI that's still
+// re-rendering the just-pasted text (e.g. collapsing a multi-line paste, or
 // just a slower machine) can still be changing when a fixed, unconditional
 // delay elapses, and pressing Enter into that mid-render state is exactly
 // what swallows it instead of submitting. Enter must wait for the pane to
@@ -2413,7 +2829,7 @@ func TestStartFirstPromptWaitsForPaneToSettleAfterTypingBeforePressingEnter(t *t
 	for i, c := range tm.calls {
 		joined := strings.Join(c, " ")
 		switch {
-		case strings.HasPrefix(joined, "send-keys -t =demo:x: -l --"):
+		case strings.HasPrefix(joined, "paste-buffer"):
 			sendIdx = i
 		case joined == "send-keys -t =demo:x: Enter":
 			enterIdx = i
@@ -2472,6 +2888,60 @@ func TestStartFirstPromptRetriesEnterWhenPromptStillShowing(t *testing.T) {
 	}
 }
 
+// TestStartFirstPromptRefusesStuckSSHPassphrasePrompt reproduces the
+// incident this guards against: a worktree-create userscript (or the
+// agent's launch command itself) needs to auth over SSH, a stale
+// SSH_AUTH_SOCK forces a fallback to an interactive tty passphrase prompt,
+// and that prompt sits there looking exactly as "stable" as an idle agent
+// input box. StartFirstPrompt must recognize it and refuse to type the task
+// text into it — which would otherwise get consumed character-by-character
+// as wrong passphrase attempts — rather than silently reporting success.
+func TestStartFirstPromptRefusesStuckSSHPassphrasePrompt(t *testing.T) {
+	a, _, tm, _ := newTestApp(t, map[string]config.Project{})
+	tm.seq = map[string][]string{
+		"capture-pane -p -t =demo:x:": {
+			"$ claude",
+			"Enter passphrase for key '/home/user/.ssh/id_ed25519':",
+			"Enter passphrase for key '/home/user/.ssh/id_ed25519':",
+		},
+	}
+
+	err := a.StartFirstPrompt("demo:x", "do the thing", true)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "passphrase") {
+		t.Fatalf("error %q does not mention the stuck prompt", err)
+	}
+	if tm.called("load-buffer") || tm.called("paste-buffer") {
+		t.Fatalf("must not type the prompt into a stuck passphrase prompt: %v", tm.calls)
+	}
+}
+
+// TestStartFirstPromptRefusesWhenPromptAppearsAfterTyping guards the case
+// where the pane looked like an idle agent when typing started, but an
+// interactive prompt (e.g. a delayed SSH auth from a slower userscript)
+// shows up by the time the typed text has settled — StartFirstPrompt must
+// not press Enter (which would submit another failed credential attempt)
+// and must report the failure instead of silently declaring success.
+func TestStartFirstPromptRefusesWhenPromptAppearsAfterTyping(t *testing.T) {
+	a, _, tm, _ := newTestApp(t, map[string]config.Project{})
+	tm.seq = map[string][]string{
+		"capture-pane -p -t =demo:x:": {
+			"$ claude", "agent-idle", "agent-idle", // pre-type: looks ready
+			"Password:", "Password:", "Password:", // post-type: actually a stuck prompt
+		},
+	}
+
+	err := a.StartFirstPrompt("demo:x", "do the thing", true)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if tm.called("send-keys -t =demo:x: Enter") {
+		t.Fatalf("must not press Enter into a stuck prompt discovered after typing: %v", tm.calls)
+	}
+}
+
 func TestStartFirstPromptNoopOnEmptyPrompt(t *testing.T) {
 	a, _, tm, _ := newTestApp(t, map[string]config.Project{})
 	if err := a.StartFirstPrompt("demo:x", "", true); err != nil {
@@ -2495,8 +2965,8 @@ func TestStartFirstPromptSkipsEnterWhenAutoSubmitFalse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !tm.called("send-keys -t =demo:x: -l -- do the thing") {
-		t.Fatalf("did not type the prompt: %v", tm.calls)
+	if !tm.called("load-buffer do the thing") || !tm.called("paste-buffer -p -d -t =demo:x:") {
+		t.Fatalf("did not paste the prompt: %v", tm.calls)
 	}
 	if tm.called("send-keys -t =demo:x: Enter") {
 		t.Fatalf("Enter must not be pressed when autoSubmit is false: %v", tm.calls)
@@ -2513,4 +2983,69 @@ func mustGit(t *testing.T, dir string, args ...string) {
 
 func runGit(dir string, args ...string) (string, error) {
 	return gitwt.ExecRunner().Run(dir, args...)
+}
+
+// TestStartFirstPromptWaitsForBracketedPasteBeforePasting guards the ordering
+// that keeps a prompt from half-landing: the pane can look "stable" during an
+// earlier phase of the agent's startup, and pasting then drops most of the
+// text on the floor, because nothing is reading the tty yet. The agent turning
+// bracketed paste on is the signal that it is, so no load-buffer/paste-buffer
+// may happen while the flag is still 0.
+func TestStartFirstPromptWaitsForBracketedPasteBeforePasting(t *testing.T) {
+	a, _, tm, _ := newTestApp(t, map[string]config.Project{})
+	tm.seq = map[string][]string{
+		"capture-pane -p -t =demo:x:": {"$ claude", "agent-idle", "agent-idle"},
+		// Off while the agent is still starting up, on once its input layer
+		// is installed.
+		"display-message -p -t =demo:x: #{bracket_paste_flag}": {"0", "0", "1"},
+	}
+
+	if err := a.StartFirstPrompt("demo:x", "do the thing", true); err != nil {
+		t.Fatal(err)
+	}
+
+	flagPolls := 0
+	for _, c := range tm.calls {
+		joined := strings.Join(c, " ")
+		if joined == "display-message -p -t =demo:x: #{bracket_paste_flag}" {
+			flagPolls++
+		}
+		if strings.HasPrefix(joined, "load-buffer") && flagPolls < 3 {
+			t.Fatalf("pasted after only %d bracketed-paste polls, before the pane was accepting input: %v", flagPolls, tm.calls)
+		}
+	}
+	if flagPolls == 0 {
+		t.Fatalf("never checked whether the pane was accepting a paste: %v", tm.calls)
+	}
+}
+
+// TestStartFirstPromptRetriesBracketedPasteErrorInsteadOfPastingEarly guards
+// against treating a transient tmux error (e.g. right after window creation,
+// before the pane is fully up) the same as "bracketed paste is on": it must
+// keep polling, not paste into a pane whose input layer isn't ready.
+func TestStartFirstPromptRetriesBracketedPasteErrorInsteadOfPastingEarly(t *testing.T) {
+	a, _, tm, _ := newTestApp(t, map[string]config.Project{})
+	tm.seq = map[string][]string{
+		"capture-pane -p -t =demo:x:": {"$ claude", "agent-idle", "agent-idle"},
+	}
+	tm.failFirstN["display-message -p -t =demo:x: #{bracket_paste_flag}"] = 2
+	tm.out["display-message -p -t =demo:x: #{bracket_paste_flag}"] = "1"
+
+	if err := a.StartFirstPrompt("demo:x", "do the thing", false); err != nil {
+		t.Fatal(err)
+	}
+
+	flagPolls := 0
+	for _, c := range tm.calls {
+		joined := strings.Join(c, " ")
+		if joined == "display-message -p -t =demo:x: #{bracket_paste_flag}" {
+			flagPolls++
+		}
+		if strings.HasPrefix(joined, "load-buffer") && flagPolls < 3 {
+			t.Fatalf("pasted after only %d bracketed-paste polls (2 of which errored), before the pane was confirmed ready: %v", flagPolls, tm.calls)
+		}
+	}
+	if flagPolls < 3 {
+		t.Fatalf("want at least 3 polls (2 errors + 1 success), got %d: %v", flagPolls, tm.calls)
+	}
 }

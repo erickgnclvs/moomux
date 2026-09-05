@@ -1,0 +1,54 @@
+=== 40x20 ===
+╭──────────────────────────────────────╮
+│                                      │
+│                                      │
+│  agent:  claude  [codex]  opencode   │
+│                                      │
+│  model:  ‹ [default] ›               │
+│                                      │
+│  thinking:  ‹ [default] ›            │
+│                                      │
+│  dangerous:  [off]                   │
+│                                      │
+│  open in background:  [off]          │
+│                                      │
+│  auto-submit:  [off]                 │
+│                                      │
+│  optional — passed to codex as -c    │
+│  model_reasoning_effort; "default"   │
+│  tab/↑↓ fields  ←→ choose  enter  e  │
+│                                      │
+╰──────────────────────────────────────╯
+=== 100x32 ===
+           ╭────────────────────────────────────────────────────────────────────────────╮           
+           │                                                                            │           
+           │  > existing branch (optional)                                              │           
+           │                                                                            │           
+           │  > base branch (optional, defaults to pr…                                  │           
+           │                                                                            │           
+           │  > first prompt (optional)                                                 │           
+           │  >                                                                         │           
+           │  >                                                                         │           
+           │  >                                                                         │           
+           │                                                                            │           
+           │  > ticket url (optional)                                                   │           
+           │                                                                            │           
+           │  > PR url (optional)                                                       │           
+           │                                                                            │           
+           │  agent:  claude  [codex]  opencode                                         │           
+           │                                                                            │           
+           │  model:  [default]  gpt-5.6-sol  gpt-5.6-terra  gpt-5.6-luna               │           
+           │                                                                            │           
+           │  thinking:  [default]  minimal  low  medium  high  xhigh                   │           
+           │                                                                            │           
+           │  dangerous:  [off]                                                         │           
+           │                                                                            │           
+           │  open in background:  [off]                                                │           
+           │                                                                            │           
+           │  auto-submit:  [off]                                                       │           
+           │                                                                            │           
+           │  optional — passed to codex as -c model_reasoning_effort; "default" omits  │           
+           │  it                                                                        │           
+           │  tab/↑↓ fields  ←→ choose  enter  esc cancel                               │           
+           │                                                                            │           
+           ╰────────────────────────────────────────────────────────────────────────────╯           

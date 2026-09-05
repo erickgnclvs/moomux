@@ -4,6 +4,7 @@ package tmux
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -68,15 +69,20 @@ func exactWindow(name string) string { return "=" + name + ":" }
 
 // HasSession reports whether tmux session `name` exists.
 func (c *Client) HasSession(name string) (bool, error) {
-	_, err := c.Runner.Run("has-session", "-t", Exact(name))
+	out, err := c.Runner.Run("has-session", "-t", Exact(name))
 	if err == nil {
 		return true, nil
 	}
 	var exitErr interface{ ExitCode() int }
-	if errors.As(err, &exitErr) {
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		return false, err
+	}
+	diagnostic := strings.TrimSpace(out)
+	lower := strings.ToLower(diagnostic)
+	if diagnostic == "" || strings.Contains(lower, "can't find session") || strings.Contains(lower, "no server running") {
 		return false, nil
 	}
-	return false, err
+	return false, fmt.Errorf("%s: %w", diagnostic, err)
 }
 
 // LiveSessions returns the set of currently running tmux session names via a
@@ -204,33 +210,82 @@ func (c *Client) NewSession(name, cwd, cmd, windowName string) error {
 	return nil
 }
 
-// SendKeys types text into session's active pane followed by Enter. NewSession
-// leaves the left (agent) pane active, so this reaches the agent's input.
-func (c *Client) SendKeys(session, text string) error {
-	_, err := c.Runner.Run("send-keys", "-t", exactWindow(session), text, "Enter")
-	return err
-}
-
 // PressEnter sends a bare Enter keypress to session's active pane, with no
-// text — must be its own send-keys call (see SendLiteral's doc comment for
-// why bundling it with the text is unreliable).
+// text — must be its own step (see PasteText's doc comment for why bundling
+// it with the text is unreliable).
 func (c *Client) PressEnter(session string) error {
 	_, err := c.Runner.Run("send-keys", "-t", exactWindow(session), "Enter")
 	return err
 }
 
-// SendLiteral types text into session's active pane with no trailing Enter
-// and no interpretation of text as tmux key names. Deliberately not bundled
-// with Enter in the same send-keys call: many terminal-raw-mode TUIs (Ink,
-// readline) detect "paste" by how a chunk of input arrives, and a whole
-// text+Enter burst delivered in one tmux command commonly gets swallowed as
-// pasted content instead of text-then-submit — the Enter never registers as
-// a keypress. Sending text and Enter as separate send-keys invocations (see
-// PressEnter), with a short gap between them, is the pattern that actually
-// submits.
-func (c *Client) SendLiteral(session, text string) error {
-	_, err := c.Runner.Run("send-keys", "-t", exactWindow(session), "-l", "--", text)
+// PasteText delivers text into session's active pane via tmux's paste
+// buffer (load-buffer + paste-buffer) rather than send-keys, with no
+// trailing Enter. Two problems with send-keys -l made this necessary:
+//
+//  1. send-keys -l submits text as a sequence of individual synthetic
+//     keystrokes, not a paste — a multi-line prompt's embedded newlines each
+//     arrive as their own Enter keypress, so the receiving CLI can submit
+//     (and start acting on) an incomplete prefix of the prompt partway
+//     through instead of receiving the whole thing as one entry.
+//  2. Long text passed as a single argv argument can also just exceed
+//     tmux/exec argument-length limits, silently truncating the prompt.
+//
+// paste-buffer instead hands the terminal one atomic block, delimited with
+// bracketed-paste markers when the other end asked for them, which tmux (and
+// any bracketed-paste-aware readline/TUI on the other end) delivers and
+// renders as a single paste — embedded newlines can't be mistaken for
+// separate Enter presses. Deliberately still not bundled with Enter: many
+// terminal-raw-mode TUIs (Ink, readline) detect "paste" by how a chunk of
+// input arrives, and a whole text+Enter burst delivered together commonly
+// gets swallowed as pasted content instead of text-then-submit — the Enter
+// never registers as a keypress. Sending text and Enter as separate steps
+// (see PressEnter), with a short gap between them, is the pattern that
+// actually submits.
+func (c *Client) PasteText(session, text string) error {
+	f, err := os.CreateTemp("", "moomux-paste-*")
+	if err != nil {
+		return fmt.Errorf("paste text: %w", err)
+	}
+	tmpPath := f.Name()
+	defer os.Remove(tmpPath)
+	_, writeErr := f.WriteString(text)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return fmt.Errorf("paste text: %w", writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("paste text: %w", closeErr)
+	}
+	if _, err := c.Runner.Run("load-buffer", tmpPath); err != nil {
+		return err
+	}
+	// -p wraps the text in bracketed-paste control codes (ESC[200~ / ESC[201~)
+	// when the receiving application has asked for them, which is what makes
+	// the paste unambiguous: without it the agent CLI only sees a burst of
+	// ordinary input and has to guess it was a paste from arrival timing —
+	// guess wrong and a multi-line prompt's newlines each submit, so only the
+	// first line lands as the prompt. It's a no-op against an application that
+	// hasn't requested bracketed paste, so it's always safe to pass.
+	// -d deletes the buffer immediately after pasting, so it doesn't linger
+	// in tmux's paste-buffer stack (visible to, and reusable by, anything
+	// else in the session via prefix-]).
+	_, err = c.Runner.Run("paste-buffer", "-p", "-d", "-t", exactWindow(session))
 	return err
+}
+
+// BracketedPaste reports whether session's active pane currently has
+// bracketed-paste mode enabled, i.e. whether the program on the other end
+// has told the terminal it wants pastes delimited. It's the closest thing
+// tmux exposes to "a TUI is up and reading input": an agent CLI's startup
+// (before its input layer is installed) has it off, and the shell turns it
+// off for the duration of a command it runs, so it flips back on only once
+// the agent itself is taking keystrokes. See App.StartFirstPrompt.
+func (c *Client) BracketedPaste(session string) (bool, error) {
+	out, err := c.Runner.Run("display-message", "-p", "-t", exactWindow(session), "#{bracket_paste_flag}")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) == "1", nil
 }
 
 // SetWindowName renames session's window. ConfigureTitleTracking already

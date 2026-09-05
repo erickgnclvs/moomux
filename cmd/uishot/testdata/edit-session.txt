@@ -1,0 +1,54 @@
+=== 40x20 ===
+                                        
+                                        
+╭──────────────────────────────────────╮
+│                                      │
+│  Edit session                        │
+│                                      │
+│  project: demo                       │
+│  name:    > feature-auth             │
+│                                      │
+│  agent:  [claude]  codex  opencode   │
+│                                      │
+│  dangerous:  [off]                   │
+│                                      │
+│  display name; also renames the      │
+│  live tmux session so it stays       │
+│  tab fields  ←→ change  enter save   │
+│                                      │
+╰──────────────────────────────────────╯
+                                        
+                                        
+=== 100x32 ===
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+           ╭────────────────────────────────────────────────────────────────────────────╮           
+           │                                                                            │           
+           │  Edit session                                                              │           
+           │                                                                            │           
+           │  project: demo                                                             │           
+           │  name:    > feature-auth                                                   │           
+           │                                                                            │           
+           │  agent:  [claude]  codex  opencode                                         │           
+           │                                                                            │           
+           │  dangerous:  [off]                                                         │           
+           │                                                                            │           
+           │  display name; also renames the live tmux session so it stays aligned      │           
+           │  tab fields  ←→ change  enter save  esc cancel                             │           
+           │                                                                            │           
+           ╰────────────────────────────────────────────────────────────────────────────╯           
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    

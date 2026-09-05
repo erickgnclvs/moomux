@@ -18,6 +18,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/erickgnclvs/moomux/internal/app"
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/gitwt"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
@@ -45,6 +46,16 @@ var screens = map[string][]string{
 	// Branch field focused, so its hint (the field that most often needs
 	// correcting) is the one on screen — 2 tabs from the project selector.
 	"new-session-branch": {"n", "tab", "tab"},
+	// 9 tabs from the project selector lands on the thinking selector (see
+	// newFormFieldCount) — the field right after the new model selector,
+	// exercising both new rows' scroll-into-view and hint text at once.
+	"new-session-model": {"n", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "tab"},
+	// 7 tabs from the project selector lands on the agent selector, which the
+	// active sample project ("demo") defaults to codex; one "right" cycles it
+	// to opencode, then a final tab lands on the model row, which for
+	// opencode is a free-text input instead of the claude/codex selector —
+	// exercises that per-agent branch.
+	"new-session-model-opencode": {"n", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "right", "tab"},
 	// The form preselects the active project, so no "right" press is needed
 	// to pick one; 3 tabs from there lands on the first-prompt textarea (see
 	// newFormFieldCount) — both Enter and ctrl+j insert a newline there,
@@ -111,6 +122,7 @@ var screens = map[string][]string{
 	"delete-project-blocked": {"D"},
 	"archived":               {"A"},
 	"help":                   {"?"},
+	"help-bottom":            {"?"},
 	// needs-input has no keys of its own; renderScreen feeds it a
 	// StatusTickMsg marking the first sample session watcher.NeedsInput.
 	"needs-input": {},
@@ -164,6 +176,7 @@ var namedKeys = map[string]tea.KeyType{
 	"down":      tea.KeyDown,
 	"left":      tea.KeyLeft,
 	"right":     tea.KeyRight,
+	"pgdown":    tea.KeyPgDown,
 	"ctrl+u":    tea.KeyCtrlU,
 	"ctrl+j":    tea.KeyCtrlJ,
 }
@@ -227,7 +240,7 @@ type fakeBackend struct {
 	createErr error
 }
 
-func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool) (session.Session, string, error) {
+func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
 	return session.Session{}, "", f.createErr
 }
 func (f *fakeBackend) StartFirstPrompt(tmuxSession, prompt string, autoSubmit bool) error {
@@ -363,6 +376,13 @@ func (f *fakeBackend) SetAutoTmux(autoTmux bool) error {
 		f.cfg.AutoTmux = autoTmux
 	}
 	return nil
+}
+
+func (f *fakeBackend) ConfigSnapshot() config.Config {
+	if f.cfg != nil {
+		return f.cfg.Clone()
+	}
+	return config.Config{}
 }
 
 func sampleSessions() []session.Session {
@@ -554,7 +574,7 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 	statusCh := make(chan watcher.Snapshot)
 	close(statusCh)
 	tui.ApplySettings(cfg)
-	m := tui.New(cfg, be, statusCh, func() {})
+	m := tui.New(cfg, be, (&app.App{}).AgentOptions(), statusCh, func() {})
 	m.Version = "dev"
 	if screenName == "update-available" {
 		m.Version = "0.5.3"
@@ -589,6 +609,15 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 			continue
 		}
 		drive(m, msg)
+	}
+	if screenName == "help-bottom" {
+		// The overlay viewport gets its content and height on the first View.
+		// Initialize it before paging down so narrow screenshots can inspect
+		// the command tips at the bottom rather than only the list's first rows.
+		m.View()
+		for range 5 {
+			drive(m, keyMsgFor("pgdown"))
+		}
 	}
 
 	return m.View(), nil

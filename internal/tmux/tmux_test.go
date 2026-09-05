@@ -20,7 +20,7 @@ func (f *fakeRunner) Run(args ...string) (string, error) {
 	key := strings.Join(args, " ")
 	f.calls = append(f.calls, append([]string(nil), args...))
 	if f.failOn[key] {
-		return "", exitErr{code: 1}
+		return f.out[key], exitErr{code: 1}
 	}
 	return f.out[key], nil
 }
@@ -180,6 +180,22 @@ func TestHasSessionAbsent(t *testing.T) {
 	}
 }
 
+func TestHasSessionReturnsConnectionErrors(t *testing.T) {
+	key := "has-session -t =moomux-foo"
+	fr := &fakeRunner{
+		failOn: map[string]bool{key: true},
+		out:    map[string]string{key: "error connecting to /tmp/tmux-501/default (Operation not permitted)\n"},
+	}
+	c := &Client{Runner: fr}
+	ok, err := c.HasSession("moomux-foo")
+	if err == nil || ok {
+		t.Fatalf("ok=%v err=%v, want a connection error", ok, err)
+	}
+	if !strings.Contains(err.Error(), "Operation not permitted") {
+		t.Fatalf("err = %v, want tmux diagnostic", err)
+	}
+}
+
 func TestEnsureEnvRefreshNoopOutsideTmux(t *testing.T) {
 	t.Setenv("TMUX", "")
 	fr := &fakeRunner{}
@@ -303,41 +319,97 @@ func TestKillSession(t *testing.T) {
 	}
 }
 
-func TestSendKeys(t *testing.T) {
-	fr := &fakeRunner{}
+// loadBufferContentRunner wraps fakeRunner to snapshot the exact content
+// staged for a load-buffer call, since PasteText removes its temp file right
+// after tmux would have read it — the path itself is unpredictable and not
+// what these tests care about.
+type loadBufferContentRunner struct {
+	*fakeRunner
+	staged string
+}
+
+func (r *loadBufferContentRunner) Run(args ...string) (string, error) {
+	if len(args) == 2 && args[0] == "load-buffer" {
+		if data, err := os.ReadFile(args[1]); err == nil {
+			r.staged = string(data)
+		}
+	}
+	return r.fakeRunner.Run(args...)
+}
+
+// TestPasteTextLoadsThenPastesExactBuffer guards the core mechanism: text
+// must be staged into tmux's paste buffer via load-buffer and delivered with
+// paste-buffer, not typed via send-keys — send-keys submits text as
+// individual synthetic keystrokes, so a multi-line prompt's embedded
+// newlines would each arrive as their own Enter instead of one atomic block.
+func TestPasteTextLoadsThenPastesExactBuffer(t *testing.T) {
+	fr := &loadBufferContentRunner{fakeRunner: &fakeRunner{}}
 	c := &Client{Runner: fr}
-	if err := c.SendKeys("moomux-foo", "do the thing"); err != nil {
+	want := "line one\nline two"
+	if err := c.PasteText("moomux-foo", want); err != nil {
 		t.Fatal(err)
 	}
-	// "=moomux-foo:" pins send-keys to an exact session match; a bare name
-	// falls back to prefix matching and could type into moomux-foo-2 once
+	if fr.staged != want {
+		t.Fatalf("staged content = %q, want %q", fr.staged, want)
+	}
+	if len(fr.calls) != 2 || fr.calls[0][0] != "load-buffer" {
+		t.Fatalf("calls = %v, want load-buffer then paste-buffer", fr.calls)
+	}
+	// "=moomux-foo:" pins paste-buffer to an exact session match; a bare name
+	// falls back to prefix matching and could paste into moomux-foo-2 once
 	// moomux-foo is gone.
-	want := []string{"send-keys", "-t", "=moomux-foo:", "do the thing", "Enter"}
-	if got := fr.calls[0]; !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %v, want %v", got, want)
+	want2 := []string{"paste-buffer", "-p", "-d", "-t", "=moomux-foo:"}
+	if !reflect.DeepEqual(fr.calls[1], want2) {
+		t.Fatalf("second call = %v, want %v", fr.calls[1], want2)
+	}
+	if _, err := os.ReadFile(fr.calls[0][1]); err == nil {
+		t.Fatalf("temp file %q was not cleaned up", fr.calls[0][1])
 	}
 }
 
-// TestSendKeysUsesExactSessionMatch guards against a bare session name in
-// -t, which falls back to tmux prefix matching: if "moomux-foo" no longer
-// exists but "moomux-foo-2" does, send-keys would silently type into the
-// wrong session instead of failing.
-func TestSendKeysUsesExactSessionMatch(t *testing.T) {
-	fr := &fakeRunner{}
-	c := &Client{Runner: fr}
-	if err := c.SendKeys("moomux-foo", "hi"); err != nil {
-		t.Fatal(err)
-	}
-	target := fr.calls[0][2]
-	if !strings.HasPrefix(target, "=") {
-		t.Fatalf("target %q is not pinned to an exact match (missing '=' prefix)", target)
-	}
-}
-
-func TestSendKeysError(t *testing.T) {
-	fr := &fakeRunner{failOn: map[string]bool{"send-keys -t =moomux-foo: hi Enter": true}}
-	c := &Client{Runner: fr}
-	if err := c.SendKeys("moomux-foo", "hi"); err == nil {
+// TestPasteTextPropagatesLoadBufferError guards that a failing load-buffer
+// (e.g. no tmux server) is surfaced rather than proceeding to paste-buffer
+// with nothing staged.
+func TestPasteTextPropagatesLoadBufferError(t *testing.T) {
+	r := &alwaysFailRunner{}
+	c := &Client{Runner: r}
+	if err := c.PasteText("moomux-foo", "hi"); err == nil {
 		t.Fatal("expected error")
+	}
+	if r.calls != 1 {
+		t.Fatalf("paste-buffer must not run after load-buffer failed: %d calls", r.calls)
+	}
+}
+
+// alwaysFailRunner fails every call — used to check that PasteText's
+// load-buffer failure short-circuits before it ever attempts paste-buffer.
+type alwaysFailRunner struct{ calls int }
+
+func (r *alwaysFailRunner) Run(args ...string) (string, error) {
+	r.calls++
+	return "", exitErr{code: 1}
+}
+
+// TestBracketedPaste checks the flag is read off the exact session's pane and
+// only "1" counts as enabled.
+func TestBracketedPaste(t *testing.T) {
+	for _, tc := range []struct {
+		out  string
+		want bool
+	}{{"1\n", true}, {"0\n", false}, {"", false}} {
+		key := "display-message -p -t =moomux-foo: #{bracket_paste_flag}"
+		r := &fakeRunner{out: map[string]string{key: tc.out}}
+		c := &Client{Runner: r}
+		got, err := c.BracketedPaste("moomux-foo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Fatalf("BracketedPaste(%q) = %v, want %v", tc.out, got, tc.want)
+		}
+		want := []string{"display-message", "-p", "-t", "=moomux-foo:", "#{bracket_paste_flag}"}
+		if len(r.calls) != 1 || strings.Join(r.calls[0], " ") != strings.Join(want, " ") {
+			t.Fatalf("calls = %v, want %v", r.calls, want)
+		}
 	}
 }

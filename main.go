@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-isatty"
@@ -20,6 +19,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/codexhook"
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/gitwt"
+	"github.com/erickgnclvs/moomux/internal/ipc"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/terminal"
@@ -54,6 +54,10 @@ Usage:
                      whose worktree you're currently in, with MOOMUX_FORCE=1
                      so they redo setup they'd otherwise skip as already
                      done. Backs the /reseed slash command inside Claude Code.
+  moomux serve      Run the orchestration core headless on a unix socket,
+                     for another front end to drive. 'moomux serve -h'.
+  moomux ui ...     Run the TUI against a running 'moomux serve' instead of
+                     its own core. Run 'moomux ui -h' for its flags.
   moomux --version  Print the version.
   moomux --help     Show this message.`)
 }
@@ -94,6 +98,34 @@ func main() {
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "park" {
 		if err := runPark(); err != nil {
+			fmt.Fprintln(os.Stderr, "moomux:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) == 3 && os.Args[1] == "__park-detached" {
+		if err := runParkDetached(os.Args[2]); err != nil {
+			fmt.Fprintln(os.Stderr, "moomux:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) == 3 && os.Args[1] == "__park-worker" {
+		if err := runParkWorker(os.Args[2]); err != nil {
+			fmt.Fprintln(os.Stderr, "moomux:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "serve" {
+		if err := runServe(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "moomux:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "ui" {
+		if err := runRemote(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "moomux:", err)
 			os.Exit(1)
 		}
@@ -269,7 +301,7 @@ func newApp() (*app.App, error) {
 		slog.Warn("tmux EnsureEnvRefresh failed", "err", err)
 	}
 
-	return &app.App{
+	a := &app.App{
 		Cfg:          cfg,
 		CfgPath:      cfgPath,
 		Store:        store,
@@ -278,18 +310,37 @@ func newApp() (*app.App, error) {
 		Git:          gitwt.New(),
 		PR:           prstatus.New(),
 		WorktreeRoot: app.WorktreeRootDefault(),
-	}, nil
+	}
+	a.InstallKnownCommands()
+	return a, nil
 }
 
 // runSpawn implements `moomux spawn`: create a session (worktree + tmux +
 // agent, same as the TUI's "new session" action) and, if -prompt is given,
 // type it into the agent's pane as its first task. Fire-and-forget — it
 // prints the new tmux session name and exits without waiting on the agent.
+// explicitFlagOverride returns a pointer to value if name was explicitly
+// passed on fs's command line, or nil if it was left at its default — so a
+// caller like CreateSession's dangerous can tell "explicitly false" apart
+// from "not set, use the project's own default", which a plain bool can't.
+func explicitFlagOverride(fs *flag.FlagSet, name string, value bool) *bool {
+	var override *bool
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			v := value
+			override = &v
+		}
+	})
+	return override
+}
+
 func runSpawn(args []string) error {
 	fs := flag.NewFlagSet("spawn", flag.ExitOnError)
 	project := fs.String("project", "", "project name (required; run -list to see configured projects)")
 	name := fs.String("name", "", "session name (derived from -branch if omitted)")
 	agent := fs.String("agent", "", "agent override (claude, codex, opencode)")
+	model := fs.String("model", "", "model override, passed to the agent as --model (e.g. sonnet, opus, haiku)")
+	thinking := fs.String("thinking", "", "thinking/reasoning level: for codex, a real -c model_reasoning_effort value (minimal, low, medium, high, xhigh); for claude/opencode, a phrase prepended to -prompt (e.g. think, think hard, ultrathink) — no effect there without -prompt")
 	dangerous := fs.Bool("dangerous", false, "run the agent with its permission-skipping flag (claude: --dangerously-skip-permissions, codex: --yolo)")
 	branch := fs.String("branch", "", "existing branch to check out, instead of creating a new one")
 	ticket := fs.String("ticket", "", "ticket URL to attach to the session")
@@ -314,12 +365,14 @@ func runSpawn(args []string) error {
 		return fmt.Errorf("spawn: -project is required (run 'moomux spawn -list' to see configured projects)")
 	}
 
+	dangerousOverride := explicitFlagOverride(fs, "dangerous", *dangerous)
+
 	a, err := newApp()
 	if err != nil {
 		return err
 	}
 
-	s, hint, err := a.CreateSession(*project, *name, *agent, *branch, *ticket, true, *dangerous)
+	s, hint, err := a.CreateSession(*project, *name, *agent, *branch, *ticket, false, dangerousOverride, "", *model, *thinking)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}
@@ -329,12 +382,21 @@ func runSpawn(args []string) error {
 	fmt.Println(s.TmuxSession)
 
 	if *prompt != "" {
-		// ponytail: fixed delay, not a readiness poll — good enough for a
-		// fire-and-forget v1. Upgrade to polling pane content for a ready
-		// marker if agent startup time ever outgrows this.
-		time.Sleep(2 * time.Second)
-		if err := a.SendPrompt(s.TmuxSession, *prompt); err != nil {
-			return fmt.Errorf("send prompt: %w", err)
+		firstPrompt := *prompt
+		// codex's thinking level is a real -c model_reasoning_effort flag,
+		// already applied to the launch command above; claude/opencode have
+		// no such flag, so lean on the same magic words a user would type
+		// into the prompt by hand.
+		if *agent != "codex" && *thinking != "" && *thinking != "default" {
+			firstPrompt = *thinking + ": " + firstPrompt
+		}
+		// StartFirstPrompt waits for the agent to actually be ready for
+		// input (rather than a fixed delay) and errors out — instead of
+		// silently returning success — if the pane looks stuck on something
+		// else, e.g. an interactive SSH passphrase prompt from a
+		// worktree-create userscript or the agent's own launch command.
+		if err := a.StartFirstPrompt(s.TmuxSession, firstPrompt, true); err != nil {
+			return fmt.Errorf("send prompt: %w (session %s was created but may need manual attention: tmux attach -t %s)", err, s.TmuxSession, s.TmuxSession)
 		}
 	}
 	return nil
@@ -399,6 +461,10 @@ func orNone(s string) string {
 // via currentSession rather than taking an explicit ID. The worktree,
 // branch, and moomux list entry are left intact so the session can be
 // reopened later — see App.KillTmux's doc comment.
+//
+// Closing the current terminal tab terminates the process group that invoked
+// this command before it can kill tmux. Run the actual park operation in a
+// new session so it survives the tab closing long enough to finish.
 func runPark() error {
 	a, err := newApp()
 	if err != nil {
@@ -408,10 +474,74 @@ func runPark() error {
 	if err != nil {
 		return fmt.Errorf("park: %w", err)
 	}
-	if err := a.KillTmux(s.ID); err != nil {
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("park: resolve executable: %w", err)
+	}
+	cmd := newParkHelperCommand(executable, "__park-detached", s.ID)
+	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("park: %w", err)
 	}
 	fmt.Println("parked " + s.Name)
+	return nil
+}
+
+// newParkHelperCommand leaves Stdin/Stdout/Stderr unset (-> /dev/null, see
+// os/exec's Cmd docs) rather than inheriting this process's own: when the
+// caller is a slash command like /kill, this process's stdout is a pipe the
+// host CLI reads to capture command output, not the pane's tty. Inheriting
+// that pipe into a detached helper ties its lifetime to the pipe staying
+// open, which defeats the whole point of detaching it from the pane it's
+// about to kill — the read side blocking on/timing out waiting for EOF can
+// tear the helper down before it reaches CloseTab.
+func newParkHelperCommand(executable, subcommand, id string) *exec.Cmd {
+	cmd := exec.Command(executable, subcommand, id)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	return cmd
+}
+
+// runParkDetached is the first of two detachment layers and deliberately
+// does no park work itself. Setsid shields it from the SIGHUP a killed tmux
+// session's pty delivers to the pane's foreground process group, but not
+// from a supervisor that reaps its own descendants by walking the process
+// tree rather than relying on that signal — e.g. a host CLI like Claude
+// Code cleaning up whatever /kill spawned once the shell command that ran
+// it is gone. Setsid changes this process's session, not its place in that
+// tree: it's still a child of `moomux park`, which is still a child of the
+// pane being killed.
+//
+// So instead of parking here, this starts a second Setsid'd child
+// (__park-worker) with Start (not Run) and returns immediately without
+// waiting on it. The moment this process exits, the OS reparents that
+// child away to init/launchd — off the tree entirely — before the
+// supervisor's cleanup has a real chance to reach it.
+func runParkDetached(id string) error {
+	executable, err := os.Executable()
+	if err != nil {
+		slog.Error("park-detached: resolve executable failed", "id", id, "err", err)
+		return err
+	}
+	if err := newParkHelperCommand(executable, "__park-worker", id).Start(); err != nil {
+		slog.Error("park-detached: start worker failed", "id", id, "err", err)
+		return err
+	}
+	return nil
+}
+
+// runParkWorker does the actual park operation — see runParkDetached's doc
+// comment for why it runs a step further removed from `moomux park` than
+// the process that started it. Its stderr is /dev/null too (same reasoning
+// as runPark), so a failure here is otherwise invisible — log it.
+func runParkWorker(id string) error {
+	a, err := newApp()
+	if err != nil {
+		slog.Error("park-worker: load app failed", "id", id, "err", err)
+		return err
+	}
+	if err := a.KillTmux(id); err != nil {
+		slog.Error("park-worker: kill tmux failed", "id", id, "err", err)
+		return fmt.Errorf("park: %w", err)
+	}
 	return nil
 }
 
@@ -491,13 +621,18 @@ func run() error {
 	}
 
 	home, _ := os.UserHomeDir()
+	return runProgram(cfg, a, a.AgentOptions(), buildWatcher(home))
+}
+
+// runProgram drives the TUI against any backend + watcher, so the local
+// (*app.App) path and the socket-backed (*ipc.Client) path share one setup.
+func runProgram(cfg *config.Config, b tui.Backend, agentOptions []config.AgentOption, w watcher.Watcher) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	statusCh := make(chan watcher.Snapshot, 4)
-	multi := buildWatcher(home)
-	go multi.Run(ctx, statusCh)
+	go w.Run(ctx, statusCh)
 
 	tui.ApplySettings(cfg)
-	m := tui.New(cfg, a, statusCh, cancel)
+	m := tui.New(cfg, b, agentOptions, statusCh, cancel)
 	m.Version = version
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
@@ -505,7 +640,59 @@ func run() error {
 		return err
 	}
 	cancel()
+	if m.Relaunch {
+		self, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		return syscall.Exec(self, os.Args, os.Environ())
+	}
 	return nil
+}
+
+// runServe implements `moomux serve`: expose the orchestration core on a
+// unix socket so a second front end (the TUI over -socket, or a native app)
+// can drive it without linking any of this.
+func runServe(args []string) error {
+	home, _ := os.UserHomeDir()
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	sock := fs.String("socket", ipc.DefaultSocket(home), "unix socket path to listen on")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	a, err := newApp()
+	if err != nil {
+		return err
+	}
+	ln, err := ipc.Listen(*sock)
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+	fmt.Fprintln(os.Stderr, "moomux: serving on", *sock)
+	return (&ipc.Server{Backend: a, Config: a.ConfigSnapshot, AgentOptions: a.AgentOptions, Watcher: buildWatcher(home)}).Serve(ln)
+}
+
+// runRemote implements `moomux ui -socket`: the same TUI, driven entirely
+// over the socket. Proves the boundary is complete — anything it can't do
+// is a hole a native client would hit too.
+func runRemote(args []string) error {
+	home, _ := os.UserHomeDir()
+	fs := flag.NewFlagSet("ui", flag.ExitOnError)
+	sock := fs.String("socket", ipc.DefaultSocket(home), "unix socket of a running `moomux serve`")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	c := &ipc.Client{Socket: *sock}
+	cfg, err := c.Config()
+	if err != nil {
+		return fmt.Errorf("connect %s: %w (is `moomux serve` running?)", *sock, err)
+	}
+	agentOptions, err := c.AgentOptions()
+	if err != nil {
+		return fmt.Errorf("connect %s: %w (is `moomux serve` running?)", *sock, err)
+	}
+	return runProgram(cfg, c, agentOptions, c)
 }
 
 func buildWatcher(home string) watcher.Watcher {

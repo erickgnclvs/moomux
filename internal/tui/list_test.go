@@ -211,3 +211,30 @@ func TestModelProjectEmojiFallsBackDeterministically(t *testing.T) {
 		t.Fatalf("projectEmoji(%q) not deterministic: %q then %q", "demo", first, second)
 	}
 }
+
+// scrollWindow's rows plus its ⌃/⌄ hint rows must never exceed the panel
+// height, at any cursor position — previously the mid-list cursor where
+// the window first pulled off the top edge rendered one line too many and
+// the bottom hint was clipped for a frame.
+func TestScrollWindowFitsAtEveryCursor(t *testing.T) {
+	for visible := 1; visible <= 15; visible++ {
+		for total := 1; total <= 30; total++ {
+			for cursor := 0; cursor < total; cursor++ {
+				start, end := scrollWindow(cursor, total, visible)
+				if cursor < start || cursor >= end {
+					t.Fatalf("visible=%d total=%d cursor=%d: window [%d,%d) excludes cursor", visible, total, cursor, start, end)
+				}
+				lines := end - start
+				if start > 0 {
+					lines++
+				}
+				if end < total {
+					lines++
+				}
+				if lines > visible && visible >= 3 {
+					t.Errorf("visible=%d total=%d cursor=%d: window [%d,%d) renders %d lines", visible, total, cursor, start, end, lines)
+				}
+			}
+		}
+	}
+}

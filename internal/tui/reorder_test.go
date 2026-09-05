@@ -19,8 +19,9 @@ import (
 // Tests that specifically want ModeMultiView set m.mode back explicitly.
 func newTestModel(be *fakeBackend) *Model {
 	cfg := &config.Config{Projects: map[string]config.Project{"demo": {Repo: "/tmp/demo"}}}
+	be.cfg = *cfg
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 	return m
@@ -31,8 +32,9 @@ func newMultiProjectTestModel(be *fakeBackend) *Model {
 		"alpha": {Repo: "/tmp/alpha"},
 		"beta":  {Repo: "/tmp/beta"},
 	}}
+	be.cfg = *cfg
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 	return m

@@ -58,17 +58,18 @@ func TestNewSessionFormFlow(t *testing.T) {
 	m.nameInput.SetValue("myfeat")
 	m.nameInput.CursorEnd()
 	press(m, tea.KeyTab) // -> branch
-	for i := 0; i < 4; i++ {
-		press(m, tea.KeyTab) // branch -> prompt -> ticket -> PR -> agent selector
+	for i := 0; i < 5; i++ {
+		press(m, tea.KeyTab) // branch -> base branch -> prompt -> ticket -> PR -> agent selector
 	}
 	press(m, tea.KeyRight) // claude -> codex
-	if agentNames[m.newFormAgentIdx] != "codex" {
-		t.Fatalf("agent = %q", agentNames[m.newFormAgentIdx])
+	if m.agentNames()[m.newFormAgentIdx] != "codex" {
+		t.Fatalf("agent = %q", m.agentNames()[m.newFormAgentIdx])
 	}
 	press(m, tea.KeyLeft)     // back to claude
 	press(m, tea.KeyShiftTab) // agent -> PR
 	press(m, tea.KeyShiftTab) // PR -> ticket
 	typeText(m, "https://t/1")
+	press(m, tea.KeyShiftTab)
 	press(m, tea.KeyShiftTab)
 	press(m, tea.KeyShiftTab) // -> branch again
 	if m.newFormFocus != 2 {
@@ -94,8 +95,8 @@ func TestNewSessionFormSendsFirstPrompt(t *testing.T) {
 
 	m.Update(keyRune("n"))
 	typeText(m, "myfeat")
-	for i := 0; i < 2; i++ {
-		press(m, tea.KeyTab) // name -> branch -> prompt
+	for i := 0; i < 3; i++ {
+		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt
 	}
 	typeText(m, "do the thing")
 	press(m, tea.KeyTab) // prompt -> ticket, so Enter submits rather than adding a newline
@@ -116,21 +117,22 @@ func TestNewSessionFormSendsFirstPrompt(t *testing.T) {
 }
 
 // TestNewSessionFormAutoSubmitToggle guards the auto-submit checkbox: toggling
-// it on with ←→ must flow through to StartFirstPrompt's autoSubmit arg, and
-// reopening the form must reset it back to off rather than carrying over the
-// previous session's choice.
+// it on with ←→ must flow through to StartFirstPrompt's autoSubmit arg and
+// persist as the new sticky default (see
+// TestNewSessionFormAutoSubmitDefaultsFromConfigAndOnlyPersistsOnChange), so
+// reopening the form must seed the toggle back on from that new default.
 func TestNewSessionFormAutoSubmitToggle(t *testing.T) {
 	be := &fakeBackend{}
 	m := newTestModel(be)
 
 	m.Update(keyRune("n"))
 	typeText(m, "myfeat")
-	for i := 0; i < 2; i++ {
-		press(m, tea.KeyTab) // name -> branch -> prompt
+	for i := 0; i < 3; i++ {
+		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt
 	}
 	typeText(m, "do the thing")
-	for i := 0; i < 6; i++ {
-		press(m, tea.KeyTab) // prompt -> ticket -> PR -> agent -> dangerous -> open-in-background -> auto-submit
+	for i := 0; i < 8; i++ {
+		press(m, tea.KeyTab) // prompt -> ticket -> PR -> agent -> model -> thinking -> dangerous -> open-in-background -> auto-submit
 	}
 	if m.newFormFocus != newFormAutoSubmitFocus {
 		t.Fatalf("focus = %d, want auto-submit toggle", m.newFormFocus)
@@ -149,8 +151,8 @@ func TestNewSessionFormAutoSubmitToggle(t *testing.T) {
 	}
 
 	m.Update(keyRune("n")) // reopen
-	if m.newFormAutoSubmit {
-		t.Fatal("auto-submit carried over into the reopened form")
+	if !m.newFormAutoSubmit {
+		t.Fatal("reopened form did not seed auto-submit from the newly-persisted default")
 	}
 }
 
@@ -168,8 +170,8 @@ func TestNewSessionFormAutoSubmitDefaultsFromConfigAndOnlyPersistsOnChange(t *te
 		t.Fatal("form did not seed auto-submit from cfg.AutoSubmitDefault")
 	}
 	typeText(m, "myfeat")
-	for i := 0; i < 2; i++ {
-		press(m, tea.KeyTab) // name -> branch -> prompt
+	for i := 0; i < 3; i++ {
+		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt
 	}
 	typeText(m, "do the thing")
 	press(m, tea.KeyTab) // prompt -> ticket, so Enter submits rather than adding a newline
@@ -200,10 +202,10 @@ func TestNewSessionFormPromptSupportsMultilineNavigation(t *testing.T) {
 
 	m.Update(keyRune("n"))
 	typeText(m, "myfeat")
-	for i := 0; i < 2; i++ {
-		press(m, tea.KeyTab) // name -> branch -> prompt
+	for i := 0; i < 3; i++ {
+		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt
 	}
-	if m.newFormFocus != 3 {
+	if m.newFormFocus != 4 {
 		t.Fatalf("focus = %d, want prompt field", m.newFormFocus)
 	}
 
@@ -227,21 +229,21 @@ func TestNewSessionFormPromptSupportsMultilineNavigation(t *testing.T) {
 	}
 
 	press(m, tea.KeyUp)
-	if m.newFormFocus != 3 {
+	if m.newFormFocus != 4 {
 		t.Fatalf("up arrow left the prompt field: focus = %d", m.newFormFocus)
 	}
 	press(m, tea.KeyDown)
-	if m.newFormFocus != 3 {
+	if m.newFormFocus != 4 {
 		t.Fatalf("down arrow left the prompt field: focus = %d", m.newFormFocus)
 	}
 
 	// Every other field still cycles focus on up/down.
 	press(m, tea.KeyTab) // prompt -> ticket
-	if m.newFormFocus != 4 {
+	if m.newFormFocus != 5 {
 		t.Fatalf("focus = %d, want ticket field", m.newFormFocus)
 	}
 	press(m, tea.KeyDown)
-	if m.newFormFocus != 5 {
+	if m.newFormFocus != 6 {
 		t.Fatalf("down arrow did not advance focus off the ticket field: focus = %d", m.newFormFocus)
 	}
 }
@@ -257,8 +259,8 @@ func TestNewSessionFormSurvivesPostCreatePRTagFailure(t *testing.T) {
 
 	m.Update(keyRune("n"))
 	typeText(m, "myfeat")
-	for i := 0; i < 4; i++ {
-		press(m, tea.KeyTab) // name -> branch -> prompt -> ticket -> PR
+	for i := 0; i < 5; i++ {
+		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt -> ticket -> PR
 	}
 	typeText(m, "https://github.com/x/y/pull/2")
 
@@ -285,8 +287,8 @@ func TestNewSessionFormSurvivesPostCreateFirstPromptFailure(t *testing.T) {
 
 	m.Update(keyRune("n"))
 	typeText(m, "myfeat")
-	for i := 0; i < 2; i++ {
-		press(m, tea.KeyTab) // name -> branch -> prompt
+	for i := 0; i < 3; i++ {
+		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt
 	}
 	typeText(m, "do the thing")
 	press(m, tea.KeyTab) // prompt -> ticket, so Enter submits rather than adding a newline
@@ -309,6 +311,7 @@ func TestNewSessionFormClearsPRAndPromptOnReopen(t *testing.T) {
 
 	m.Update(keyRune("n"))
 	press(m, tea.KeyTab) // -> branch
+	press(m, tea.KeyTab) // -> base branch
 	press(m, tea.KeyTab) // -> prompt
 	typeText(m, "leftover prompt")
 	for i := 0; i < 2; i++ {
@@ -333,6 +336,7 @@ func TestNewSessionFormAppendsTicketAndPRToFirstPrompt(t *testing.T) {
 	m.Update(keyRune("n"))
 	typeText(m, "myfeat")
 	press(m, tea.KeyTab) // -> branch
+	press(m, tea.KeyTab) // -> base branch
 	press(m, tea.KeyTab) // -> prompt
 	typeText(m, "do the thing")
 	press(m, tea.KeyTab) // -> ticket
@@ -475,7 +479,7 @@ func TestNewSessionCreateErrorKeepsForm(t *testing.T) {
 func TestNewSessionNoProjectsFlashesError(t *testing.T) {
 	cfg := &config.Config{Projects: map[string]config.Project{}}
 	be := &fakeBackend{}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList // New() opens the project form when no projects exist
 	m.Update(keyRune("n"))
@@ -694,11 +698,12 @@ func drainAll(m *Model, cmd tea.Cmd) {
 	drainAll(m, next)
 }
 
-// TestGitStatusTrackedRegardlessOfState guards the core design point: git
-// status is no longer gated on being parked. A session that's actively
-// Working with no cached status yet still gets fetched on the next tick,
-// same as a parked one would — staleGitStatusIDs treats "never checked" as
-// maximally stale for every session, not just parked ones.
+// TestGitStatusTrackedRegardlessOfState guards the "never checked" half of
+// the design: a session that's actively Working with no cached status yet
+// still gets fetched on the next tick, same as any other never-checked
+// session (parked or not) — staleGitStatusIDs treats "never checked" as
+// maximally stale regardless of state. See TestParkedGitStatusSkipsRoutineRefetch
+// for the other half: once checked, a Parked session stops being re-fetched.
 func TestGitStatusTrackedRegardlessOfState(t *testing.T) {
 	be := &fakeBackend{
 		sessions:       []session.Session{{ID: "demo:a", Project: "demo", Name: "a", WorktreePath: "/wt/a"}},
@@ -729,6 +734,7 @@ func TestStaleGitStatusIsRefetched(t *testing.T) {
 		worktreeStatus: map[string]gitStatusInfo{"demo:a": {dirty: true, ok: true}},
 	}
 	m := newTestModel(be)
+	m.tmuxAlive["demo:a"] = true
 	// Well past even the top of the jitter range (gitStatusStaleAfter * (1 +
 	// gitStatusStaleJitter)), so this is unambiguously stale regardless of
 	// demo:a's particular jitter.
@@ -741,6 +747,34 @@ func TestStaleGitStatusIsRefetched(t *testing.T) {
 	}
 	if got := m.gitStatus["demo:a"]; !got.dirty {
 		t.Fatalf("gitStatus[demo:a] not refreshed from the stale cache: %+v", got)
+	}
+}
+
+// TestParkedGitStatusSkipsRoutineRefetch guards the CPU fix: once a Parked
+// session (tmux dead) has a cached git status, it must not be re-fetched on
+// the routine cycle no matter how stale that cache gets — its worktree has
+// no agent running in it, so dirty/unpushed can't change on their own.
+func TestParkedGitStatusSkipsRoutineRefetch(t *testing.T) {
+	be := &fakeBackend{
+		sessions: []session.Session{{ID: "demo:a", Project: "demo", Name: "a", WorktreePath: "/wt/a"}},
+	}
+	m := newTestModel(be)
+	// tmuxAlive left unset for demo:a, so effectiveState is Parked.
+	m.gitStatus["demo:a"] = gitStatusInfo{ok: true, checkedAt: time.Now().Add(-2 * gitStatusStaleAfter)}
+
+	if cmd := m.fetchStaleGitStatusCmd(); cmd != nil {
+		t.Fatal("a Parked session with a cached status should not be re-selected for routine refresh")
+	}
+	if len(be.worktreeStatusCalls) != 0 {
+		t.Fatalf("no WorktreeStatus call expected for a Parked session, got %v", be.worktreeStatusCalls)
+	}
+
+	// Once tmux comes back, the stale cache (never refreshed while parked)
+	// should be picked up immediately.
+	m.tmuxAlive["demo:a"] = true
+	m.states["/wt/a"] = watcher.Working
+	if cmd := m.fetchStaleGitStatusCmd(); cmd == nil {
+		t.Fatal("expected a refetch as soon as the session stops being Parked")
 	}
 }
 
@@ -1061,8 +1095,8 @@ func TestNewProjectFlow(t *testing.T) {
 	// walk focus to the agent selector and worktree toggle
 	m.projForm.focus = projFormInputCount + 1
 	press(m, tea.KeyRight) // agent claude -> codex
-	if agentNames[m.projForm.agentIdx] != "codex" {
-		t.Fatalf("agent = %q", agentNames[m.projForm.agentIdx])
+	if m.agentNames()[m.projForm.agentIdx] != "codex" {
+		t.Fatalf("agent = %q", m.agentNames()[m.projForm.agentIdx])
 	}
 	m.projForm.focus = projFormInputCount + 3
 	press(m, tea.KeyLeft) // toggle no-worktree on
@@ -1132,7 +1166,7 @@ func TestEditSessionFlow(t *testing.T) {
 	if m.mode != ModeEditSession {
 		t.Fatalf("mode = %v", m.mode)
 	}
-	if got := agentNames[m.sessionForm.agentIdx]; got != "codex" {
+	if got := m.agentNames()[m.sessionForm.agentIdx]; got != "codex" {
 		t.Fatalf("prefilled agent = %q", got)
 	}
 	if view := m.View(); !strings.Contains(view, "Edit session") ||
@@ -1212,7 +1246,7 @@ func TestEditProjectFlow(t *testing.T) {
 		},
 	}}
 	be := &fakeBackend{}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 100, 32
 
 	m.Update(slashKey())
@@ -1223,7 +1257,7 @@ func TestEditProjectFlow(t *testing.T) {
 	if m.projForm.inputs[1].Value() != "/tmp/demo" ||
 		m.projForm.inputs[2].Value() != "main" ||
 		m.projForm.inputs[3].Value() != "old" ||
-		agentNames[m.projForm.agentIdx] != "codex" {
+		m.agentNames()[m.projForm.agentIdx] != "codex" {
 		t.Fatalf("project form = %+v", m.projForm)
 	}
 	if view := m.View(); !strings.Contains(view, "Edit project") ||
@@ -1261,7 +1295,7 @@ func TestEditProjectArrowsMoveTextCursor(t *testing.T) {
 		"demo": {Kind: "git", Repo: "/tmp/demo", BaseBranch: "main"},
 	}}
 	be := &fakeBackend{}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 100, 32
 
 	m.Update(slashKey())
@@ -1305,7 +1339,7 @@ func TestEditPlainProjectShowsOnlyRepoAndAgent(t *testing.T) {
 		"notes": {Kind: "plain", Repo: "/tmp/notes", Agent: "claude"},
 	}}
 	be := &fakeBackend{}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 
 	m.Update(slashKey())
@@ -1324,7 +1358,7 @@ func TestEditPlainProjectShowsOnlyRepoAndAgent(t *testing.T) {
 	if m.projForm.focus != projFormInputCount+1 {
 		t.Fatalf("focus = %d, want agent selector", m.projForm.focus)
 	}
-	m.projForm.agentIdx = agentNameIndex("codex")
+	m.projForm.agentIdx = m.agentNameIndex("codex")
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(be.updateProjectCalls) != 1 {
 		t.Fatalf("updateProjectCalls = %v", be.updateProjectCalls)
@@ -1344,7 +1378,7 @@ func TestEditProjectPreservesOutOfPaletteEmoji(t *testing.T) {
 		"notes": {Kind: "git", Repo: "/tmp/notes", BaseBranch: "main", Emoji: "😀"},
 	}}
 	be := &fakeBackend{}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 
 	m.Update(slashKey())
@@ -1523,7 +1557,7 @@ func TestDeleteProjectWithSessionsIsBlocked(t *testing.T) {
 func TestDeleteProjectWithNoProjectsFlashesError(t *testing.T) {
 	cfg := &config.Config{Projects: map[string]config.Project{}}
 	be := &fakeBackend{}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 	m.Update(keyRune("D"))
@@ -1616,7 +1650,7 @@ func TestNavigationAndProjectSwitching(t *testing.T) {
 		{ID: "alpha:b", Project: "alpha", Name: "b"},
 		{ID: "beta:c", Project: "beta", Name: "c"},
 	}}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 
@@ -1658,7 +1692,7 @@ func TestProjectCyclingSkipsEmptyProjects(t *testing.T) {
 		{ID: "alpha:a", Project: "alpha", Name: "a"},
 		{ID: "beta:c", Project: "beta", Name: "c"},
 	}}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 
@@ -1700,7 +1734,7 @@ func TestProjectCyclingStaysWhenOnlyActiveHasSessions(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{
 		{ID: "alpha:a", Project: "alpha", Name: "a"},
 	}}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 
 	press(m, tea.KeyTab)
@@ -1730,7 +1764,7 @@ func TestProjectCyclingSkipsProjectsWithOnlyArchivedSessions(t *testing.T) {
 		{ID: "archived-only:z", Project: "archived-only", Name: "z", Archived: true},
 		{ID: "beta:c", Project: "beta", Name: "c"},
 	}}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 
@@ -1756,7 +1790,8 @@ func TestPlainLetterAlternatesForChordedKeys(t *testing.T) {
 		{ID: "alpha:b", Project: "alpha", Name: "b"},
 		{ID: "beta:c", Project: "beta", Name: "c"},
 	}}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	be.cfg = *cfg
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 
@@ -1784,11 +1819,13 @@ func TestPlainLetterAlternatesForChordedKeys(t *testing.T) {
 		t.Fatalf("second ReorderSessions call = %v, want [alpha:a alpha:b] (K swapped a back above b)", got)
 	}
 
-	// "L" / "H" reorder the active project like shift+→ / shift+←.
+	// "L" / "H" reorder the active project like shift+→ / shift+←. The
+	// resulting ProjectMovedMsg re-anchors m.activeProj on "alpha" by name
+	// (see the ProjectMovedMsg handler), so it stays the active project
+	// across both moves without needing to be reselected.
 	run(m, keyRune("L"))
-	m.activeProj = 1
 	run(m, keyRune("H"))
-	wantProj := []moveProjectCall{{name: "alpha", delta: 1}, {name: "beta", delta: -1}}
+	wantProj := []moveProjectCall{{name: "alpha", delta: 1}, {name: "alpha", delta: -1}}
 	if len(be.moveProjectCalls) != 2 || be.moveProjectCalls[0] != wantProj[0] || be.moveProjectCalls[1] != wantProj[1] {
 		t.Fatalf("moveProjectCalls = %+v, want %+v", be.moveProjectCalls, wantProj)
 	}
@@ -2013,5 +2050,103 @@ func TestSessionMovedErrorFlashes(t *testing.T) {
 	m.Update(ProjectMovedMsg{Name: "demo", Err: errors.New("save failed")})
 	if !strings.Contains(m.flash, "save failed") {
 		t.Fatalf("flash = %q", m.flash)
+	}
+}
+
+// TestUpdateKeyOnlyShellsOutWhenNewerVersionKnown covers the "u" hotkey's
+// guard logic without ever actually running `brew upgrade` — that shell-out
+// itself is exercised by runUpdateCmd's own caller, main(), not a unit test.
+func TestUpdateKeyOnlyShellsOutWhenNewerVersionKnown(t *testing.T) {
+	be := &fakeBackend{}
+	m := newTestModel(be)
+
+	// No newer version known: no shell-out, just an info flash.
+	_, cmd := m.Update(keyRune("u"))
+	if cmd != nil {
+		t.Fatalf("expected no cmd with no update available")
+	}
+	if !strings.Contains(m.flash, "up to date") {
+		t.Fatalf("flash = %q, want an up-to-date notice", m.flash)
+	}
+
+	// A newer version is known: pressing u fires the shell-out and marks
+	// updating so a second press doesn't fire it again concurrently.
+	m.UpdateVersion = "9.9.9"
+	_, cmd = m.Update(keyRune("u"))
+	if cmd == nil {
+		t.Fatalf("expected a cmd once a newer version is known")
+	}
+	if !m.updating {
+		t.Fatalf("expected updating=true while the shell-out is in flight")
+	}
+	if _, cmd = m.Update(keyRune("u")); cmd != nil {
+		t.Fatalf("expected no second cmd while already updating")
+	}
+}
+
+func TestUpdateAppliedMsgHandling(t *testing.T) {
+	be := &fakeBackend{}
+	m := newTestModel(be)
+	m.UpdateVersion = "9.9.9"
+
+	// Failure: flashes the error, clears updating, does not request relaunch.
+	m.updating = true
+	if _, cmd := m.Update(UpdateAppliedMsg{Err: errors.New("brew: command not found")}); cmd != nil {
+		t.Fatalf("expected no cmd on failure")
+	}
+	if m.updating {
+		t.Fatalf("expected updating to clear on failure")
+	}
+	if m.Relaunch {
+		t.Fatalf("expected Relaunch to stay false on failure")
+	}
+	if !strings.Contains(m.flash, "brew: command not found") {
+		t.Fatalf("flash = %q, want the brew error surfaced", m.flash)
+	}
+
+	// Success: clears updating, sets Relaunch, quits so main() can exec the
+	// freshly-installed binary.
+	m.updating = true
+	_, cmd := m.Update(UpdateAppliedMsg{})
+	if m.updating {
+		t.Fatalf("expected updating to clear on success")
+	}
+	if !m.Relaunch {
+		t.Fatalf("expected Relaunch=true on success")
+	}
+	if cmd == nil {
+		t.Fatalf("expected success to return tea.Quit")
+	}
+}
+
+// TestUpdateFlashSurvivesWhileBrewRuns covers a real bug: `brew update &&
+// brew upgrade` routinely runs far longer than infoFlashDuration (3s), so
+// without m.busy the "updating…" flash would vanish on the next InfoMsg tick
+// while the shell-out was still in flight, making the update look like it
+// silently did nothing.
+func TestUpdateFlashSurvivesWhileBrewRuns(t *testing.T) {
+	be := &fakeBackend{}
+	m := newTestModel(be)
+	m.UpdateVersion = "9.9.9"
+
+	if _, cmd := m.Update(keyRune("u")); cmd == nil {
+		t.Fatalf("expected a cmd once a newer version is known")
+	}
+	if !m.busy {
+		t.Fatalf("expected busy=true while the brew shell-out is in flight")
+	}
+
+	// Simulate an InfoMsg tick landing well after infoFlashDuration would
+	// normally have expired the flash.
+	m.flashTime = time.Now().Add(-2 * infoFlashDuration)
+	m.Update(InfoMsg{})
+	if !strings.Contains(m.flash, "updating to v9.9.9") {
+		t.Fatalf("flash = %q, want the updating notice to survive while busy", m.flash)
+	}
+
+	// Once the shell-out reports back, busy clears and later ticks can expire it.
+	m.Update(UpdateAppliedMsg{Err: errors.New("brew: command not found")})
+	if m.busy {
+		t.Fatalf("expected busy to clear once the update finishes")
 	}
 }

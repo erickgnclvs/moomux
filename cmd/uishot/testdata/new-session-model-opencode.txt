@@ -1,0 +1,54 @@
+=== 40x20 ===
+╭──────────────────────────────────────╮
+│                                      │
+│                                      │
+│  agent:  claude  codex  [opencode]   │
+│                                      │
+│  model:  > model (optional, e.g. an  │
+│                                      │
+│  thinking:  ‹ [default] ›            │
+│                                      │
+│  dangerous:  [off]                   │
+│                                      │
+│  open in background:  [off]          │
+│                                      │
+│  auto-submit:  [off]                 │
+│                                      │
+│  optional — passed as --model to     │
+│  the agent; "default" omits the      │
+│  tab/↑↓ fields  ←→ choose  enter  e  │
+│                                      │
+╰──────────────────────────────────────╯
+=== 100x32 ===
+           ╭────────────────────────────────────────────────────────────────────────────╮           
+           │                                                                            │           
+           │                                                                            │           
+           │  > existing branch (optional)                                              │           
+           │                                                                            │           
+           │  > base branch (optional, defaults to pr…                                  │           
+           │                                                                            │           
+           │  > first prompt (optional)                                                 │           
+           │  >                                                                         │           
+           │  >                                                                         │           
+           │  >                                                                         │           
+           │                                                                            │           
+           │  > ticket url (optional)                                                   │           
+           │                                                                            │           
+           │  > PR url (optional)                                                       │           
+           │                                                                            │           
+           │  agent:  claude  codex  [opencode]                                         │           
+           │                                                                            │           
+           │  model:  > model (optional, e.g. anthropic/claud…                          │           
+           │                                                                            │           
+           │  thinking:  [default]  think  think hard  think harder  ultrathink         │           
+           │                                                                            │           
+           │  dangerous:  [off]                                                         │           
+           │                                                                            │           
+           │  open in background:  [off]                                                │           
+           │                                                                            │           
+           │  auto-submit:  [off]                                                       │           
+           │                                                                            │           
+           │  optional — passed as --model to the agent; "default" omits the flag       │           
+           │  tab/↑↓ fields  ←→ choose  enter  esc cancel                               │           
+           │                                                                            │           
+           ╰────────────────────────────────────────────────────────────────────────────╯           

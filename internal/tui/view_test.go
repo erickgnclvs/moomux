@@ -127,7 +127,7 @@ func TestNarrowProjectEditKeepsEndOfRepoInput(t *testing.T) {
 	project.Repo = "/Users/example/Development/moomux/repo-XYZ"
 	m.cfg.Projects["demo"] = project
 	m.editProjectName = "demo"
-	m.projForm = editProjectForm("demo", project)
+	m.projForm = m.editProjectForm("demo", project)
 	m.mode = ModeEditProject
 	m.resizeFormInputs()
 
@@ -150,7 +150,7 @@ func TestNarrowProjectEditShortRepoPreservesFrame(t *testing.T) {
 	project := m.cfg.Projects["demo"]
 	project.Repo = "/tmp/demo"
 	m.editProjectName = "demo"
-	m.projForm = editProjectForm("demo", project)
+	m.projForm = m.editProjectForm("demo", project)
 	m.mode = ModeEditProject
 	m.resizeFormInputs()
 
@@ -333,7 +333,7 @@ func TestOverlaysStayWithinKeyboardSizedViewport(t *testing.T) {
 			setup: func(m *Model) {
 				m.mode = ModeEditProject
 				m.editProjectName = "demo"
-				m.projForm = editProjectForm("demo", m.cfg.Projects["demo"])
+				m.projForm = m.editProjectForm("demo", m.cfg.Projects["demo"])
 			},
 		},
 	} {
@@ -372,13 +372,14 @@ func TestShortFormViewportKeepsFocusedInputVisible(t *testing.T) {
 	m.mode = ModeNewForm
 	m.nameInput.SetValue("unique-name")
 	m.branchInput.SetValue("unique-branch")
+	m.baseBranchInput.SetValue("unique-basebranch")
 	m.promptInput.SetValue("unique-prompt")
 	m.ticketInput.SetValue("unique-ticket")
 	m.prInput.SetValue("unique-pr")
 	m.resizeFormInputs()
 
-	values := []string{"[demo]", "unique-name", "unique-branch", "unique-prompt", "unique-ticket", "unique-pr", "[claude]", "[off]", "[off]", "[off]"}
-	hints := []string{"which project", "worktree folder", "existing branch", "agent's first task", "clickable ticket", "clickable PR", "←→ to choose", "permission prompts", "background", "starts right away"}
+	values := []string{"[demo]", "unique-name", "unique-branch", "unique-basebranch", "unique-prompt", "unique-ticket", "unique-pr", "[claude]", "[default]", "[default]", "[off]", "[off]", "[off]"}
+	hints := []string{"which project", "worktree folder", "existing branch", "project's base branch", "agent's first task", "clickable ticket", "clickable PR", "←→ to choose", "omits the flag", "prepended to the first prompt", "permission prompts", "background", "starts right away"}
 	for focus, value := range values {
 		m.newFormBlurAll()
 		m.newFormFocus = focus
@@ -408,6 +409,7 @@ func TestFocusedOverlayLineCoversEveryNewFormField(t *testing.T) {
 	m.mode = ModeNewForm
 	m.nameInput.SetValue("tok-name")
 	m.branchInput.SetValue("tok-branch")
+	m.baseBranchInput.SetValue("tok-basebranch")
 	m.promptInput.SetValue("tok-firstprompt")
 	m.ticketInput.SetValue("tok-ticket")
 	m.prInput.SetValue("tok-prurl")
@@ -421,10 +423,13 @@ func TestFocusedOverlayLineCoversEveryNewFormField(t *testing.T) {
 		{newFormProjFocus, "project:"},
 		{1, "tok-name"},
 		{2, "tok-branch"},
-		{3, "tok-firstprompt"},
-		{4, "tok-ticket"},
-		{5, "tok-prurl"},
+		{3, "tok-basebranch"},
+		{4, "tok-firstprompt"},
+		{5, "tok-ticket"},
+		{6, "tok-prurl"},
 		{newFormAgentFocus, "agent:"},
+		{newFormModelFocus, "model:"},
+		{newFormThinkingFocus, "thinking:"},
 		{newFormDangerousFocus, "dangerous:"},
 		{newFormOpenTerminalFocus, "open in background:"},
 		{newFormAutoSubmitFocus, "auto-submit:"},
@@ -521,7 +526,7 @@ func TestFooterUpdateNoticeFallsBackAsWidthShrinks(t *testing.T) {
 	m.Version = "0.5.3"
 	m.UpdateVersion = "0.5.4"
 
-	full := "v0.5.3 → v0.5.4 (brew update && brew upgrade moomux)"
+	full := "v0.5.3 → v0.5.4 (u to update)"
 	short := "v0.5.3 → v0.5.4"
 	plain := "v0.5.3"
 
@@ -530,8 +535,8 @@ func TestFooterUpdateNoticeFallsBackAsWidthShrinks(t *testing.T) {
 		t.Fatalf("wide footer = %q, want it to contain %q", got, full)
 	}
 	// Too narrow for the instruction, wide enough for the arrow form.
-	if got := m.hintRowWithVersion("? help", lipgloss.Width("? help")+lipgloss.Width(short)+1); !strings.Contains(got, short) || strings.Contains(got, "brew") {
-		t.Fatalf("medium footer = %q, want it to contain %q but not the brew command", got, short)
+	if got := m.hintRowWithVersion("? help", lipgloss.Width("? help")+lipgloss.Width(short)+1); !strings.Contains(got, short) || strings.Contains(got, "u to update") {
+		t.Fatalf("medium footer = %q, want it to contain %q but not the update hint", got, short)
 	}
 	// Too narrow for the arrow form, wide enough for the plain version.
 	if got := m.hintRowWithVersion("? help", lipgloss.Width("? help")+lipgloss.Width(plain)+1); !strings.Contains(got, plain) || strings.Contains(got, "→") {

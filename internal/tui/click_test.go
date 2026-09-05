@@ -2,7 +2,10 @@ package tui
 
 import (
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -13,8 +16,23 @@ import (
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
+// testAgentOptions is the agent/model/thinking-level table every test Model
+// is constructed with — a fixture standing in for what App.AgentOptions
+// would serve in production, kept in lockstep with it by
+// TestAgentOptionsMatchesTUIFixture in agent_options_test.go.
+var testAgentOptions = []config.AgentOption{
+	{Name: "claude", Models: []string{"default", "sonnet", "opus", "fable"}, Thinking: []string{"default", "think", "think hard", "think harder", "ultrathink"}},
+	{Name: "codex", Models: []string{"default", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}, Thinking: []string{"default", "minimal", "low", "medium", "high", "xhigh"}},
+	{Name: "opencode", Thinking: []string{"default", "think", "think hard", "think harder", "ultrathink"}},
+}
+
 type fakeBackend struct {
 	sessions []session.Session
+
+	// Call counters for the CPU-cost tests in cpu_test.go. Atomic because
+	// TmuxAliveAll is reached from a tea.Cmd goroutine.
+	sessionsCalls  atomic.Int64
+	tmuxAliveCalls atomic.Int64
 
 	reorderSessionsCalls []reorderSessionsCall
 	reorderSessionsErr   error
@@ -93,10 +111,18 @@ type fakeBackend struct {
 	setCompactDetailCalls []bool
 	setCompactDetailErr   error
 
+	// statusMu guards worktreeStatusCalls/prStatusCalls: fetchGitStatusCmd
+	// and fetchPRStatusCmd fan their per-id backend calls out concurrently,
+	// so appends to these from WorktreeStatus/PRStatus need a lock.
+	statusMu sync.Mutex
+
 	// worktreeStatus, keyed by session id, backs WorktreeStatus. A missing
 	// entry means "unknown" (ok=false) rather than "clean".
 	worktreeStatus      map[string]gitStatusInfo
 	worktreeStatusCalls []string
+	// worktreeStatusDelay, when set, makes WorktreeStatus sleep before
+	// answering — for timing a concurrent fan-out against a sequential one.
+	worktreeStatusDelay time.Duration
 
 	// changeSummary, keyed by session id, backs ChangeSummary. A missing
 	// entry means "unknown" (ok=false).
@@ -107,17 +133,29 @@ type fakeBackend struct {
 	// "unknown" (ok=false), mirroring worktreeStatus.
 	prStatus      map[string]prStatusInfo
 	prStatusCalls []string
+	// prStatusDelay mirrors worktreeStatusDelay, for PRStatus.
+	prStatusDelay time.Duration
 
 	// tmuxAlive backs TmuxAliveAll; nil (the zero value) reads as "nothing
 	// alive", same as the map[string]bool{} every other test relies on.
 	tmuxAlive map[string]bool
+
+	// cfg backs ConfigSnapshot, and is actually mutated by the project/theme
+	// mutators below (mirroring what the real App does) — tests that
+	// exercise one of those flows and then check cfg-derived state
+	// (m.projects, m.cfg.Theme, ...) after the resulting Msg lands in
+	// Update() must seed this from whatever *config.Config they passed to
+	// New(), e.g. `be.cfg = *cfg`.
+	cfg config.Config
 }
 
 type setThemeCall struct{ theme, appearance string }
 
 type createCall struct {
 	project, name, agent, branch, ticket string
-	openTerminal, dangerous              bool
+	openTerminal                         bool
+	dangerous                            *bool
+	baseBranch, model, thinking          string
 }
 type sendPromptCall struct {
 	tmuxSession, prompt string
@@ -168,8 +206,8 @@ type deleteFolderCall struct {
 	project, name string
 }
 
-func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool) (session.Session, string, error) {
-	f.createCalls = append(f.createCalls, createCall{project, name, agent, existingBranch, ticket, openTerminal, dangerous})
+func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
+	f.createCalls = append(f.createCalls, createCall{project, name, agent, existingBranch, ticket, openTerminal, dangerous, baseBranch, model, thinking})
 	if f.createErr != nil {
 		return session.Session{}, "", f.createErr
 	}
@@ -177,7 +215,7 @@ func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket
 	if label == "" {
 		label = existingBranch
 	}
-	s := session.Session{ID: session.MakeID(project, label), Project: project, Name: label, Agent: agent, Dangerous: dangerous, Ticket: ticket}
+	s := session.Session{ID: session.MakeID(project, label), Project: project, Name: label, Agent: agent, Dangerous: dangerous != nil && *dangerous, Ticket: ticket}
 	f.sessions = append(f.sessions, s)
 	return s, f.createHint, nil
 }
@@ -202,7 +240,12 @@ func (f *fakeBackend) DeleteSession(id string) (string, error) {
 	return "", f.deleteErr
 }
 func (f *fakeBackend) WorktreeStatus(id string) (dirty, unpushed, ok bool) {
+	if f.worktreeStatusDelay > 0 {
+		time.Sleep(f.worktreeStatusDelay)
+	}
+	f.statusMu.Lock()
 	f.worktreeStatusCalls = append(f.worktreeStatusCalls, id)
+	f.statusMu.Unlock()
 	st, present := f.worktreeStatus[id]
 	if !present {
 		return false, false, false
@@ -218,7 +261,12 @@ func (f *fakeBackend) ChangeSummary(id string) (filesChanged, unpushedCommits in
 	return st.filesChanged, st.unpushedCommits, st.ok
 }
 func (f *fakeBackend) PRStatus(id string) (prstatus.Info, bool) {
+	if f.prStatusDelay > 0 {
+		time.Sleep(f.prStatusDelay)
+	}
+	f.statusMu.Lock()
 	f.prStatusCalls = append(f.prStatusCalls, id)
+	f.statusMu.Unlock()
 	st, present := f.prStatus[id]
 	if !present {
 		return prstatus.Info{}, false
@@ -298,7 +346,30 @@ func (f *fakeBackend) ReorderSessions(ids []string) error {
 }
 func (f *fakeBackend) MoveProject(name string, delta int) error {
 	f.moveProjectCalls = append(f.moveProjectCalls, moveProjectCall{name: name, delta: delta})
-	return f.moveProjectErr
+	if f.moveProjectErr != nil {
+		return f.moveProjectErr
+	}
+	order := f.cfg.OrderedProjectNames()
+	idx := indexOfProject(order, name)
+	if idx < 0 {
+		return nil
+	}
+	j := idx + delta
+	if j < 0 || j >= len(order) {
+		return nil
+	}
+	order[idx], order[j] = order[j], order[idx]
+	f.cfg.Order = order
+	return nil
+}
+func (f *fakeBackend) TmuxAliveAll() map[string]bool {
+	f.tmuxAliveCalls.Add(1)
+	return f.tmuxAlive
+}
+
+func (f *fakeBackend) Sessions() []session.Session {
+	f.sessionsCalls.Add(1)
+	return f.sessions
 }
 func (f *fakeBackend) CreateFolder(project, name string) error {
 	f.createFolderCalls = append(f.createFolderCalls, createFolderCall{project: project, name: name})
@@ -336,38 +407,78 @@ func (f *fakeBackend) DeleteFolder(project, name string) error {
 	}
 	return f.deleteFolderErr
 }
-func (f *fakeBackend) TmuxAliveAll() map[string]bool { return f.tmuxAlive }
-func (f *fakeBackend) Sessions() []session.Session   { return f.sessions }
 func (f *fakeBackend) Projects() []string            { return nil }
+func (f *fakeBackend) ConfigSnapshot() config.Config { return f.cfg.Clone() }
 func (f *fakeBackend) AddProject(name string, p config.Project) error {
 	f.addProjectCalls = append(f.addProjectCalls, projectCall{name, p})
-	return f.addProjectErr
+	if f.addProjectErr != nil {
+		return f.addProjectErr
+	}
+	if f.cfg.Projects == nil {
+		f.cfg.Projects = map[string]config.Project{}
+	}
+	f.cfg.Projects[name] = p
+	return nil
 }
 func (f *fakeBackend) InitProjectAndAdd(name string, p config.Project) error {
 	f.initProjectCalls = append(f.initProjectCalls, projectCall{name, p})
-	return f.initProjectErr
+	if f.initProjectErr != nil {
+		return f.initProjectErr
+	}
+	if f.cfg.Projects == nil {
+		f.cfg.Projects = map[string]config.Project{}
+	}
+	f.cfg.Projects[name] = p
+	return nil
 }
 func (f *fakeBackend) AddPlainProject(name string, p config.Project) error {
 	f.plainCalls = append(f.plainCalls, projectCall{name, p})
-	return f.plainErr
+	if f.plainErr != nil {
+		return f.plainErr
+	}
+	if f.cfg.Projects == nil {
+		f.cfg.Projects = map[string]config.Project{}
+	}
+	f.cfg.Projects[name] = p
+	return nil
 }
 func (f *fakeBackend) UpdateProject(name string, p config.Project) error {
 	f.updateProjectCalls = append(f.updateProjectCalls, projectCall{name, p})
-	return f.updateProjectErr
+	if f.updateProjectErr != nil {
+		return f.updateProjectErr
+	}
+	if f.cfg.Projects == nil {
+		f.cfg.Projects = map[string]config.Project{}
+	}
+	f.cfg.Projects[name] = p
+	return nil
 }
 func (f *fakeBackend) RemoveProject(name string) error {
 	f.removeProjectCalls = append(f.removeProjectCalls, name)
-	return f.removeProjectErr
+	if f.removeProjectErr != nil {
+		return f.removeProjectErr
+	}
+	delete(f.cfg.Projects, name)
+	return nil
 }
 
 func (f *fakeBackend) SetTheme(theme, appearance string) error {
 	f.setThemeCalls = append(f.setThemeCalls, setThemeCall{theme, appearance})
-	return f.setThemeErr
+	if f.setThemeErr != nil {
+		return f.setThemeErr
+	}
+	f.cfg.Theme = theme
+	f.cfg.Appearance = appearance
+	return nil
 }
 
 func (f *fakeBackend) SetAutoSubmitDefault(autoSubmit bool) error {
 	f.setAutoSubmitDefaultCalls = append(f.setAutoSubmitDefaultCalls, autoSubmit)
-	return f.setAutoSubmitDefaultErr
+	if f.setAutoSubmitDefaultErr != nil {
+		return f.setAutoSubmitDefaultErr
+	}
+	f.cfg.AutoSubmitDefault = autoSubmit
+	return nil
 }
 
 func (f *fakeBackend) SetSortRecentFirst(recentFirst bool) error {
@@ -394,7 +505,7 @@ func TestLinkHitsResolveClicks(t *testing.T) {
 		{ID: "demo:one", Project: "demo", Name: "one", Ticket: "https://ticket.example/1", PR: "https://pr.example/1"},
 	}}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 
 	frame := m.View()
@@ -437,7 +548,7 @@ func TestTruncatedDetailURLsRemainClickable(t *testing.T) {
 			PR:      prURL,
 		},
 	}}
-	m := New(cfg, be, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
 	m.width, m.height = 80, 24
 
 	frame := m.View()
@@ -505,7 +616,7 @@ func TestLinkClickOverSSHCopiesInsteadOfOpening(t *testing.T) {
 		{ID: "demo:one", Project: "demo", Name: "one", Ticket: "https://ticket.example/1"},
 	}}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.View() // populate m.linkHits
 
@@ -526,11 +637,12 @@ func TestLinkClickOverSSHCopiesInsteadOfOpening(t *testing.T) {
 	}
 }
 
-// TestSessionRowClickSelectsAndOpens asserts that a left click anywhere on a
-// session's row (not just its ticket/PR icons) both moves the cursor to that
-// session and opens it — mobile clients tapping a row have no keyboard
-// cursor to line up with first, so the tap needs to do both in one motion.
-func TestSessionRowClickSelectsAndOpens(t *testing.T) {
+// TestSessionRowClickSelectsWithoutOpening asserts that a left click
+// anywhere on a session's row (not just its ticket/PR icons) moves the
+// cursor to that session but does NOT open/attach it — a stray click used to
+// launch a tmux attach unexpectedly, which is disruptive enough that
+// tap-to-open was removed in favor of tap-to-select only.
+func TestSessionRowClickSelectsWithoutOpening(t *testing.T) {
 	cfg := &config.Config{Projects: map[string]config.Project{"demo": {Repo: "/tmp/demo"}}}
 	be := &fakeBackend{
 		sessions: []session.Session{
@@ -540,9 +652,10 @@ func TestSessionRowClickSelectsAndOpens(t *testing.T) {
 		openHint: "run: tmux attach -t moomux-two",
 	}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
-	m.View() // populate m.rowHits
+	m.mode = ModeList // exercising the plain-list click path, not multi-view's
+	m.View()          // populate m.rowHits
 
 	var hit resolvedRowHit
 	for _, h := range m.rowHits {
@@ -559,8 +672,8 @@ func TestSessionRowClickSelectsAndOpens(t *testing.T) {
 	if m.cursor != 1 {
 		t.Errorf("cursor = %d, want 1 (demo:two)", m.cursor)
 	}
-	if len(be.openCalls) != 1 || be.openCalls[0] != "demo:two" {
-		t.Errorf("openCalls = %v, want [demo:two]", be.openCalls)
+	if len(be.openCalls) != 0 {
+		t.Errorf("openCalls = %v, want none (row click no longer opens)", be.openCalls)
 	}
 }
 
@@ -573,7 +686,7 @@ func TestSessionRowClickOutsideListDoesNotSelect(t *testing.T) {
 		{ID: "demo:one", Project: "demo", Name: "one"},
 	}}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.View()
 
@@ -623,7 +736,7 @@ func TestRemoteLinksToggleOverridesAutoDetection(t *testing.T) {
 	cfg := &config.Config{Projects: map[string]config.Project{"demo": {Repo: "/tmp/demo"}}}
 	be := &fakeBackend{}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 
 	// No SSH env set and not forced: isRemote() says false.
 	if m.isRemote() {
@@ -659,7 +772,7 @@ func TestTmuxRowClickAlwaysCopies(t *testing.T) {
 		{ID: "demo:one", Project: "demo", Name: "one", TmuxSession: "moomux-one"},
 	}}
 	statusCh := make(chan watcher.Snapshot)
-	m := New(cfg, be, statusCh, func() {})
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.View() // populate m.linkHits
 

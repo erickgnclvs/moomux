@@ -1,0 +1,54 @@
+=== 40x20 ===
+   ^__^                                 
+ _/(--)  mootering off for now          
+  \(__)                                 
+┌──────────────────────────────────────┐
+│  compact-detail-section     🎫 🔀 ⬤  │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+└──────────────────────────────────────┘
+                                        
+ ? help                            vdev 
+=== 100x32 ===
+   ^__^                                                                                             
+   (--)\_                                                                                           
+   (__)\ )                                                                                          
+┌────────────────────────────────────────────────┐┌────────────────────────────────────────────────┐
+│ 🦊 dev_setup                                   ││ 🐄 moomux                                      │
+│                                                ││                                                │
+│  show-ports                                 ⬤  ││  compact-detail-section               🎫 🔀 ⬤  │
+│                                                ││                                                │
+│ ────────────────────────────────────────────── ││ ────────────────────────────────────────────── │
+│ project:   dev_setup                           ││ project:   moomux                              │
+│ status:    ⬤  in the barn                      ││ status:    ⬤  in the barn                      │
+│ name:      show-ports                          ││ name:      compact-detail-section              │
+│ agent:     claude                              ││ agent:     claude                              │
+│ tmux:      moomux-dev-one                      ││ ticket:    https://tracker.example/TICK-42     │
+│ worktree:  /tmp/dev_setup/one                  ││ pr:        …thub.com/example/repo/pull/5478    │
+│ created:   just now                            ││ pr status: open, CI passing                    │
+│                                                ││ tmux:      moomux-moomux-one                   │
+│                                                ││ worktree:  /tmp/moomux/one                     │
+│                                                ││ created:   just now                            │
+│                                                ││                                                │
+│                                                ││                                                │
+│  ________________________________________      ││  ________________________________________      │
+│ < out to pasture                         >     ││ < mootering off for now                  >     │
+│  ----------------------------------------      ││  ----------------------------------------      │
+│         \   ^__^                               ││         \   ^__^                               │
+│          \  (--)\_______                       ││          \  (--)\_______                       │
+│             (__)\       )\/\                   ││             (__)\       )\/\                   │
+│                 ||----w |                      ││                 ||----w |                      │
+│                 ||     ||                      ││                 ||     ||                      │
+└────────────────────────────────────────────────┘└────────────────────────────────────────────────┘
+                                                                                                    
+ ? help                                                                                        vdev 

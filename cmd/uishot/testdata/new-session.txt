@@ -1,0 +1,54 @@
+=== 40x20 ===
+╭──────────────────────────────────────╮
+│                                      │
+│                                      │
+│  project:  [demo]  spare             │
+│                                      │
+│  > session name (optional if br…     │
+│                                      │
+│  > existing branch (optional)        │
+│                                      │
+│  > base branch (optional, defau…     │
+│                                      │
+│  > first prompt (optional)           │
+│  >                                   │
+│  >                                   │
+│                                      │
+│  which project this session belongs  │
+│  to — ←→ to choose                   │
+│  tab/↑↓ fields  ←→ choose  enter  e  │
+│                                      │
+╰──────────────────────────────────────╯
+=== 100x32 ===
+           ╭────────────────────────────────────────────────────────────────────────────╮           
+           │                                                                            │           
+           │                                                                            │           
+           │  project:  [demo]  spare                                                   │           
+           │                                                                            │           
+           │  > session name (optional if branch set)                                   │           
+           │                                                                            │           
+           │  > existing branch (optional)                                              │           
+           │                                                                            │           
+           │  > base branch (optional, defaults to pr…                                  │           
+           │                                                                            │           
+           │  > first prompt (optional)                                                 │           
+           │  >                                                                         │           
+           │  >                                                                         │           
+           │  >                                                                         │           
+           │                                                                            │           
+           │  > ticket url (optional)                                                   │           
+           │                                                                            │           
+           │  > PR url (optional)                                                       │           
+           │                                                                            │           
+           │  agent:  claude  [codex]  opencode                                         │           
+           │                                                                            │           
+           │  model:  [default]  gpt-5.6-sol  gpt-5.6-terra  gpt-5.6-luna               │           
+           │                                                                            │           
+           │  thinking:  [default]  minimal  low  medium  high  xhigh                   │           
+           │                                                                            │           
+           │  dangerous:  [off]                                                         │           
+           │                                                                            │           
+           │  which project this session belongs to — ←→ to choose                      │           
+           │  tab/↑↓ fields  ←→ choose  enter  esc cancel                               │           
+           │                                                                            │           
+           ╰────────────────────────────────────────────────────────────────────────────╯           
