@@ -121,6 +121,12 @@ func (w *SQLiteWatcher) tick(ctx context.Context, out chan<- Snapshot, activeAge
 	var queryErrs []error
 	now := time.Now()
 	for _, dbPath := range dbPaths {
+		if fi, err := os.Stat(dbPath); err == nil && fi.Size() == 0 {
+			// A zero-length DB is one the agent hasn't opened/populated yet
+			// (e.g. a stale ~/.codex/state_N.sqlite from a session that never
+			// started), not a query failure.
+			continue
+		}
 		rows, err := w.queryCached(ctx, dbPath)
 		if err != nil {
 			queryErrs = append(queryErrs, fmt.Errorf("query %s: %w", dbPath, err))
@@ -173,8 +179,15 @@ func querySQLite(ctx context.Context, dbPath, query string) (map[string]int64, e
 	// sqlite3 forked a child that inherited the output pipe, killing
 	// sqlite3 alone doesn't close it.
 	cmd.WaitDelay = 2 * time.Second
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
+		if strings.Contains(stderr.String(), "no such table") {
+			// The DB file exists but the agent hasn't created its schema
+			// yet — an empty result, not a query failure.
+			return map[string]int64{}, nil
+		}
 		return nil, err
 	}
 	result := make(map[string]int64)
