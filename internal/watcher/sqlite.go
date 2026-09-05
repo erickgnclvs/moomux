@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,12 +34,75 @@ type SQLiteWatcher struct {
 	ActiveAge time.Duration // within this age = Working; default 10s
 	Interval  time.Duration // poll interval; default 2s
 	// MarkerDir, if set, is scanned each tick for the *.json needs-input
-	// marker files internal/codexhook writes and clears (see scanDir). The
+	// marker files internal/codexhook writes and clears (see dirScanner.scan). The
 	// merge must happen in the same tick as the SQLite query: NeedsInput and
 	// Working both come from Codex here, and update.go's per-watcher
 	// last-snapshot-wins semantics mean combining them across separate
 	// snapshots would let whichever tick lands last clobber the other.
 	MarkerDir string
+
+	markerScanner dirScanner
+
+	rowsMu    sync.Mutex
+	rowsCache map[string]cachedRows // by db path
+}
+
+// cachedRows is one DB's last query result, valid as long as dbStamp still
+// matches. Every tick re-derives Working/Done from these rows against the
+// current time, so the ActiveAge decay this watcher exists to catch is
+// unaffected by reusing them — only the sqlite3 subprocess is skipped.
+type cachedRows struct {
+	stamp string
+	rows  map[string]int64
+}
+
+// dbStamp fingerprints a SQLite database as (size, mtime) of the main file
+// and its write-ahead log. In WAL mode a commit appends to <db>-wal and
+// leaves the main file untouched until a checkpoint, so watching the main
+// file alone would miss every write; -shm is deliberately excluded because
+// it changes when a *reader* connects, which would include our own query
+// and defeat the cache entirely.
+func dbStamp(dbPath string) string {
+	var b strings.Builder
+	for _, p := range [2]string{dbPath, dbPath + "-wal"} {
+		fi, err := os.Stat(p)
+		if err != nil {
+			b.WriteString("-|")
+			continue
+		}
+		fmt.Fprintf(&b, "%d:%d|", fi.Size(), fi.ModTime().UnixNano())
+	}
+	return b.String()
+}
+
+// queryCached is querySQLite with the subprocess skipped when the database
+// hasn't changed since the last tick. The sqlite3 CLI costs ~4ms of fork,
+// exec and page-in per call, paid every Interval per matched DB (plus an
+// extra out-of-cycle tick per debounced filesystem event on darwin) — for a
+// database that, between agent turns, is byte-for-byte the one already
+// queried.
+func (w *SQLiteWatcher) queryCached(ctx context.Context, dbPath string) (map[string]int64, error) {
+	stamp := dbStamp(dbPath)
+
+	w.rowsMu.Lock()
+	prev, ok := w.rowsCache[dbPath]
+	w.rowsMu.Unlock()
+	if ok && prev.stamp == stamp {
+		return prev.rows, nil
+	}
+
+	rows, err := querySQLite(ctx, dbPath, w.Query)
+	if err != nil {
+		return nil, err
+	}
+
+	w.rowsMu.Lock()
+	if w.rowsCache == nil {
+		w.rowsCache = map[string]cachedRows{}
+	}
+	w.rowsCache[dbPath] = cachedRows{stamp: stamp, rows: rows}
+	w.rowsMu.Unlock()
+	return rows, nil
 }
 
 func (w *SQLiteWatcher) tick(ctx context.Context, out chan<- Snapshot, activeAge time.Duration) {
@@ -57,7 +121,7 @@ func (w *SQLiteWatcher) tick(ctx context.Context, out chan<- Snapshot, activeAge
 	var queryErrs []error
 	now := time.Now()
 	for _, dbPath := range dbPaths {
-		rows, err := querySQLite(ctx, dbPath, w.Query)
+		rows, err := w.queryCached(ctx, dbPath)
 		if err != nil {
 			queryErrs = append(queryErrs, fmt.Errorf("query %s: %w", dbPath, err))
 			continue
@@ -76,7 +140,7 @@ func (w *SQLiteWatcher) tick(ctx context.Context, out chan<- Snapshot, activeAge
 		}
 	}
 	if w.MarkerDir != "" {
-		markerStates, readErr, parseErr := scanDir(w.MarkerDir)
+		markerStates, readErr, parseErr := w.markerScanner.scan(w.MarkerDir)
 		if readErr != nil && !os.IsNotExist(readErr) {
 			// A missing MarkerDir just means no hook has ever fired yet —
 			// not an error.

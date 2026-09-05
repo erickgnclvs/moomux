@@ -340,6 +340,10 @@ func (m *Model) renderOverlay(content, footer string, focusedLine int) string {
 }
 
 func (m *Model) View() string {
+	// One backend read per pass — see allSessions. View runs after Update
+	// and may see backend changes a tea.Cmd landed in between, so it takes
+	// its own snapshot rather than reusing Update's.
+	m.invalidateSessions()
 	if m.width == 0 {
 		return "starting…"
 	}

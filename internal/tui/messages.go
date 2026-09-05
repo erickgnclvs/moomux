@@ -10,6 +10,11 @@ import (
 
 type StatusTickMsg struct{ Snap watcher.Snapshot }
 
+// TmuxTickMsg fires on tmuxRefreshInterval and drives refreshStatusCmd.
+// Separate from StatusTickMsg so tmux liveness is polled on its own steady
+// timer instead of once per watcher snapshot — see tmuxRefreshInterval.
+type TmuxTickMsg struct{}
+
 // StatusRefreshedMsg carries the results of an off-goroutine tmux-alive and
 // prompt scan, computed by refreshStatusCmd. Update() merges these into the
 // model; the computation itself must not touch model state.

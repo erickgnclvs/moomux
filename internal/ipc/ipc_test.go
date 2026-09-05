@@ -588,3 +588,71 @@ func recvSnap(t *testing.T, ctx context.Context, out <-chan watcher.Snapshot, ma
 		}
 	}
 }
+
+// countingWatcher records how many times Run was called and keeps the
+// stream open, emitting snap to whoever is listening until ctx ends.
+type countingWatcher struct {
+	mu   sync.Mutex
+	runs int
+	snap watcher.Snapshot
+}
+
+func (w *countingWatcher) Run(ctx context.Context, out chan<- watcher.Snapshot) {
+	w.mu.Lock()
+	w.runs++
+	w.mu.Unlock()
+	t := time.NewTicker(10 * time.Millisecond)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			select {
+			case out <- w.snap:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+}
+
+func (w *countingWatcher) runCount() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.runs
+}
+
+// TestWatchSharesOneWatcher is the CPU fix: a watcher run per connection
+// meant every attached front end paid for its own directory rescans, its own
+// sqlite3 subprocess per database per tick, and (on macOS, where fsnotify's
+// kqueue backend opens a descriptor per watched file) its own several
+// hundred file descriptors — all producing identical snapshots.
+func TestWatchSharesOneWatcher(t *testing.T) {
+	w := &countingWatcher{snap: watcher.Snapshot{
+		States:   map[string]watcher.State{"/wt/a": watcher.Working},
+		PollTime: time.Now(),
+	}}
+	c, _ := start(t, &fakeBackend{}, &config.Config{}, w)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Two independent clients, both streaming at once.
+	for i := 0; i < 2; i++ {
+		out := make(chan watcher.Snapshot, 4)
+		go c.Run(ctx, out)
+		select {
+		case snap := <-out:
+			if snap.States["/wt/a"] != watcher.Working {
+				t.Fatalf("client %d: got %v", i, snap.States)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("client %d: no snapshot", i)
+		}
+	}
+
+	if n := w.runCount(); n != 1 {
+		t.Errorf("Watcher.Run called %d times for 2 clients, want 1", n)
+	}
+}

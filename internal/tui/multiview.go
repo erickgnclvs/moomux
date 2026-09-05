@@ -35,7 +35,7 @@ func (m *Model) multiViewEligibleProjects() []string {
 		return nil
 	}
 	has := make(map[string]bool, len(m.projects))
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if s.Archived == m.showArchived {
 			has[s.Project] = true
 		}
@@ -122,7 +122,7 @@ func (m *Model) ensureMultiFocusVisible() {
 // moving to the adjacent one.
 func (m *Model) multiViewSessionsFor(proj string) []session.Session {
 	var out []session.Session
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if s.Project == proj && s.Archived == m.showArchived {
 			out = append(out, s)
 		}
@@ -223,7 +223,7 @@ func (m *Model) focusMultiProject(name string) {
 // ID isn't scoped to whichever project happens to be "entered" via
 // enterSingleProjectContext at click time.
 func (m *Model) projectForSession(id string) (string, bool) {
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if s.ID == id {
 			return s.Project, true
 		}
