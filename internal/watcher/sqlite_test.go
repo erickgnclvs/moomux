@@ -117,6 +117,83 @@ func TestSQLiteWatcherMarkerDirWinsOverStaleRow(t *testing.T) {
 	}
 }
 
+// TestSQLiteWatcherSkipsZeroLengthDB covers a stale ~/.codex/state_0.sqlite
+// left over from a session that never wrote to it: the glob still matches
+// it, but it has never been opened by sqlite3 (no schema), so querying it
+// would surface a permanent "no such table: sessions" error on every tick.
+// It must be skipped instead, while a real, populated DB alongside it still
+// reports normally.
+func TestSQLiteWatcherSkipsZeroLengthDB(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	binDir := t.TempDir()
+	fake := filepath.Join(binDir, "sqlite3")
+	script := `#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    *state_0.sqlite) echo "no such table: sessions" 1>&2; exit 1 ;;
+  esac
+done
+echo "/tmp/wt-a	$(($(date +%s) * 1000))"
+`
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	dbDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dbDir, "state_0.sqlite"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dbDir, "state_5.sqlite"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := &SQLiteWatcher{DB: filepath.Join(dbDir, "state_*.sqlite"), Query: "irrelevant", Interval: 10 * time.Millisecond}
+	ch := make(chan Snapshot, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go w.Run(ctx, ch)
+
+	select {
+	case snap := <-ch:
+		if snap.Err != nil {
+			t.Fatalf("got Err %v, want nil (zero-length DB should be skipped, not queried)", snap.Err)
+		}
+		if got := snap.States["/tmp/wt-a"]; got != Working {
+			t.Fatalf("got %v, want Working from the populated DB", got)
+		}
+	case <-ctx.Done():
+		t.Fatal("no snapshot received")
+	}
+}
+
+// TestQuerySQLiteTreatsNoSuchTableAsEmpty covers a DB file that exists (and
+// isn't zero-length) but whose schema Codex hasn't created yet: sqlite3
+// exits nonzero with "no such table" on stderr, which must be treated as an
+// empty result rather than a query error.
+func TestQuerySQLiteTreatsNoSuchTableAsEmpty(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "sqlite3")
+	script := "#!/bin/sh\necho 'Error: no such table: sessions' 1>&2\nexit 1\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	rows, err := querySQLite(context.Background(), "irrelevant.db", "SELECT 1")
+	if err != nil {
+		t.Fatalf("querySQLite returned error, want no such table treated as empty: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("got %v, want empty result", rows)
+	}
+}
+
 // TestSQLiteWatcherMarkerDirWithoutDB covers a needs-input hook firing
 // before Codex's own state db exists yet (e.g. very first launch): the DB
 // glob matching zero files must not skip the MarkerDir scan.
