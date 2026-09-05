@@ -62,8 +62,12 @@ func codeFor(err error) string {
 // if the surface doubles or two methods ever want the same field to mean
 // different things.
 type Args struct {
-	ID          string        `json:"id,omitempty"`
-	Name        string        `json:"name,omitempty"`
+	ID   string   `json:"id,omitempty"`
+	IDs  []string `json:"ids,omitempty"` // ReorderSessions
+	Name string   `json:"name,omitempty"`
+	// NewName is RenameFolder's target name; Name carries its oldName, same
+	// as every other folder method's single Name/folder-name parameter.
+	NewName     string        `json:"new_name,omitempty"`
 	Project     string        `json:"project,omitempty"`
 	Agent       string        `json:"agent,omitempty"`
 	Branch      string        `json:"branch,omitempty"`

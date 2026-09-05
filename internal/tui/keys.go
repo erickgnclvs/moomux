@@ -39,6 +39,8 @@ type KeyMap struct {
 	ProjectPicker  key.Binding
 	Settings       key.Binding
 	Search         key.Binding
+	AssignFolder   key.Binding
+	Folders        key.Binding
 	Update         key.Binding
 }
 
@@ -108,6 +110,11 @@ func DefaultKeyMap() KeyMap {
 		// straight into a text field, so it searches every project's
 		// sessions at once rather than needing its own scoping key.
 		Search: key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "find session")),
+		// Files the selected session under a named, collapsible group within
+		// its project (blank name removes it from one) — a mnemonic pair with
+		// Folders below, which manages the groups themselves.
+		AssignFolder: key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "folder")),
+		Folders:      key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "manage folders")),
 		// Only does anything once UpdateVersion is set (a newer release was
 		// found) — see updateList's Update case.
 		Update: key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "update & relaunch")),

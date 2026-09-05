@@ -257,12 +257,46 @@ func (c *Client) SetSessionArchived(id string, archived bool) (session.Session, 
 	return c.sess("SetSessionArchived", Args{ID: id, On: archived})
 }
 
-func (c *Client) MoveSession(id string, delta int) error {
-	return c.err0("MoveSession", Args{ID: id, Delta: delta})
+func (c *Client) ReorderSessions(ids []string) error {
+	return c.err0("ReorderSessions", Args{IDs: ids})
 }
 
 func (c *Client) MoveProject(name string, delta int) error {
 	return c.mut("MoveProject", Args{Name: name, Delta: delta})
+}
+
+func (c *Client) CreateFolder(project, name string) error {
+	return c.mut("CreateFolder", Args{Project: project, Name: name})
+}
+
+// SetSessionFolder can create a new folder on its first use (mutating
+// server-side config, same as CreateFolder), so — unlike sess()'s other
+// callers — it must also cache the response's Cfg the way mut does, or a
+// folder created this way would never show up in ConfigSnapshot until some
+// unrelated mutator happened to refresh it.
+func (c *Client) SetSessionFolder(id, folder string) (session.Session, error) {
+	r, err := c.call("SetSessionFolder", Args{ID: id, Name: folder})
+	if r.Cfg != nil {
+		c.mu.Lock()
+		c.lastCfg = *r.Cfg
+		c.mu.Unlock()
+	}
+	if r.Session == nil {
+		return session.Session{}, err
+	}
+	return *r.Session, err
+}
+
+func (c *Client) RenameFolder(project, oldName, newName string) error {
+	return c.mut("RenameFolder", Args{Project: project, Name: oldName, NewName: newName})
+}
+
+func (c *Client) SetFolderCollapsed(project, name string, collapsed bool) error {
+	return c.mut("SetFolderCollapsed", Args{Project: project, Name: name, On: collapsed})
+}
+
+func (c *Client) DeleteFolder(project, name string) error {
+	return c.mut("DeleteFolder", Args{Project: project, Name: name})
 }
 
 func (c *Client) AddProject(name string, p config.Project) error {

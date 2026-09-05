@@ -1113,7 +1113,7 @@ func TestNewProjectFlow(t *testing.T) {
 	}
 	got := be.addProjectCalls[0]
 	want := config.Project{Repo: "/tmp/newproj", BaseBranch: "main", BranchPrefix: "me", Agent: "codex", NoWorktree: true}
-	if got.name != "newproj" || got.p != want {
+	if got.name != "newproj" || !reflect.DeepEqual(got.p, want) {
 		t.Fatalf("call = %+v", got)
 	}
 	if m.mode != ModeProjectPicker || !strings.Contains(m.flash, "added project newproj") {
@@ -1809,9 +1809,14 @@ func TestPlainLetterAlternatesForChordedKeys(t *testing.T) {
 	run(m, keyRune("J"))
 	m.cursor = 1
 	run(m, keyRune("K"))
-	want := []moveSessionCall{{id: "alpha:a", delta: 1}, {id: "alpha:b", delta: -1}}
-	if len(be.moveSessionCalls) != 2 || be.moveSessionCalls[0] != want[0] || be.moveSessionCalls[1] != want[1] {
-		t.Fatalf("moveSessionCalls = %+v, want %+v", be.moveSessionCalls, want)
+	if len(be.reorderSessionsCalls) != 2 {
+		t.Fatalf("reorderSessionsCalls = %+v, want 2 calls", be.reorderSessionsCalls)
+	}
+	if got := be.reorderSessionsCalls[0].ids; len(got) != 2 || got[0] != "alpha:b" || got[1] != "alpha:a" {
+		t.Fatalf("first ReorderSessions call = %v, want [alpha:b alpha:a] (J swapped a below b)", got)
+	}
+	if got := be.reorderSessionsCalls[1].ids; len(got) != 2 || got[0] != "alpha:a" || got[1] != "alpha:b" {
+		t.Fatalf("second ReorderSessions call = %v, want [alpha:a alpha:b] (K swapped a back above b)", got)
 	}
 
 	// "L" / "H" reorder the active project like shift+→ / shift+←. The
@@ -2038,7 +2043,7 @@ func TestSessionCreatedSwitchesActiveProject(t *testing.T) {
 func TestSessionMovedErrorFlashes(t *testing.T) {
 	be := &fakeBackend{}
 	m := newTestModel(be)
-	m.Update(SessionMovedMsg{ID: "demo:a", Err: errors.New("reorder failed")})
+	m.Update(SessionsReorderedMsg{Err: errors.New("reorder failed")})
 	if m.flashKind != "error" || !strings.Contains(m.flash, "reorder failed") {
 		t.Fatalf("flash = %q (%s)", m.flash, m.flashKind)
 	}

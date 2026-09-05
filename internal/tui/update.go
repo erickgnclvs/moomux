@@ -13,6 +13,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/browser"
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/gitwt"
+	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
@@ -279,13 +280,76 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setFlash("info", "updated session "+msg.Session.Name)
 		return m, refreshStatusCmd(m)
 
-	case SessionMovedMsg:
+	case SessionsReorderedMsg:
+		m.reorderInFlight = false
+		if msg.Err != nil {
+			m.reorderDirty = false
+			m.setError(msg.Err)
+			// updateList already applied the move(s) optimistically (see
+			// dispatchReorder) so the failed persist doesn't visibly stall
+			// the cursor; a failure must undo that local guess.
+			// refreshSessions' own selectedID-preserving logic (it
+			// re-anchors on whatever m.sessions[m.cursor] is right now,
+			// still the session that was being moved) re-syncs both
+			// m.sessions and m.cursor back to the backend's actual —
+			// unchanged, since the write failed — order.
+			m.refreshSessions()
+			return m, nil
+		}
+		if m.reorderDirty {
+			// Another move happened locally while this persist was in
+			// flight; fire the deferred one now, carrying whatever order
+			// m.sessions is in by this point rather than a stale snapshot.
+			m.reorderDirty = false
+			return m, m.dispatchReorder()
+		}
+		return m, nil
+
+	case SessionFolderSetMsg:
+		m.setFlash("info", "folder updated")
+		m.refreshSessionsAndSync()
+		return m, nil
+
+	case FolderRenamedMsg:
 		if msg.Err != nil {
 			m.setError(msg.Err)
 			return m, nil
 		}
-		m.refreshSessions()
-		m.focusSession(msg.ID)
+		m.setFlash("info", "renamed folder to "+msg.NewName)
+		m.refreshSessionsAndSync()
+		return m, nil
+
+	case FolderCollapsedSetMsg:
+		if msg.Err != nil {
+			m.setError(msg.Err)
+			return m, nil
+		}
+		m.refreshSessionsAndSync()
+		return m, nil
+
+	case FolderDeletedMsg:
+		if msg.Err != nil {
+			m.setError(msg.Err)
+			return m, nil
+		}
+		m.setFlash("info", "deleted folder "+msg.Name)
+		m.folderCursor = 0
+		m.refreshSessionsAndSync()
+		return m, nil
+
+	case FolderCreatedMsg:
+		if msg.Err != nil {
+			m.setError(msg.Err)
+			return m, nil
+		}
+		m.setFlash("info", "created folder "+msg.Name)
+		names := m.currentProjectFolders()
+		for i, n := range names {
+			if n == msg.Name {
+				m.folderCursor = i
+			}
+		}
+		m.refreshSessionsAndSync()
 		return m, nil
 
 	case SessionOpenedMsg:
@@ -459,6 +523,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateProjectInitChoice(msg)
 		case ModeTagForm:
 			return m.updateTagForm(msg)
+		case ModeFolderForm:
+			return m.updateFolderForm(msg)
+		case ModeFolders:
+			return m.updateFolders(msg)
 		case ModeHelp:
 			return m.updateHelp(msg)
 		case ModeEditSession:
@@ -561,28 +629,44 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.resetOverlayViewport()
 		return m, nil
 	case key.Matches(msg, m.keys.Up):
-		if len(m.sessions) > 0 {
-			m.cursor = (m.cursor - 1 + len(m.sessions)) % len(m.sessions)
+		if order := m.visualSessionOrder(); len(order) > 0 {
+			pos := indexOfInt(order, m.cursor)
+			m.cursor = order[(pos-1+len(order))%len(order)]
 		}
 	case key.Matches(msg, m.keys.Down):
-		if len(m.sessions) > 0 {
-			m.cursor = (m.cursor + 1) % len(m.sessions)
+		if order := m.visualSessionOrder(); len(order) > 0 {
+			pos := indexOfInt(order, m.cursor)
+			m.cursor = order[(pos+1)%len(order)]
 		}
 	case key.Matches(msg, m.keys.MoveUp):
 		if m.cfg.SortRecentFirst {
 			m.setFlash("info", "manual reorder is off while sorting by most-recently-opened (change in settings, s)")
 			return m, nil
 		}
-		if len(m.sessions) > 0 && m.cursor > 0 {
-			return m, m.moveSessionCmd(m.sessions[m.cursor].ID, -1)
+		if order := m.visualSessionOrder(); len(order) > 0 {
+			if pos := indexOfInt(order, m.cursor); pos > 0 {
+				neighbor := order[pos-1]
+				// Apply the swap locally right away (not just once the async
+				// persist round-trips back) so holding the key sends each
+				// repeat against already-correct state instead of racing a
+				// stale snapshot — see dispatchReorder's doc.
+				m.sessions[neighbor], m.sessions[m.cursor] = m.sessions[m.cursor], m.sessions[neighbor]
+				m.cursor = neighbor
+				return m, m.dispatchReorder()
+			}
 		}
 	case key.Matches(msg, m.keys.MoveDown):
 		if m.cfg.SortRecentFirst {
 			m.setFlash("info", "manual reorder is off while sorting by most-recently-opened (change in settings, s)")
 			return m, nil
 		}
-		if len(m.sessions) > 0 && m.cursor < len(m.sessions)-1 {
-			return m, m.moveSessionCmd(m.sessions[m.cursor].ID, 1)
+		if order := m.visualSessionOrder(); len(order) > 0 {
+			if pos := indexOfInt(order, m.cursor); pos >= 0 && pos < len(order)-1 {
+				neighbor := order[pos+1]
+				m.sessions[neighbor], m.sessions[m.cursor] = m.sessions[m.cursor], m.sessions[neighbor]
+				m.cursor = neighbor
+				return m, m.dispatchReorder()
+			}
 		}
 	case key.Matches(msg, m.keys.MoveProjLeft):
 		if len(m.projects) > 0 && m.activeProj > 0 {
@@ -700,6 +784,22 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.resetOverlayViewport()
 			m.resizeFormInputs()
 		}
+	case key.Matches(msg, m.keys.AssignFolder):
+		if len(m.sessions) > 0 {
+			s := m.sessions[m.cursor]
+			m.mode = ModeFolderForm
+			m.sessionDialogReturn = ModeList
+			m.folderFormKind = "assign"
+			m.folderFormSessionID = s.ID
+			m.folderForm = newFolderForm("folder name (blank = none)", s.Folder)
+			m.resetOverlayViewport()
+			m.resizeFormInputs()
+		}
+	case key.Matches(msg, m.keys.Folders):
+		m.folderCursor = 0
+		m.mode = ModeFolders
+		m.sessionDialogReturn = ModeList
+		m.resetOverlayViewport()
 	case key.Matches(msg, m.keys.EditSession):
 		if len(m.sessions) > 0 {
 			s := m.sessions[m.cursor]
@@ -868,11 +968,49 @@ func (m *Model) handleListMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// moveSessionCmd and moveProjectCmd persist a reorder off the event loop.
-// A nil Err on the resulting msg is the success case, so the backend call's
-// error goes straight into the field rather than being branched on here.
-func (m *Model) moveSessionCmd(id string, delta int) tea.Cmd {
-	return func() tea.Msg { return SessionMovedMsg{ID: id, Err: m.backend.MoveSession(id, delta)} }
+// sessionIDs snapshots sessions' IDs in order.
+func sessionIDs(sessions []session.Session) []string {
+	ids := make([]string, len(sessions))
+	for i, s := range sessions {
+		ids[i] = s.ID
+	}
+	return ids
+}
+
+// indexOfInt returns the index of v in xs, or -1 if absent.
+func indexOfInt(xs []int, v int) int {
+	for i, x := range xs {
+		if x == v {
+			return i
+		}
+	}
+	return -1
+}
+
+// dispatchReorder persists m.sessions' current order (already mutated
+// optimistically by the MoveUp/MoveDown handler that called this) via
+// ReorderSessions.
+//
+// Only one persist is ever in flight: a call made while one is already
+// running just sets reorderDirty and returns a nil Cmd instead of starting a
+// second goroutine. Without that, two nearly-simultaneous moves (e.g.
+// holding the key, which sends fast key-repeats) would each snapshot
+// m.sessions and fire independently; tea.Cmd completions don't arrive in
+// dispatch order, so if the *older* move's goroutine happened to finish
+// after the newer one's, its stale snapshot would silently overwrite (and
+// so revert) the newer move on disk even though the UI kept showing it. The
+// SessionsReorderedMsg handler fires the deferred persist — using whatever
+// m.sessions looks like by then, not the stale snapshot — once the in-flight
+// one completes, so at most one write is ever in flight and completions
+// can't reorder relative to dispatch.
+func (m *Model) dispatchReorder() tea.Cmd {
+	if m.reorderInFlight {
+		m.reorderDirty = true
+		return nil
+	}
+	m.reorderInFlight = true
+	ids := sessionIDs(m.sessions)
+	return func() tea.Msg { return SessionsReorderedMsg{Err: m.backend.ReorderSessions(ids)} }
 }
 
 // cfgSnapshotOnSuccess returns a fresh ConfigSnapshot for a mutation Msg's

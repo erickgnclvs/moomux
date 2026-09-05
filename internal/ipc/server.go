@@ -258,10 +258,28 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		return sessionResult(b.RenameSession(a.ID, a.Name))
 	case "SetSessionArchived":
 		return sessionResult(b.SetSessionArchived(a.ID, a.On))
-	case "MoveSession":
-		return Result{}, b.MoveSession(a.ID, a.Delta)
+	case "ReorderSessions":
+		return Result{}, b.ReorderSessions(a.IDs)
 	case "MoveProject":
 		return s.mutResult(b.MoveProject(a.Name, a.Delta))
+
+	case "CreateFolder":
+		return s.mutResult(b.CreateFolder(a.Project, a.Name))
+	case "SetSessionFolder":
+		// Unlike the other session Set*/Rename methods (sessionResult),
+		// this one can also create a folder — a config mutation — on its
+		// first use, so the response needs both a Session and (mutResult's)
+		// Cfg snapshot, not just one or the other.
+		sess, err := b.SetSessionFolder(a.ID, a.Name)
+		res, _ := s.mutResult(nil)
+		res.Session = &sess
+		return res, err
+	case "RenameFolder":
+		return s.mutResult(b.RenameFolder(a.Project, a.Name, a.NewName))
+	case "SetFolderCollapsed":
+		return s.mutResult(b.SetFolderCollapsed(a.Project, a.Name, a.On))
+	case "DeleteFolder":
+		return s.mutResult(b.DeleteFolder(a.Project, a.Name))
 
 	case "AddProject":
 		return s.mutResult(b.AddProject(a.Name, a.Proj))

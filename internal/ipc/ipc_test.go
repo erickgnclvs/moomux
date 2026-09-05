@@ -92,8 +92,17 @@ func (f *fakeBackend) RenameSession(id, name string) (session.Session, error) {
 func (f *fakeBackend) SetSessionArchived(id string, on bool) (session.Session, error) {
 	return session.Session{ID: id, Archived: on}, nil
 }
-func (f *fakeBackend) MoveSession(string, int) error { return nil }
-func (f *fakeBackend) MoveProject(string, int) error { return nil }
+func (f *fakeBackend) ReorderSessions([]string) error          { return nil }
+func (f *fakeBackend) MoveProject(string, int) error           { return nil }
+func (f *fakeBackend) CreateFolder(project, name string) error { return nil }
+func (f *fakeBackend) SetSessionFolder(id, folder string) (session.Session, error) {
+	return session.Session{ID: id, Folder: folder}, nil
+}
+func (f *fakeBackend) RenameFolder(project, oldName, newName string) error { return nil }
+func (f *fakeBackend) SetFolderCollapsed(project, name string, collapsed bool) error {
+	return nil
+}
+func (f *fakeBackend) DeleteFolder(project, name string) error { return nil }
 func (f *fakeBackend) AddProject(name string, p config.Project) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

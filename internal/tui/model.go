@@ -70,8 +70,25 @@ type Backend interface {
 	// SetSessionArchived hides (or restores) a session from the default
 	// list without touching its tmux session or worktree.
 	SetSessionArchived(id string, archived bool) (session.Session, error)
-	MoveSession(id string, delta int) error
+	// ReorderSessions persists ids, verbatim, as the new manual Order for
+	// exactly those sessions. The caller supplies the fully-resolved final
+	// order (not a delta) — see internal/app.App.ReorderSessions's doc.
+	ReorderSessions(ids []string) error
 	MoveProject(name string, delta int) error
+	// CreateFolder adds an empty, expanded folder to project. Errors if one
+	// by that name already exists.
+	CreateFolder(project, name string) error
+	// SetSessionFolder files id under the named folder within its project
+	// ("" removes it from any folder), creating the folder on first use.
+	SetSessionFolder(id, folder string) (session.Session, error)
+	// RenameFolder renames a project's folder, updating every member
+	// session's Folder field to match.
+	RenameFolder(project, oldName, newName string) error
+	// SetFolderCollapsed persists a folder's collapsed/expanded state.
+	SetFolderCollapsed(project, name string, collapsed bool) error
+	// DeleteFolder removes a folder definition and un-parents its members
+	// back to top-level.
+	DeleteFolder(project, name string) error
 	// TmuxAliveAll returns id→alive for every stored session using a single
 	// tmux list-sessions call instead of N has-session calls.
 	TmuxAliveAll() map[string]bool
@@ -124,6 +141,8 @@ const (
 	ModeMultiView
 	ModeSearch
 	ModeSettings
+	ModeFolderForm
+	ModeFolders
 )
 
 // agentNames lists the agent CLIs a session/project can run, in the core's
@@ -267,6 +286,23 @@ func newSessionForm(id, project, name string, agentIdx int, dangerous bool) sess
 	}
 }
 
+// folderForm is the single-field form ModeFolderForm uses both to file a
+// session under a folder (m.folderFormKind == "assign") and to rename one
+// (m.folderFormKind == "rename") — see internal/tui/folders.go.
+type folderForm struct {
+	input textinput.Model
+}
+
+func newFolderForm(placeholder, current string) folderForm {
+	ti := textinput.New()
+	ti.Placeholder = placeholder
+	ti.Width = 32
+	ti.CharLimit = 64
+	ti.SetValue(current)
+	ti.Focus()
+	return folderForm{input: ti}
+}
+
 func newTagForm(ticket, pr string) tagForm {
 	mk := func(placeholder, value string) textinput.Model {
 		ti := textinput.New()
@@ -364,8 +400,27 @@ type Model struct {
 	sessionForm             sessionForm
 	editProjectName         string
 	tagForm                 tagForm
-	pickerCursor            int // index into m.projects while ModeProjectPicker is open
-	searchInput             textinput.Model
+	folderForm              folderForm
+	// folderFormKind is "assign" (filing a session into a folder) or
+	// "rename" (renaming a folder), deciding both what Enter does in
+	// updateFolderForm and which of folderFormSessionID/folderFormOldName is
+	// the relevant target.
+	folderFormKind      string
+	folderFormSessionID string // set when folderFormKind == "assign"
+	folderFormOldName   string // set when folderFormKind == "rename"
+	// folderCursor indexes the active project's folder-name list (see
+	// currentProjectFolders) while ModeFolders is open.
+	folderCursor int
+	// reorderInFlight is true while a dispatchReorder persist is running.
+	// reorderDirty means another reorder happened locally while it was in
+	// flight; dispatchReorder's completion handler fires one more persist
+	// (carrying whatever the latest m.sessions order is by then) instead of
+	// letting a second persist run concurrently — see dispatchReorder's doc
+	// for why two in-flight persists at once can silently revert a move.
+	reorderInFlight bool
+	reorderDirty    bool
+	pickerCursor    int // index into m.projects while ModeProjectPicker is open
+	searchInput     textinput.Model
 	// searchResults is the flattened, filtered session list (every project,
 	// active + archived) while ModeSearch is open, recomputed on every
 	// keystroke by refreshSearchResults. searchCursor indexes into it.
@@ -1300,12 +1355,24 @@ func (m *Model) refreshSessions() {
 	// Sessions with a live tmux window float to the top of the active
 	// project's list regardless of order otherwise.
 	proj := m.projects[m.activeProj]
+	folders := m.cfg.Projects[proj].Folders
 	all := m.allSessions()
 	out := make([]session.Session, 0, len(all))
 	for _, s := range all {
-		if s.Project == proj && s.Archived == m.showArchived {
-			out = append(out, s)
+		if s.Project != proj || s.Archived != m.showArchived {
+			continue
 		}
+		// A collapsed folder's members are excluded from m.cursor's
+		// navigable list entirely (not just hidden at render time) — the
+		// cursor is a plain index into m.sessions, so a hidden-but-present
+		// entry would let up/down silently skip through it. renderList's
+		// buildDisplayLines still shows the folder's header (with a count
+		// pulled straight from the backend) even though none of its members
+		// are in this slice.
+		if s.Folder != "" && folders[s.Folder].Collapsed {
+			continue
+		}
+		out = append(out, s)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		return m.tmuxAlive[out[i].ID] && !m.tmuxAlive[out[j].ID]

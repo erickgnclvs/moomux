@@ -56,6 +56,28 @@ type Project struct {
 	// compact views (e.g. the all-projects session list). Empty means no
 	// glyph has been chosen — callers fall back to a deterministic pick.
 	Emoji string `toml:"emoji,omitempty" json:"emoji,omitempty"`
+	// Folders holds display state for this project's named, collapsible
+	// session groups, keyed by folder name (the name is also the id — a
+	// rename replaces the map key and updates every member's
+	// session.Session.Folder to match). Membership itself lives on each
+	// Session, not here; a folder with no members currently pointing at it
+	// still sits here inertly until renamed or deleted. One flat level only —
+	// a folder cannot contain another folder.
+	Folders map[string]FolderMeta `toml:"folders,omitempty" json:"folders,omitempty"`
+}
+
+// FolderMeta is a project's per-folder display state.
+type FolderMeta struct {
+	// Collapsed hides the folder's member sessions from the list, showing
+	// only its header line.
+	Collapsed bool `toml:"collapsed,omitempty" json:"collapsed,omitempty"`
+	// Order anchors the folder's header position among top-level sessions
+	// (compared directly against session.Session.Order — same units, same
+	// ascending-sorts-first convention, 0 = unset). An expanded folder's
+	// header instead tracks wherever its earliest member currently sits, so
+	// Order only matters once the folder is collapsed and loses that
+	// member-based anchor.
+	Order int64 `toml:"order,omitempty" json:"order,omitempty"`
 }
 
 func (p Project) IsPlain() bool { return p.Kind == "plain" }

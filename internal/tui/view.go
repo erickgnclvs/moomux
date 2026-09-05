@@ -224,6 +224,13 @@ func (m *Model) focusedOverlayLine(content string) int {
 		if m.tagForm.focus < len(m.tagForm.inputs) {
 			return lineContaining(content, m.tagForm.inputs[m.tagForm.focus].View())
 		}
+	case ModeFolderForm:
+		return lineContaining(content, m.folderForm.input.View())
+	case ModeFolders:
+		names := m.currentProjectFolders()
+		if m.folderCursor < len(names) {
+			return lineContaining(content, folderPickerRowMarker+names[m.folderCursor])
+		}
 	case ModeEditSession:
 		switch m.sessionForm.focus {
 		case sessionFormNameFocus:
@@ -371,6 +378,12 @@ func (m *Model) View() string {
 		content := m.compactOverlayContent(m.renderTagForm())
 		footer := m.formFooter(tagFormFieldHints[m.tagForm.focus], "tab/↑↓ fields  enter save  esc cancel", "")
 		return m.renderOverlay(content, footer, m.focusedOverlayLine(content))
+	case ModeFolderForm:
+		content := m.compactOverlayContent(m.renderFolderForm())
+		return m.renderOverlay(content, m.formFooter("", "enter save  esc cancel", ""), m.focusedOverlayLine(content))
+	case ModeFolders:
+		content := m.compactOverlayContent(m.renderFolders())
+		return m.renderOverlay(content, m.foldersFooter(), m.focusedOverlayLine(content))
 	case ModeHelp:
 		return m.renderOverlay(m.renderHelp(), m.helpFooter(), -1)
 	case ModeEditSession:
