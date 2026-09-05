@@ -883,6 +883,14 @@ func fetchChangeSummaryCmd(backend Backend, id string) tea.Cmd {
 // a fetch already in flight (gitStatusPending) are skipped so a slow
 // `git status` call doesn't get re-issued for the same session every tick
 // until it finally returns.
+//
+// A Parked session (tmux dead — see effectiveState) is fetched once, the
+// same as any other session with no cached status yet, but is then excluded
+// from every routine re-check regardless of how stale that cached status
+// gets: its worktree has no agent running in it, so dirty/unpushed can't
+// change on their own. It starts being re-checked again the moment it stops
+// being parked — checkedAt hasn't advanced while parked, so it's already
+// past gitStatusStaleThreshold as soon as tmux comes back.
 func (m *Model) staleGitStatusIDs() []string {
 	var ids []string
 	for _, s := range m.backend.Sessions() {
@@ -890,6 +898,9 @@ func (m *Model) staleGitStatusIDs() []string {
 			continue
 		}
 		st, ok := m.gitStatus[s.ID]
+		if ok && m.effectiveState(s) == watcher.Parked {
+			continue
+		}
 		if !ok || time.Since(st.checkedAt) > gitStatusStaleThreshold(s.ID) {
 			ids = append(ids, s.ID)
 		}

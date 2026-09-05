@@ -698,11 +698,12 @@ func drainAll(m *Model, cmd tea.Cmd) {
 	drainAll(m, next)
 }
 
-// TestGitStatusTrackedRegardlessOfState guards the core design point: git
-// status is no longer gated on being parked. A session that's actively
-// Working with no cached status yet still gets fetched on the next tick,
-// same as a parked one would — staleGitStatusIDs treats "never checked" as
-// maximally stale for every session, not just parked ones.
+// TestGitStatusTrackedRegardlessOfState guards the "never checked" half of
+// the design: a session that's actively Working with no cached status yet
+// still gets fetched on the next tick, same as any other never-checked
+// session (parked or not) — staleGitStatusIDs treats "never checked" as
+// maximally stale regardless of state. See TestParkedGitStatusSkipsRoutineRefetch
+// for the other half: once checked, a Parked session stops being re-fetched.
 func TestGitStatusTrackedRegardlessOfState(t *testing.T) {
 	be := &fakeBackend{
 		sessions:       []session.Session{{ID: "demo:a", Project: "demo", Name: "a", WorktreePath: "/wt/a"}},
@@ -733,6 +734,7 @@ func TestStaleGitStatusIsRefetched(t *testing.T) {
 		worktreeStatus: map[string]gitStatusInfo{"demo:a": {dirty: true, ok: true}},
 	}
 	m := newTestModel(be)
+	m.tmuxAlive["demo:a"] = true
 	// Well past even the top of the jitter range (gitStatusStaleAfter * (1 +
 	// gitStatusStaleJitter)), so this is unambiguously stale regardless of
 	// demo:a's particular jitter.
@@ -745,6 +747,34 @@ func TestStaleGitStatusIsRefetched(t *testing.T) {
 	}
 	if got := m.gitStatus["demo:a"]; !got.dirty {
 		t.Fatalf("gitStatus[demo:a] not refreshed from the stale cache: %+v", got)
+	}
+}
+
+// TestParkedGitStatusSkipsRoutineRefetch guards the CPU fix: once a Parked
+// session (tmux dead) has a cached git status, it must not be re-fetched on
+// the routine cycle no matter how stale that cache gets — its worktree has
+// no agent running in it, so dirty/unpushed can't change on their own.
+func TestParkedGitStatusSkipsRoutineRefetch(t *testing.T) {
+	be := &fakeBackend{
+		sessions: []session.Session{{ID: "demo:a", Project: "demo", Name: "a", WorktreePath: "/wt/a"}},
+	}
+	m := newTestModel(be)
+	// tmuxAlive left unset for demo:a, so effectiveState is Parked.
+	m.gitStatus["demo:a"] = gitStatusInfo{ok: true, checkedAt: time.Now().Add(-2 * gitStatusStaleAfter)}
+
+	if cmd := m.fetchStaleGitStatusCmd(); cmd != nil {
+		t.Fatal("a Parked session with a cached status should not be re-selected for routine refresh")
+	}
+	if len(be.worktreeStatusCalls) != 0 {
+		t.Fatalf("no WorktreeStatus call expected for a Parked session, got %v", be.worktreeStatusCalls)
+	}
+
+	// Once tmux comes back, the stale cache (never refreshed while parked)
+	// should be picked up immediately.
+	m.tmuxAlive["demo:a"] = true
+	m.states["/wt/a"] = watcher.Working
+	if cmd := m.fetchStaleGitStatusCmd(); cmd == nil {
+		t.Fatal("expected a refetch as soon as the session stops being Parked")
 	}
 }
 
