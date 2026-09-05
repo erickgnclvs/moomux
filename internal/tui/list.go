@@ -119,19 +119,29 @@ func scrollWindow(cursor, total, visible int) (start, end int) {
 	if total <= visible {
 		return 0, total
 	}
-	start, end = clampWindow(cursor, total, visible)
-	reserve := 0
-	if start > 0 {
-		reserve++
+	// Shrinking the window to make room for a hint can itself expose a new
+	// cut-off edge (centering on the cursor pulls start off 0, say), which
+	// needs a hint row of its own — so re-check until rows + hints fit.
+	// Otherwise the panel renders one line too many at that cursor and the
+	// bottom hint gets clipped off for a frame as you scroll past it.
+	v := visible
+	for {
+		start, end = clampWindow(cursor, total, v)
+		reserve := 0
+		if start > 0 {
+			reserve++
+		}
+		if end < total {
+			reserve++
+		}
+		if end-start+reserve <= visible || v <= 1 {
+			return start, end
+		}
+		v = visible - reserve
+		if v < 1 {
+			v = 1
+		}
 	}
-	if end < total {
-		reserve++
-	}
-	v := visible - reserve
-	if v < 1 {
-		v = 1
-	}
-	return clampWindow(cursor, total, v)
 }
 
 // clampWindow centers a visible-row window on cursor within [0, total),
