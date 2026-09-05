@@ -29,7 +29,7 @@ func (m *Model) renderProjectPicker() string {
 
 	active := map[string]int{}
 	archived := map[string]int{}
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if s.Archived {
 			archived[s.Project]++
 		} else {

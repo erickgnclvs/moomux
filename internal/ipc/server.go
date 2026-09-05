@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/session"
@@ -33,6 +34,68 @@ type Server struct {
 	// never keeps its own copy. app.App.AgentOptions satisfies this.
 	AgentOptions func() []config.AgentOption
 	Watcher      watcher.Watcher // optional; powers the "Watch" stream
+
+	// subMu guards the fan-out below. Watcher.Run is started once, on the
+	// first "Watch" client, and every later client is added as a subscriber
+	// to that one run rather than starting its own.
+	subMu       sync.Mutex
+	subs        map[chan watcher.Snapshot]struct{}
+	watcherOnce bool
+}
+
+// subscribe registers a channel for watcher snapshots, starting the watcher
+// on the first caller.
+//
+// One run per connection was a whole duplicate polling stack per client: its
+// own directory rescans, its own sqlite3 subprocess per database per tick,
+// and — on macOS, where fsnotify's kqueue backend opens a descriptor per
+// file in a watched directory — its own several hundred file descriptors.
+// Two front ends attached at once (the TUI and the Mac app) paid all of it
+// twice, for byte-identical snapshots.
+func (s *Server) subscribe() chan watcher.Snapshot {
+	// Buffered so one client that stops reading (or is slow to write to)
+	// can't stall delivery to the others; send is non-blocking regardless.
+	ch := make(chan watcher.Snapshot, 8)
+	s.subMu.Lock()
+	defer s.subMu.Unlock()
+	if s.subs == nil {
+		s.subs = map[chan watcher.Snapshot]struct{}{}
+	}
+	s.subs[ch] = struct{}{}
+	if !s.watcherOnce {
+		s.watcherOnce = true
+		go s.fanOut()
+	}
+	return ch
+}
+
+func (s *Server) unsubscribe(ch chan watcher.Snapshot) {
+	s.subMu.Lock()
+	defer s.subMu.Unlock()
+	delete(s.subs, ch)
+}
+
+// fanOut runs the watcher for the life of the server and copies every
+// snapshot to each current subscriber. It deliberately never stops: the
+// watchers are cheap to leave running relative to tearing one down and
+// standing a fresh one up on every reconnect, and a server with no clients
+// is idle anyway.
+func (s *Server) fanOut() {
+	in := make(chan watcher.Snapshot, 8)
+	go s.Watcher.Run(context.Background(), in)
+	for snap := range in {
+		s.subMu.Lock()
+		for ch := range s.subs {
+			// Dropping a snapshot for a subscriber that's still behind is
+			// safe: snapshots are absolute state, not deltas, so the next
+			// one it does read supersedes whatever it missed.
+			select {
+			case ch <- snap:
+			default:
+			}
+		}
+		s.subMu.Unlock()
+	}
 }
 
 // Listen removes any stale socket at path and starts listening on it.
@@ -113,23 +176,18 @@ func (s *Server) stream(c net.Conn) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ch := make(chan watcher.Snapshot, 4)
-	go s.Watcher.Run(ctx, ch)
+	ch := s.subscribe()
+	defer s.unsubscribe(ch)
 	// Watch the connection so a client that hangs up releases this goroutine
-	// and its watcher immediately, rather than at the next snapshot write.
+	// immediately, rather than at the next snapshot write.
 	go func() {
 		io.Copy(io.Discard, c) // returns when the peer closes
 		cancel()
 	}()
 	enc := json.NewEncoder(c)
 	for {
-		// Watcher.Run may return without closing ch, so ranging over it
-		// alone would park here forever holding the connection open.
 		select {
-		case snap, ok := <-ch:
-			if !ok {
-				return
-			}
+		case snap := <-ch:
 			w := snapshotWire{States: snap.States, PollTime: snap.PollTime}
 			if snap.Err != nil {
 				w.Err = snap.Err.Error()

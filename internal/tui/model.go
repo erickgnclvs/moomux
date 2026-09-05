@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"math"
@@ -330,8 +331,17 @@ type Model struct {
 	// prStatusPending mirrors gitStatusPending for fetchPRStatusCmd.
 	prStatusPending map[string]bool
 	prompts         map[string]string
+	// promptCheckedAt records when each session was last scanned for its
+	// first prompt, so a session whose prompt can't be found isn't
+	// re-scanned on every single status tick — see promptRetryAfter.
+	promptCheckedAt map[string]time.Time
 	statusCh        <-chan watcher.Snapshot
 	cancelPoll      context.CancelFunc
+
+	// sessCache memoizes backend.Sessions() for the duration of one Update
+	// or one View pass — see allSessions.
+	sessCache      []session.Session
+	sessCacheValid bool
 
 	mode                    Mode
 	nameInput               textinput.Model
@@ -644,6 +654,7 @@ func New(cfg *config.Config, backend Backend, agentOptions []config.AgentOption,
 		prStatus:          map[string]prStatusInfo{},
 		prStatusPending:   map[string]bool{},
 		prompts:           map[string]string{},
+		promptCheckedAt:   map[string]time.Time{},
 		statusCh:          statusCh,
 		cancelPoll:        cancel,
 		nameInput:         ti,
@@ -695,13 +706,100 @@ func New(cfg *config.Config, backend Backend, agentOptions []config.AgentOption,
 
 func (m *Model) refreshPrompts() {
 	home, _ := os.UserHomeDir()
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if p := m.prompts[s.ID]; p != "" {
 			continue
 		}
 		m.prompts[s.ID] = prompt.ForAgent(home, s.AgentName(), s.WorktreePath)
 	}
 }
+
+// pruneDeadSessions drops per-session bookkeeping for sessions that no
+// longer exist. m.states is keyed by worktree path and the rest by session
+// id, but they rot the same way: without this, every map here grows for the
+// life of the process, keeping entries (including whole prompt strings) for
+// every session ever deleted.
+func (m *Model) pruneDeadSessions() {
+	all := m.allSessions()
+	livePaths := make(map[string]bool, len(all))
+	liveIDs := make(map[string]bool, len(all))
+	for _, s := range all {
+		livePaths[s.WorktreePath] = true
+		liveIDs[s.ID] = true
+	}
+	for path := range m.states {
+		if !livePaths[path] {
+			delete(m.states, path)
+		}
+	}
+	for _, byID := range []map[string]bool{m.gitStatusPending, m.prStatusPending} {
+		for id := range byID {
+			if !liveIDs[id] {
+				delete(byID, id)
+			}
+		}
+	}
+	for id := range m.titleState {
+		if !liveIDs[id] {
+			delete(m.titleState, id)
+		}
+	}
+	for id := range m.gitStatus {
+		if !liveIDs[id] {
+			delete(m.gitStatus, id)
+		}
+	}
+	for id := range m.prStatus {
+		if !liveIDs[id] {
+			delete(m.prStatus, id)
+		}
+	}
+	for id := range m.prompts {
+		if !liveIDs[id] {
+			delete(m.prompts, id)
+		}
+	}
+	for id := range m.promptCheckedAt {
+		if !liveIDs[id] {
+			delete(m.promptCheckedAt, id)
+		}
+	}
+}
+
+// allSessions returns backend.Sessions(), memoized for the rest of the
+// current Update or View pass.
+//
+// Both passes ask for the session list many times over — measured at 15
+// calls for one View of an eight-project list and 6 more for one
+// StatusTickMsg, since every panel-count, eligible-project and per-project
+// filter helper fetches it again — and each call is a full sessions.json
+// read, unmarshal and sort (57us and 45 KB with 29 sessions), or, on the
+// socket-backed backend, its own unix connect and round trip. Nothing
+// mutates the backend from the Update goroutine — every mutator runs inside
+// a tea.Cmd and reports back as a message — so one snapshot per pass is
+// exactly as fresh as re-reading it 21 times.
+func (m *Model) allSessions() []session.Session {
+	if !m.sessCacheValid {
+		m.sessCache = m.backend.Sessions()
+		m.sessCacheValid = true
+	}
+	return m.sessCache
+}
+
+// invalidateSessions drops the memoized snapshot. Called at the top of both
+// Update and View, so each pass reads the backend at most once but never
+// carries a snapshot across passes.
+func (m *Model) invalidateSessions() { m.sessCacheValid = false }
+
+// promptRetryAfter bounds how often a session with no discoverable first
+// prompt is re-scanned. Without it, every such session re-ran
+// prompt.ForAgent on every status tick forever — a line-by-line JSON scan
+// of every .jsonl under ~/.claude/projects/<cwd>/, or a sqlite3 subprocess
+// per codex/opencode database — because a scan that comes back empty leaves
+// m.prompts[id] empty, which is the very condition that selects it for
+// scanning. Prompts do appear late (the agent writes its log a moment after
+// the session exists), so this backs the retry off rather than giving up.
+const promptRetryAfter = 30 * time.Second
 
 // gitStatusStaleAfter bounds how long a cached gitStatusInfo is trusted
 // before it's worth a fresh `git status`/`rev-list` call — see
@@ -778,27 +876,35 @@ func prStatusStaleThreshold(id string) time.Duration {
 }
 
 // refreshStatusCmd returns a tea.Cmd that computes the tmux-alive map and
-// missing prompts off the Bubble Tea event-loop goroutine. It must not
-// mutate m — only Update may mutate model state. m.prompts is also written
-// concurrently by Update, so we snapshot the keys we already know about here
-// (on the caller's goroutine) rather than reading m.prompts from the
-// returned closure, which would race.
+// missing prompts off the Bubble Tea event-loop goroutine. The returned
+// closure must not touch m — only Update may — so the set of sessions to
+// scan for a prompt is chosen here, on the caller's goroutine, and passed in
+// by value. Selecting them here is also what marks them checked, so a slow
+// scan isn't re-issued for the same session on the next tick.
 func refreshStatusCmd(m *Model) tea.Cmd {
 	backend := m.backend
-	known := make(map[string]string, len(m.prompts))
-	for id, p := range m.prompts {
-		known[id] = p
+
+	type scan struct{ id, agent, path string }
+	var toScan []scan
+	now := time.Now()
+	for _, s := range m.allSessions() {
+		if m.prompts[s.ID] != "" {
+			continue
+		}
+		if last, ok := m.promptCheckedAt[s.ID]; ok && now.Sub(last) < promptRetryAfter {
+			continue
+		}
+		m.promptCheckedAt[s.ID] = now
+		toScan = append(toScan, scan{id: s.ID, agent: s.AgentName(), path: s.WorktreePath})
 	}
 
 	return func() tea.Msg {
 		tmuxAlive := backend.TmuxAliveAll()
 
 		home, _ := os.UserHomeDir()
-		prompts := make(map[string]string)
-		for _, s := range backend.Sessions() {
-			if p := known[s.ID]; p == "" {
-				prompts[s.ID] = prompt.ForAgent(home, s.AgentName(), s.WorktreePath)
-			}
+		prompts := make(map[string]string, len(toScan))
+		for _, s := range toScan {
+			prompts[s.id] = prompt.ForAgent(home, s.agent, s.path)
 		}
 
 		return StatusRefreshedMsg{TmuxAlive: tmuxAlive, Prompts: prompts}
@@ -893,7 +999,7 @@ func fetchChangeSummaryCmd(backend Backend, id string) tea.Cmd {
 // past gitStatusStaleThreshold as soon as tmux comes back.
 func (m *Model) staleGitStatusIDs() []string {
 	var ids []string
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if m.gitStatusPending[s.ID] {
 			continue
 		}
@@ -942,7 +1048,7 @@ func fetchPRStatusCmd(backend Backend, ids []string) tea.Cmd {
 // mirroring staleGitStatusIDs.
 func (m *Model) stalePRStatusIDs() []string {
 	var ids []string
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if s.PR == "" || m.prStatusPending[s.ID] {
 			continue
 		}
@@ -1063,7 +1169,7 @@ func (m *Model) projectSessionCount() int {
 // not be the active one.
 func (m *Model) projectSessionCountFor(proj string) int {
 	n := 0
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if s.Project == proj {
 			n++
 		}
@@ -1077,7 +1183,7 @@ func (m *Model) projectSessionCountFor(proj string) int {
 // archived sessions is "empty" while viewing the active list, else cycling
 // lands you on a project whose list renders empty anyway.
 func (m *Model) projectHasSessions(name string) bool {
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if s.Project == name && s.Archived == m.showArchived {
 			return true
 		}
@@ -1116,7 +1222,7 @@ func (m *Model) archivedCount() int {
 	}
 	proj := m.projects[m.activeProj]
 	n := 0
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if s.Project == proj && s.Archived {
 			n++
 		}
@@ -1194,7 +1300,7 @@ func (m *Model) refreshSessions() {
 	// Sessions with a live tmux window float to the top of the active
 	// project's list regardless of order otherwise.
 	proj := m.projects[m.activeProj]
-	all := m.backend.Sessions()
+	all := m.allSessions()
 	out := make([]session.Session, 0, len(all))
 	for _, s := range all {
 		if s.Project == proj && s.Archived == m.showArchived {
@@ -1223,7 +1329,7 @@ func (m *Model) Init() tea.Cmd {
 	// the startup tmux-alive check runs immediately rather than waiting for
 	// the first tick — see the StatusRefreshedMsg case for what happens once
 	// it resolves.
-	return tea.Batch(listenStatus(m.statusCh), tickFlash(), refreshStatusCmd(m), checkUpdateCmd(m.Version), tickUpdateCheck())
+	return tea.Batch(listenStatus(m.statusCh), tickFlash(), refreshStatusCmd(m), tickTmux(), checkUpdateCmd(m.Version), tickUpdateCheck())
 }
 
 // updateCheckInterval is how often a long-running session re-polls GitHub
@@ -1265,14 +1371,67 @@ func tickUpdateCheck() tea.Cmd {
 	return tea.Tick(updateCheckInterval, func(t time.Time) tea.Msg { return UpdateCheckTickMsg{} })
 }
 
+// listenStatus waits for the next snapshot, then folds in every other
+// snapshot already queued behind it before handing one message to Update.
+//
+// The watchers run independently and each tick costs the TUI a full
+// handler pass plus a re-render, so a burst — three watchers coming due
+// together, or a flurry of filesystem events under an active agent — would
+// otherwise be processed one whole pass at a time for state that the last
+// snapshot in the burst already supersedes.
 func listenStatus(ch <-chan watcher.Snapshot) tea.Cmd {
 	return func() tea.Msg {
 		snap, ok := <-ch
 		if !ok {
 			return StatusChannelClosedMsg{}
 		}
-		return StatusTickMsg{Snap: snap}
+		for {
+			select {
+			case next, ok := <-ch:
+				if !ok {
+					// Deliver what we have; the next listenStatus reads the
+					// closed channel and reports it.
+					return StatusTickMsg{Snap: snap}
+				}
+				snap = mergeSnapshots(snap, next)
+			default:
+				return StatusTickMsg{Snap: snap}
+			}
+		}
 	}
+}
+
+// mergeSnapshots folds newer into older, newer winning per path. That
+// matches how Update applies a single snapshot — merge into m.states, never
+// replace — so coalescing a burst leaves exactly the state the snapshots
+// would have produced one at a time. Neither input map is mutated: they
+// belong to the watcher goroutines that built them.
+func mergeSnapshots(older, newer watcher.Snapshot) watcher.Snapshot {
+	states := make(map[string]watcher.State, len(older.States)+len(newer.States))
+	for p, st := range older.States {
+		states[p] = st
+	}
+	for p, st := range newer.States {
+		states[p] = st
+	}
+	out := watcher.Snapshot{States: states, PollTime: newer.PollTime, Err: errors.Join(older.Err, newer.Err)}
+	if out.PollTime.Before(older.PollTime) {
+		out.PollTime = older.PollTime
+	}
+	return out
+}
+
+// tmuxRefreshInterval is how often the tmux-alive map and any missing
+// prompts are refreshed. This used to ride on the watcher snapshot stream,
+// which meant a `tmux list-sessions` subprocess (~4.5ms of fork and exec)
+// per snapshot from any of the three watchers — several a second at idle,
+// and up to ten a second while an agent's filesystem writes drove the
+// debounced rescans. Whether a tmux session is alive has nothing to do with
+// an agent touching a JSON file, so it gets its own timer.
+var tmuxRefreshInterval = 2 * time.Second
+
+func tickTmux() tea.Cmd {
+	return tea.Tick(tmuxRefreshInterval, func(t time.Time) tea.Msg { return TmuxTickMsg{} })
 }
 
 func tickFlash() tea.Cmd {

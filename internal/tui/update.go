@@ -29,6 +29,8 @@ func updateTitlesCmd(backend Backend, changed map[string]watcher.State) tea.Cmd 
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// One backend read per pass — see allSessions.
+	m.invalidateSessions()
 	switch msg := msg.(type) {
 	case UpdateAvailableMsg:
 		m.UpdateVersion = msg.Version
@@ -66,15 +68,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// here without wiping every other watcher's entries. Instead prune
 		// against the full live session set so paths from deleted sessions
 		// don't linger forever.
-		live := make(map[string]bool, len(m.backend.Sessions()))
-		for _, s := range m.backend.Sessions() {
-			live[s.WorktreePath] = true
-		}
-		for path := range m.states {
-			if !live[path] {
-				delete(m.states, path)
-			}
-		}
+		m.pruneDeadSessions()
 		m.refreshSessions()
 		if msg.Snap.Err != nil {
 			// Surface once rather than re-flashing on every subsequent tick
@@ -85,14 +79,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		changedTitles := map[string]watcher.State{}
-		for _, s := range m.backend.Sessions() {
+		for _, s := range m.allSessions() {
 			st := m.effectiveState(s)
 			if prev, ok := m.titleState[s.ID]; !ok || prev != st {
 				m.titleState[s.ID] = st
 				changedTitles[s.ID] = st
 			}
 		}
-		cmds := []tea.Cmd{listenStatus(m.statusCh), refreshStatusCmd(m)}
+		cmds := []tea.Cmd{listenStatus(m.statusCh)}
 		if len(changedTitles) > 0 {
 			cmds = append(cmds, updateTitlesCmd(m.backend, changedTitles))
 		}
@@ -103,6 +97,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 		return m, tea.Batch(cmds...)
+
+	case TmuxTickMsg:
+		return m, tea.Batch(refreshStatusCmd(m), tickTmux())
 
 	case StatusRefreshedMsg:
 		m.tmuxAlive = msg.TmuxAlive
@@ -214,6 +211,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setFlash("info", text)
 		// Remove from prompt cache so the next tick scans the new session.
 		delete(m.prompts, msg.Session.ID)
+		delete(m.promptCheckedAt, msg.Session.ID)
 		// A brand-new session is never archived — land on the active view so
 		// it's actually visible, regardless of which view was showing before.
 		m.showArchived = false
@@ -276,6 +274,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshSessions()
 		m.focusSession(msg.Session.ID)
 		delete(m.prompts, msg.Session.ID)
+		delete(m.promptCheckedAt, msg.Session.ID)
 		m.mode = m.sessionDialogReturn
 		m.setFlash("info", "updated session "+msg.Session.Name)
 		return m, refreshStatusCmd(m)

@@ -130,6 +130,14 @@ func (a *App) dueForFetch(id string) bool {
 	return true
 }
 
+// forgetFetch drops id's fetch timestamp, so lastFetch tracks live sessions
+// rather than every session the process has ever seen.
+func (a *App) forgetFetch(id string) {
+	a.fetchMu.Lock()
+	defer a.fetchMu.Unlock()
+	delete(a.lastFetch, id)
+}
+
 // agentOptionsTable is the single source of truth for which agents moomux
 // can launch and what's worth offering in a model/thinking-level picker for
 // each — both the TUI's new-session form and (over internal/ipc) a second
@@ -1830,5 +1838,6 @@ func (a *App) DeleteSession(id string) (string, error) {
 	if err := a.Store.Delete(id); err != nil && cleanupErr == nil {
 		cleanupErr = err
 	}
+	a.forgetFetch(id)
 	return hint, cleanupErr
 }

@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +28,11 @@ var testAgentOptions = []config.AgentOption{
 
 type fakeBackend struct {
 	sessions []session.Session
+
+	// Call counters for the CPU-cost tests in cpu_test.go. Atomic because
+	// TmuxAliveAll is reached from a tea.Cmd goroutine.
+	sessionsCalls  atomic.Int64
+	tmuxAliveCalls atomic.Int64
 
 	moveSessionCalls []moveSessionCall
 	moveSessionErr   error
@@ -321,8 +327,15 @@ func (f *fakeBackend) MoveProject(name string, delta int) error {
 	f.cfg.Order = order
 	return nil
 }
-func (f *fakeBackend) TmuxAliveAll() map[string]bool { return f.tmuxAlive }
-func (f *fakeBackend) Sessions() []session.Session   { return f.sessions }
+func (f *fakeBackend) TmuxAliveAll() map[string]bool {
+	f.tmuxAliveCalls.Add(1)
+	return f.tmuxAlive
+}
+
+func (f *fakeBackend) Sessions() []session.Session {
+	f.sessionsCalls.Add(1)
+	return f.sessions
+}
 func (f *fakeBackend) Projects() []string            { return nil }
 func (f *fakeBackend) ConfigSnapshot() config.Config { return f.cfg.Clone() }
 func (f *fakeBackend) AddProject(name string, p config.Project) error {
