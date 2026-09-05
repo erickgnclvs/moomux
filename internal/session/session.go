@@ -34,6 +34,7 @@ type Session struct {
 	NewBranch    bool      `json:"new_branch,omitempty"`  // true if moomux created Branch fresh (vs. checking out an existing one); safe to delete on session delete
 	TermTabID    string    `json:"term_tab_id,omitempty"` // terminal-specific tab/window id this session was last opened in (currently only iTerm2 sets it); lets reopen jump back to it instead of creating a new tab
 	Prompt       string    `json:"prompt,omitempty"`      // first prompt typed into the agent at creation time, captured directly rather than relying on the agent's own log
+	Folder       string    `json:"folder,omitempty"`      // name of a collapsible group (config.Project.Folders) this session is filed under within its project; "" = top-level
 }
 
 // AgentName returns the effective agent name, defaulting to "claude" for legacy sessions.

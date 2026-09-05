@@ -143,6 +143,39 @@ func TestCycleProjectEmojiIdx(t *testing.T) {
 	}
 }
 
+// TestBuildDisplayLinesPositionsCollapsedFolderByOrder guards against a
+// collapsed folder always sinking to the bottom of the list: since none of
+// its members are in m.sessions while collapsed, there's no visible member
+// to anchor its header on, so its position must come from FolderMeta.Order
+// compared against the surrounding sessions' own Order instead.
+func TestBuildDisplayLinesPositionsCollapsedFolderByOrder(t *testing.T) {
+	be := &fakeBackend{}
+	m := newTestModel(be)
+	proj := m.cfg.Projects["demo"]
+	proj.Folders = map[string]config.FolderMeta{
+		"grp": {Collapsed: true, Order: 2},
+	}
+	m.cfg.Projects["demo"] = proj
+	m.sessions = []session.Session{
+		{ID: "demo:a", Project: "demo", Name: "a", Order: 1},
+		{ID: "demo:z", Project: "demo", Name: "z", Order: 3},
+	}
+
+	lines := m.buildDisplayLines()
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 display lines (a, grp header, z), got %d: %+v", len(lines), lines)
+	}
+	if lines[0].folder != "" || m.sessions[lines[0].sessionIdx].ID != "demo:a" {
+		t.Fatalf("expected line 0 to be session a, got %+v", lines[0])
+	}
+	if lines[1].folder != "grp" {
+		t.Fatalf("expected line 1 to be the grp folder header (Order 2, between a=1 and z=3), got %+v", lines[1])
+	}
+	if lines[2].folder != "" || m.sessions[lines[2].sessionIdx].ID != "demo:z" {
+		t.Fatalf("expected line 2 to be session z, got %+v", lines[2])
+	}
+}
+
 func TestModelProjectEmojiPrefersConfiguredOverFallback(t *testing.T) {
 	be := &fakeBackend{}
 	m := newTestModel(be)

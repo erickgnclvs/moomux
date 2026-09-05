@@ -16,11 +16,26 @@ import (
 type fakeBackend struct {
 	sessions []session.Session
 
-	moveSessionCalls []moveSessionCall
-	moveSessionErr   error
+	reorderSessionsCalls []reorderSessionsCall
+	reorderSessionsErr   error
 
 	moveProjectCalls []moveProjectCall
 	moveProjectErr   error
+
+	createFolderCalls []createFolderCall
+	createFolderErr   error
+
+	setSessionFolderCalls []setSessionFolderCall
+	setSessionFolderErr   error
+
+	renameFolderCalls []renameFolderCall
+	renameFolderErr   error
+
+	setFolderCollapsedCalls []setFolderCollapsedCall
+	setFolderCollapsedErr   error
+
+	deleteFolderCalls []deleteFolderCall
+	deleteFolderErr   error
 
 	createCalls []createCall
 	createErr   error
@@ -123,14 +138,34 @@ type projectCall struct {
 	p    config.Project
 }
 
-type moveSessionCall struct {
-	id    string
-	delta int
+type reorderSessionsCall struct {
+	ids []string
 }
 
 type moveProjectCall struct {
 	name  string
 	delta int
+}
+
+type createFolderCall struct {
+	project, name string
+}
+
+type setSessionFolderCall struct {
+	id, folder string
+}
+
+type renameFolderCall struct {
+	project, oldName, newName string
+}
+
+type setFolderCollapsedCall struct {
+	project, name string
+	collapsed     bool
+}
+
+type deleteFolderCall struct {
+	project, name string
 }
 
 func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal, dangerous bool) (session.Session, string, error) {
@@ -257,13 +292,49 @@ func (f *fakeBackend) SetSessionArchived(id string, archived bool) (session.Sess
 	}
 	return session.Session{ID: id, Archived: archived}, nil
 }
-func (f *fakeBackend) MoveSession(id string, delta int) error {
-	f.moveSessionCalls = append(f.moveSessionCalls, moveSessionCall{id: id, delta: delta})
-	return f.moveSessionErr
+func (f *fakeBackend) ReorderSessions(ids []string) error {
+	f.reorderSessionsCalls = append(f.reorderSessionsCalls, reorderSessionsCall{ids: ids})
+	return f.reorderSessionsErr
 }
 func (f *fakeBackend) MoveProject(name string, delta int) error {
 	f.moveProjectCalls = append(f.moveProjectCalls, moveProjectCall{name: name, delta: delta})
 	return f.moveProjectErr
+}
+func (f *fakeBackend) CreateFolder(project, name string) error {
+	f.createFolderCalls = append(f.createFolderCalls, createFolderCall{project: project, name: name})
+	return f.createFolderErr
+}
+func (f *fakeBackend) SetSessionFolder(id, folder string) (session.Session, error) {
+	f.setSessionFolderCalls = append(f.setSessionFolderCalls, setSessionFolderCall{id: id, folder: folder})
+	for i := range f.sessions {
+		if f.sessions[i].ID == id {
+			f.sessions[i].Folder = folder
+			return f.sessions[i], f.setSessionFolderErr
+		}
+	}
+	return session.Session{ID: id, Folder: folder}, f.setSessionFolderErr
+}
+func (f *fakeBackend) RenameFolder(project, oldName, newName string) error {
+	f.renameFolderCalls = append(f.renameFolderCalls, renameFolderCall{project: project, oldName: oldName, newName: newName})
+	for i := range f.sessions {
+		if f.sessions[i].Project == project && f.sessions[i].Folder == oldName {
+			f.sessions[i].Folder = newName
+		}
+	}
+	return f.renameFolderErr
+}
+func (f *fakeBackend) SetFolderCollapsed(project, name string, collapsed bool) error {
+	f.setFolderCollapsedCalls = append(f.setFolderCollapsedCalls, setFolderCollapsedCall{project: project, name: name, collapsed: collapsed})
+	return f.setFolderCollapsedErr
+}
+func (f *fakeBackend) DeleteFolder(project, name string) error {
+	f.deleteFolderCalls = append(f.deleteFolderCalls, deleteFolderCall{project: project, name: name})
+	for i := range f.sessions {
+		if f.sessions[i].Project == project && f.sessions[i].Folder == name {
+			f.sessions[i].Folder = ""
+		}
+	}
+	return f.deleteFolderErr
 }
 func (f *fakeBackend) TmuxAliveAll() map[string]bool { return f.tmuxAlive }
 func (f *fakeBackend) Sessions() []session.Session   { return f.sessions }

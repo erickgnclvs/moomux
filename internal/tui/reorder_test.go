@@ -40,7 +40,7 @@ func newMultiProjectTestModel(be *fakeBackend) *Model {
 
 // drainCmd runs a tea.Cmd synchronously and feeds its resulting message back
 // into Update, mirroring what the Bubble Tea runtime does for the async
-// MoveSession dispatch.
+// ReorderSessions dispatch.
 func drainCmd(m *Model, cmd tea.Cmd) {
 	if cmd == nil {
 		return
@@ -60,23 +60,23 @@ func TestShiftUpMovesSessionUpAndFollowsCursor(t *testing.T) {
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
 	if cmd == nil {
-		t.Fatalf("expected a command to dispatch MoveSession")
+		t.Fatalf("expected a command to dispatch ReorderSessions")
 	}
-	resultMsg := cmd() // runs the closure, which calls backend.MoveSession
-	if len(be.moveSessionCalls) != 1 {
-		t.Fatalf("expected 1 MoveSession call, got %d", len(be.moveSessionCalls))
-	}
-	if got := be.moveSessionCalls[0]; got.id != "demo:b" || got.delta != -1 {
-		t.Fatalf("MoveSession called with %+v, want {demo:b -1}", got)
+	// The optimistic local swap happens synchronously, before the persist
+	// command even runs.
+	if m.sessions[0].ID != "demo:b" || m.cursor != 0 {
+		t.Fatalf("expected optimistic swap to put demo:b first with cursor following to 0, got sessions=%v cursor=%d", sessionIDs(m.sessions), m.cursor)
 	}
 
-	// Backend reorders "b" to the front; simulate the refreshed session list.
-	be.sessions = []session.Session{
-		{ID: "demo:b", Project: "demo", Name: "b"},
-		{ID: "demo:a", Project: "demo", Name: "a"},
+	resultMsg := cmd() // runs the closure, which calls backend.ReorderSessions
+	if len(be.reorderSessionsCalls) != 1 {
+		t.Fatalf("expected 1 ReorderSessions call, got %d", len(be.reorderSessionsCalls))
 	}
+	if got := be.reorderSessionsCalls[0].ids; len(got) != 2 || got[0] != "demo:b" || got[1] != "demo:a" {
+		t.Fatalf("ReorderSessions called with %v, want [demo:b demo:a]", got)
+	}
+
 	m.Update(resultMsg)
-
 	if m.sessions[0].ID != "demo:b" {
 		t.Fatalf("expected demo:b first after reorder, got %s", m.sessions[0].ID)
 	}
@@ -129,8 +129,8 @@ func TestShiftUpAtTopIsNoOp(t *testing.T) {
 	m.cursor = 0 // already at top
 
 	m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
-	if len(be.moveSessionCalls) != 0 {
-		t.Fatalf("expected no MoveSession call at top of list, got %d", len(be.moveSessionCalls))
+	if len(be.reorderSessionsCalls) != 0 {
+		t.Fatalf("expected no ReorderSessions call at top of list, got %d", len(be.reorderSessionsCalls))
 	}
 }
 
@@ -143,8 +143,8 @@ func TestShiftDownAtBottomIsNoOp(t *testing.T) {
 	m.cursor = 1 // already at bottom
 
 	m.Update(tea.KeyMsg{Type: tea.KeyShiftDown})
-	if len(be.moveSessionCalls) != 0 {
-		t.Fatalf("expected no MoveSession call at bottom of list, got %d", len(be.moveSessionCalls))
+	if len(be.reorderSessionsCalls) != 0 {
+		t.Fatalf("expected no ReorderSessions call at bottom of list, got %d", len(be.reorderSessionsCalls))
 	}
 }
 
@@ -158,8 +158,8 @@ func TestShiftUpNoOpWhenSortRecentFirst(t *testing.T) {
 	m.cursor = 1 // not at top, so this would move if manual reorder were active
 
 	m.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
-	if len(be.moveSessionCalls) != 0 {
-		t.Fatalf("expected shift+up to no-op while sorting by recent, got %d MoveSession calls", len(be.moveSessionCalls))
+	if len(be.reorderSessionsCalls) != 0 {
+		t.Fatalf("expected shift+up to no-op while sorting by recent, got %d ReorderSessions calls", len(be.reorderSessionsCalls))
 	}
 }
 
@@ -251,7 +251,7 @@ func TestMoveSessionErrorSetsFlashWithoutReordering(t *testing.T) {
 			{ID: "demo:a", Project: "demo", Name: "a"},
 			{ID: "demo:b", Project: "demo", Name: "b"},
 		},
-		moveSessionErr: errors.New("disk full"),
+		reorderSessionsErr: errors.New("disk full"),
 	}
 	m := newTestModel(be)
 	m.cursor = 1
@@ -264,6 +264,176 @@ func TestMoveSessionErrorSetsFlashWithoutReordering(t *testing.T) {
 	}
 	if m.cursor != 1 {
 		t.Fatalf("expected cursor unchanged on error, got %d", m.cursor)
+	}
+}
+
+// TestUpDownFollowVisualOrderAcrossNonAdjacentFolderMembers is a regression
+// test for cursor movement indexing m.sessions directly instead of the
+// visual (folder-grouped) order. Session.Folder doesn't constrain Order —
+// SetSessionFolder never touches it — so two sessions filed into the same
+// folder can sit at arbitrary, non-adjacent positions in m.sessions even
+// though buildDisplayLines always renders a folder's members as one
+// contiguous block. Here "grp" contains sessions c and e, which are NOT
+// adjacent in m.sessions (b and d sit between them) — Up/Down must still
+// walk the rendered order (a, b, [grp: c, e], d), not m.sessions' order.
+func TestUpDownFollowVisualOrderAcrossNonAdjacentFolderMembers(t *testing.T) {
+	be := &fakeBackend{sessions: []session.Session{
+		{ID: "demo:a", Project: "demo", Name: "a", Order: 1},
+		{ID: "demo:b", Project: "demo", Name: "b", Order: 2},
+		{ID: "demo:c", Project: "demo", Name: "c", Order: 3, Folder: "grp"},
+		{ID: "demo:d", Project: "demo", Name: "d", Order: 4},
+		{ID: "demo:e", Project: "demo", Name: "e", Order: 5, Folder: "grp"},
+	}}
+	m := newTestModel(be)
+	proj := m.cfg.Projects["demo"]
+	proj.Folders = map[string]config.FolderMeta{"grp": {}}
+	m.cfg.Projects["demo"] = proj
+	m.refreshSessions()
+
+	idOf := func(idx int) string { return m.sessions[idx].ID }
+	m.cursor = 1 // "b"
+	if idOf(m.cursor) != "demo:b" {
+		t.Fatalf("setup: cursor not on b: %s", idOf(m.cursor))
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if got := idOf(m.cursor); got != "demo:c" {
+		t.Fatalf("down from b: cursor on %s, want c (first grp member)", got)
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if got := idOf(m.cursor); got != "demo:e" {
+		t.Fatalf("down from c: cursor on %s, want e (second grp member, not d — m.sessions has d between c and e)", got)
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if got := idOf(m.cursor); got != "demo:d" {
+		t.Fatalf("down from e: cursor on %s, want d (after the grp block closes)", got)
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if got := idOf(m.cursor); got != "demo:e" {
+		t.Fatalf("up from d: cursor on %s, want e", got)
+	}
+}
+
+// TestMoveDownSwapsVisuallyAdjacentSessionAcrossNonAdjacentFolderMembers is
+// the MoveDown/MoveUp half of the same regression: swapping m.cursor with
+// its raw m.sessions neighbor (rather than its visual neighbor) would
+// persist a swap between two sessions the user never saw next to each
+// other.
+func TestMoveDownSwapsVisuallyAdjacentSessionAcrossNonAdjacentFolderMembers(t *testing.T) {
+	be := &fakeBackend{sessions: []session.Session{
+		{ID: "demo:a", Project: "demo", Name: "a", Order: 1},
+		{ID: "demo:b", Project: "demo", Name: "b", Order: 2},
+		{ID: "demo:c", Project: "demo", Name: "c", Order: 3, Folder: "grp"},
+		{ID: "demo:d", Project: "demo", Name: "d", Order: 4},
+		{ID: "demo:e", Project: "demo", Name: "e", Order: 5, Folder: "grp"},
+	}}
+	m := newTestModel(be)
+	proj := m.cfg.Projects["demo"]
+	proj.Folders = map[string]config.FolderMeta{"grp": {}}
+	m.cfg.Projects["demo"] = proj
+	m.refreshSessions()
+
+	// Put the cursor on "c" (visually followed by "e", not "d") and move it
+	// down — it must swap with "e", the visually-adjacent session.
+	for i, s := range m.sessions {
+		if s.ID == "demo:c" {
+			m.cursor = i
+		}
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyShiftDown})
+	if cmd == nil {
+		t.Fatal("expected a command to dispatch ReorderSessions")
+	}
+	if got := m.sessions[m.cursor].ID; got != "demo:c" {
+		t.Fatalf("cursor should still be on c after following its swap, got %s", got)
+	}
+	drainCmd(m, cmd)
+	if len(be.reorderSessionsCalls) != 1 {
+		t.Fatalf("expected 1 ReorderSessions call, got %d", len(be.reorderSessionsCalls))
+	}
+
+	// Persisted physical slot order doesn't need to match rendered order —
+	// buildDisplayLines regroups by Folder on every render regardless. What
+	// must hold is the actual regression: re-deriving the visual order from
+	// the persisted result puts e before c (c moved past its true visual
+	// neighbor) with d still right after the folder block, not reordered
+	// relative to it.
+	reordered := make([]session.Session, len(be.sessions))
+	byID := map[string]session.Session{}
+	for _, s := range be.sessions {
+		byID[s.ID] = s
+	}
+	for i, id := range be.reorderSessionsCalls[0].ids {
+		reordered[i] = byID[id]
+	}
+	be.sessions = reordered
+	m.refreshSessions()
+	lines := m.buildDisplayLines()
+	var visual []string
+	for _, l := range lines {
+		if l.folder != "" {
+			visual = append(visual, "["+l.folder+"]")
+			continue
+		}
+		visual = append(visual, m.sessions[l.sessionIdx].ID)
+	}
+	want := []string{"demo:a", "demo:b", "[grp]", "demo:e", "demo:c", "demo:d"}
+	if len(visual) != len(want) {
+		t.Fatalf("visual order = %v, want %v", visual, want)
+	}
+	for i := range want {
+		if visual[i] != want[i] {
+			t.Fatalf("visual order = %v, want %v", visual, want)
+		}
+	}
+}
+
+// TestRapidReorderKeypressesCoalesceInsteadOfRacing is a regression test for
+// completions arriving out of dispatch order: dispatchReorder must never
+// let two ReorderSessions calls be in flight at once, or whichever finishes
+// last — not whichever was dispatched last — silently wins.
+func TestRapidReorderKeypressesCoalesceInsteadOfRacing(t *testing.T) {
+	be := &fakeBackend{sessions: []session.Session{
+		{ID: "demo:a", Project: "demo", Name: "a"},
+		{ID: "demo:b", Project: "demo", Name: "b"},
+		{ID: "demo:c", Project: "demo", Name: "c"},
+	}}
+	m := newTestModel(be)
+	m.cursor = 2 // on "c"
+
+	_, cmd1 := m.Update(tea.KeyMsg{Type: tea.KeyShiftUp}) // c above b: a, c, b
+	if cmd1 == nil {
+		t.Fatal("expected the first keypress to dispatch a command")
+	}
+	_, cmd2 := m.Update(tea.KeyMsg{Type: tea.KeyShiftUp}) // c above a: c, a, b
+	if cmd2 != nil {
+		t.Fatal("expected the second keypress, while the first is still in flight, to coalesce (nil cmd) instead of dispatching its own")
+	}
+	if len(be.reorderSessionsCalls) != 0 {
+		t.Fatalf("expected no ReorderSessions call yet (only the first cmd has been drained), got %d", len(be.reorderSessionsCalls))
+	}
+
+	// Completing cmd1 completes the in-flight call and, seeing
+	// reorderDirty, must return a follow-up command carrying the LATEST
+	// order (both moves applied) rather than the stale one captured at
+	// cmd1's dispatch time — drained here by hand (not via drainCmd, which
+	// only runs one level and would silently drop this follow-up) to
+	// observe it.
+	msg1 := cmd1()
+	if len(be.reorderSessionsCalls) != 1 {
+		t.Fatalf("expected cmd1 to make exactly 1 call before completing, got %d", len(be.reorderSessionsCalls))
+	}
+	_, cmd1b := m.Update(msg1)
+	if cmd1b == nil {
+		t.Fatal("expected a follow-up command for the coalesced second move")
+	}
+	cmd1b()
+	if len(be.reorderSessionsCalls) != 2 {
+		t.Fatalf("expected the deferred move to fire once cmd1 completed, got %d calls", len(be.reorderSessionsCalls))
+	}
+	got := be.reorderSessionsCalls[1].ids
+	if len(got) != 3 || got[0] != "demo:c" || got[1] != "demo:a" || got[2] != "demo:b" {
+		t.Fatalf("second ReorderSessions call = %v, want [demo:c demo:a demo:b] (both moves applied)", got)
 	}
 }
 
