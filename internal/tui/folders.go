@@ -177,7 +177,7 @@ func (m *Model) renderFolders() string {
 	}
 	proj := m.projects[m.activeProj]
 	counts := map[string]int{}
-	for _, s := range m.backend.Sessions() {
+	for _, s := range m.allSessions() {
 		if s.Project == proj && s.Folder != "" && s.Archived == m.showArchived {
 			counts[s.Folder]++
 		}
