@@ -105,7 +105,7 @@ func buildStyles() {
 	iconPRStyle = lipgloss.NewStyle().Foreground(colMute)
 	iconTicket = iconTicketStyle.Render("🎫")
 	iconPR = iconPRStyle.Render("🔀")
-	detailLinkStyle = lipgloss.NewStyle().Foreground(colAccent).Underline(true)
+	detailLinkStyle = lipgloss.NewStyle().Foreground(colAccent)
 
 	overlayBox = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -120,4 +120,17 @@ func buildStyles() {
 	helpGroupStyle = lipgloss.NewStyle().Bold(true).Foreground(colAccent)
 	helpKeyStyle = lipgloss.NewStyle().Bold(true).Foreground(colFg)
 	helpDescStyle = lipgloss.NewStyle().Foreground(colMute)
+}
+
+// renderLink styles detail-pane link text (URLs, the tmux target, the
+// session's first prompt). The underline is a bare SGR pair rather than
+// lipgloss's Underline(true): lipgloss styles underlined text one rune at a
+// time (to leave spaces un-underlined), which splits multi-rune grapheme
+// clusters such as "☁️" (U+2601 U+FE0F) into separately styled runes. Width
+// measurement then sees two clusters of width 1+0 instead of one of width
+// 2, the row gets padded one cell too wide, the terminal wraps it, and every
+// repaint below that row lands one line lower — stale duplicate rows on
+// screen. Prompts are arbitrary pasted text, so this is where it bites.
+func renderLink(s string) string {
+	return "\x1b[4m" + detailLinkStyle.Render(s) + "\x1b[24m"
 }

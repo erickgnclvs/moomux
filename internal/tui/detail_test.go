@@ -4,6 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
+
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
@@ -230,6 +234,35 @@ func TestPRNumberLabel(t *testing.T) {
 	for _, tc := range cases {
 		if got := prNumberLabel(tc.url); got != tc.want {
 			t.Fatalf("prNumberLabel(%q) = %q, want %q", tc.url, got, tc.want)
+		}
+	}
+}
+
+// Styling must never change a rendered line's width: lipgloss's underline
+// styles rune by rune, which split the "☁️" (U+2601 U+FE0F) grapheme in a
+// pasted prompt so the padded row measured one cell narrower than the
+// terminal drew it, wrapped, and left duplicate rows on screen. Every line of
+// the frame must measure the same styled as stripped, and fit the terminal.
+func TestFrameLinesKeepWidthUnderStyling(t *testing.T) {
+	// The suite runs with the Ascii profile (no escapes at all), which would
+	// hide the bug — it only exists once styles actually emit SGR sequences.
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(orig)
+	be := &fakeBackend{sessions: []session.Session{
+		{ID: "mr:main", Project: "mr", Name: "main", WorktreePath: "/tmp/mr/main",
+			Prompt: "mergeright on  main on ☁️  alan@example.com\n❯ make build\nswift build -c release"},
+		{ID: "mm:a", Project: "mm", Name: "a", WorktreePath: "/tmp/mm/a"},
+	}}
+	cfg := &config.Config{Projects: map[string]config.Project{"mr": {Repo: "/tmp/mr"}, "mm": {Repo: "/tmp/mm"}}}
+	be.cfg = *cfg
+	m := New(cfg, be, testAgentOptions, nil, func() {})
+	m.width, m.height = 132, 51
+	m.mode = ModeMultiView
+	for i, line := range strings.Split(m.View(), "\n") {
+		styled, plain := ansi.StringWidth(line), ansi.StringWidth(ansi.Strip(line))
+		if styled != plain || plain > m.width {
+			t.Errorf("line %d: styled width %d, stripped width %d, terminal %d: %q", i+1, styled, plain, m.width, ansi.Strip(line))
 		}
 	}
 }

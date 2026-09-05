@@ -153,7 +153,7 @@ func (m *Model) renderDetailContent(s session.Session, hasSelection bool, width 
 					col1:      col1,
 				})
 			}
-			v = detailLinkStyle.Render(v)
+			v = renderLink(v)
 		}
 		b.WriteString(fmt.Sprintf("%s %s\n", key, v))
 	}
@@ -227,7 +227,7 @@ func (m *Model) renderDetailContent(s session.Session, hasSelection bool, width 
 			if col0 < col1 {
 				hits = append(hits, linkHit{sessionID: s.ID, url: oneline, copyOnly: true, line: line, col0: col0, col1: col1})
 			}
-			b.WriteString(fmt.Sprintf("%s %s\n", label, detailLinkStyle.Render(ln)))
+			b.WriteString(fmt.Sprintf("%s %s\n", label, renderLink(ln)))
 		}
 	}
 	// In compact mode, narrow layouts already show this same small cow (and
