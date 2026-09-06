@@ -1,5 +1,4 @@
 === 40x20 ===
-                                        
 ╭──────────────────────────────────────╮
 │                                      │
 │  Edit project                        │
@@ -10,6 +9,7 @@
 │  branch prefix:> feature             │
 │  emoji:‹ [auto] ›                    │
 │  agent:‹ [codex] ›                   │
+│  model:‹ [default] ›                 │
 │  dangerous:[off]                     │
 │  worktrees:[on]                      │
 │                                      │
@@ -37,6 +37,7 @@
            │  branch prefix: > feature                                                  │           
            │  emoji:         [auto]  🐙  🦊  🚀  🔥  🌊  🍀  ⚡  🎯  🐝  🦉  🐄         │           
            │  agent:         claude  [codex]  opencode  ask each time                   │           
+           │  model:         [default]  gpt-5.6-sol  gpt-5.6-terra  gpt-5.6-luna        │           
            │  dangerous:     [off]                                                      │           
            │  worktrees:     [on]                                                       │           
            │                                                                            │           
@@ -44,7 +45,6 @@
            │  tab/↑↓  ←→ change  enter save  esc cancel                                 │           
            │                                                                            │           
            ╰────────────────────────────────────────────────────────────────────────────╯           
-                                                                                                    
                                                                                                     
                                                                                                     
                                                                                                     

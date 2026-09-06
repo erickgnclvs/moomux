@@ -206,7 +206,8 @@ const askAgentIdx = -1
 // projFormInputCount is the number of plain text inputs in the project form
 // (name, repo, base branch, branch prefix). Non-text controls follow at
 // fixed offsets from it: focus==projFormInputCount is the emoji selector,
-// +1 the agent selector, +2 the dangerous toggle, +3 the worktree toggle.
+// +1 the agent selector, +2 the model selector, +3 the dangerous toggle,
+// +4 the worktree toggle.
 const projFormInputCount = 4
 
 type projectForm struct {
@@ -219,10 +220,18 @@ type projectForm struct {
 	// config) — otherwise it would be indistinguishable from "auto" and
 	// saving any unrelated field would silently discard it.
 	emojiChoices []string
-	agentIdx     int  // index into agentNames, or askAgentIdx for "ask each time"
-	dangerous    bool // whether the chosen agent runs with its permission-skipping flag; meaningless when agentIdx is askAgentIdx
-	noWorktree   bool
-	err          string
+	agentIdx     int // index into agentNames, or askAgentIdx for "ask each time"
+	modelIdx     int // index into projFormModelChoices(); 0 ("default") means "not specified"
+	// extraModel is a stored Project.Model that isn't one of the chosen
+	// agent's listed models — opencode's free-text model, a hand-edited
+	// config value, or one saved while the agent was "ask each time". Kept
+	// as its own selectable entry (right after "default") for the same
+	// reason emojiChoices keeps an off-palette glyph: otherwise editing any
+	// unrelated field would silently discard it.
+	extraModel string
+	dangerous  bool // whether the chosen agent runs with its permission-skipping flag; meaningless when agentIdx is askAgentIdx
+	noWorktree bool
+	err        string
 }
 
 type pendingProject struct {
@@ -1150,6 +1159,16 @@ func (m *Model) editProjectForm(name string, p config.Project) projectForm {
 	} else {
 		pf.agentIdx = m.agentNameIndex(p.AgentName())
 		pf.dangerous = p.Dangerous
+	}
+	for i, name := range m.projectModelChoices(pf.agentIdx) {
+		if name == p.Model {
+			pf.modelIdx = i
+			break
+		}
+	}
+	if p.Model != "" && pf.modelIdx == 0 {
+		pf.extraModel = p.Model
+		pf.modelIdx = 1
 	}
 	pf.noWorktree = p.NoWorktree
 	return pf

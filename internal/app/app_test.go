@@ -680,6 +680,45 @@ func TestCreateSessionDangerousDefaultsFromProject(t *testing.T) {
 	}
 }
 
+// TestCreateSessionProjectDefaultModel: an unspecified model falls through
+// to the project's configured default, and only for the project's own agent
+// — a model name means nothing to a different agent.
+func TestCreateSessionProjectDefaultModel(t *testing.T) {
+	cases := []struct {
+		agent   string
+		wantCmd string
+	}{
+		{"", "claude --model opus"},
+		{"claude", "claude --model opus"},
+		{"codex", "codex"},
+	}
+	for _, tc := range cases {
+		t.Run("agent="+tc.agent, func(t *testing.T) {
+			projects := gitProject("/repo")
+			p := projects["demo"]
+			p.Agent, p.Model = "claude", "opus"
+			projects["demo"] = p
+			a, git, tm, _ := newTestApp(t, projects)
+			tn := TmuxSessionName("demo:feat", "feat")
+			tm.out["list-panes -t ="+tn+": -F #{pane_id}"] = "%0\n"
+			noBranch(git, "feat")
+
+			if _, _, err := a.CreateSession("demo", "feat", tc.agent, "", "", true, boolPtr(false), "", "", ""); err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, c := range tm.calls {
+				if slices.Contains(c, tc.wantCmd) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("no send-keys with %q; calls = %v", tc.wantCmd, tm.calls)
+			}
+		})
+	}
+}
+
 // TestCreateSessionModelAppendsFlag guards buildAgentCmd/modelFlag: a chosen
 // model must be appended as --model, and "default" (or empty) must omit the
 // flag entirely rather than passing it through literally.

@@ -536,6 +536,8 @@ func (m *Model) openNewSessionForm() {
 // explicit choice on every session. If no project is chosen yet, the agent
 // selector is left unset too, since it depends on the project.
 func (m *Model) newFormApplyProjectDefaults() {
+	m.newFormModelIdx = 0
+	m.newFormModelInput.SetValue("")
 	if m.newFormProjIdx < 0 {
 		m.newFormAgentIdx = -1
 		return
@@ -547,6 +549,26 @@ func (m *Model) newFormApplyProjectDefaults() {
 	} else {
 		m.newFormAgentIdx = m.agentNameIndex(p.AgentName())
 		m.newFormDangerous = p.Dangerous
+		m.newFormApplyProjectModel(p)
+	}
+}
+
+// newFormApplyProjectModel preselects the project's default model in the
+// new-session form — a selector index for claude/codex, the free-text
+// value for opencode, which has no fixed list to index into.
+func (m *Model) newFormApplyProjectModel(p config.Project) {
+	if p.Model == "" {
+		return
+	}
+	if p.AgentName() == "opencode" {
+		m.newFormModelInput.SetValue(p.Model)
+		return
+	}
+	for i, name := range m.modelNamesFor(p.AgentName()) {
+		if name == p.Model {
+			m.newFormModelIdx = i
+			return
+		}
 	}
 }
 
@@ -1310,9 +1332,17 @@ func (m *Model) adjustProjFormField(delta int) bool {
 		m.projForm.emojiIdx = cycleProjectEmojiIdx(m.projForm.emojiChoices, m.projForm.emojiIdx, delta)
 	case projFormInputCount + 1:
 		m.projForm.agentIdx = m.cycleProjectAgentIdx(m.projForm.agentIdx, delta)
+		// The model list is per-agent, so a stale index (or a model carried
+		// over from the old agent) would point at something the new agent
+		// doesn't know.
+		m.projForm.modelIdx = 0
+		m.projForm.extraModel = ""
 	case projFormInputCount + 2:
-		m.projForm.dangerous = !m.projForm.dangerous
+		choices := m.projFormModelChoices()
+		m.projForm.modelIdx = (m.projForm.modelIdx + delta + len(choices)) % len(choices)
 	case projFormInputCount + 3:
+		m.projForm.dangerous = !m.projForm.dangerous
+	case projFormInputCount + 4:
 		m.projForm.noWorktree = !m.projForm.noWorktree
 	default:
 		return false
@@ -1330,8 +1360,19 @@ func (m *Model) projectAgentFields(agentIdx int, dangerous bool) (agent string, 
 	return m.agentNames()[agentIdx], dangerous, false
 }
 
+// projFormModel returns the Model value a submitted project form should
+// store: "" for "default", otherwise the selected model name.
+func (m *Model) projFormModel() string {
+	choices := m.projFormModelChoices()
+	idx := m.projForm.modelIdx
+	if idx <= 0 || idx >= len(choices) || choices[idx] == "default" {
+		return ""
+	}
+	return choices[idx]
+}
+
 func (m *Model) updateNewProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	const totalFields = projFormInputCount + 4 // +1 emoji selector, +1 agent selector, +1 dangerous toggle, +1 worktree toggle
+	const totalFields = projFormInputCount + 5 // +1 emoji selector, +1 agent selector, +1 model selector, +1 dangerous toggle, +1 worktree toggle
 	switch {
 	case key.Matches(msg, m.keys.Cancel):
 		// projectDialogReturn defaults to ModeList (its zero value), which is
@@ -1363,7 +1404,7 @@ func (m *Model) updateNewProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			base = "main"
 		}
 		agent, dangerous, promptAgent := m.projectAgentFields(m.projForm.agentIdx, m.projForm.dangerous)
-		p := config.Project{Repo: repo, BaseBranch: base, BranchPrefix: prefix, Emoji: emoji, Agent: agent, Dangerous: dangerous, PromptAgent: promptAgent, NoWorktree: m.projForm.noWorktree}
+		p := config.Project{Repo: repo, BaseBranch: base, BranchPrefix: prefix, Emoji: emoji, Agent: agent, Model: m.projFormModel(), Dangerous: dangerous, PromptAgent: promptAgent, NoWorktree: m.projForm.noWorktree}
 		return m, func() tea.Msg {
 			err := m.backend.AddProject(name, p)
 			return ProjectAddedMsg{Kind: "add", Name: name, Project: p, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
@@ -1443,9 +1484,9 @@ func (m *Model) updateEditSession(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func editProjectFocuses(p config.Project) []int {
 	if p.IsPlain() {
-		return []int{1, projFormInputCount, projFormInputCount + 1, projFormInputCount + 2}
+		return []int{1, projFormInputCount, projFormInputCount + 1, projFormInputCount + 2, projFormInputCount + 3}
 	}
-	return []int{1, 2, 3, projFormInputCount, projFormInputCount + 1, projFormInputCount + 2, projFormInputCount + 3}
+	return []int{1, 2, 3, projFormInputCount, projFormInputCount + 1, projFormInputCount + 2, projFormInputCount + 3, projFormInputCount + 4}
 }
 
 func (m *Model) cycleEditProjectFocus(forward bool) {
@@ -1501,6 +1542,7 @@ func (m *Model) updateEditProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		project.Repo = m.projForm.inputs[1].Value()
 		project.Emoji = projectEmojiFieldValue(m.projForm.emojiChoices, m.projForm.emojiIdx)
 		project.Agent, project.Dangerous, project.PromptAgent = m.projectAgentFields(m.projForm.agentIdx, m.projForm.dangerous)
+		project.Model = m.projFormModel()
 		if !project.IsPlain() {
 			project.BaseBranch = m.projForm.inputs[2].Value()
 			project.BranchPrefix = m.projForm.inputs[3].Value()
