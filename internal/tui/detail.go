@@ -237,7 +237,7 @@ func (m *Model) renderDetailContent(s session.Session, hasSelection bool, width 
 	if !compact || m.width >= narrowWidthBreak {
 		preCowLines = lipgloss.Height(lipgloss.NewStyle().Width(width).Render(b.String()))
 		b.WriteString("\n")
-		quip := pickQuip(s.ID, quipPool(st))
+		quip := PickQuip(s.ID, QuipPool(st))
 		if compact {
 			b.WriteString(cowStyle.Render(cowsaySmall(quip, valueWidth+10, st)))
 		} else {

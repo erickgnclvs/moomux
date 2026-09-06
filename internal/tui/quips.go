@@ -38,8 +38,10 @@ var quipsParked = []string{
 	"on a moo-ratorium",
 }
 
-// quipPool returns the quip pool matching a session's state.
-func quipPool(st watcher.State) []string {
+// QuipPool returns the quip pool matching a session's state. Exported so
+// internal/ipc's server can hand the Mac app the same picked text over the
+// wire, instead of it re-implementing this pool+hash logic in Swift.
+func QuipPool(st watcher.State) []string {
 	switch st {
 	case watcher.Working:
 		return quipsWorking
@@ -67,7 +69,9 @@ func stateEyes(st watcher.State) string {
 	}
 }
 
-func pickQuip(sessionID string, pool []string) string {
+// PickQuip deterministically picks a pool entry for sessionID, so the same
+// session always shows the same quip for a given state.
+func PickQuip(sessionID string, pool []string) string {
 	if len(pool) == 0 {
 		return ""
 	}
