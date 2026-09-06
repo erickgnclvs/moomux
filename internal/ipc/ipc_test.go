@@ -17,6 +17,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/gitwt"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/tui"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
@@ -654,5 +655,41 @@ func TestWatchSharesOneWatcher(t *testing.T) {
 
 	if n := w.runCount(); n != 1 {
 		t.Errorf("Watcher.Run called %d times for 2 clients, want 1", n)
+	}
+}
+
+// TestQuipsForMatchesTUI guards the whole point of quipsFor: the Mac app's
+// wire quip must be byte-identical to what the Go TUI renders for the same
+// session, not just "some string".
+func TestQuipsForMatchesTUI(t *testing.T) {
+	b := &fakeBackend{sessions: []session.Session{
+		{ID: "sess-1", WorktreePath: "/wt/a"},
+		{ID: "sess-2", WorktreePath: "/wt/b"},
+		{ID: "sess-3", WorktreePath: "/wt/no-state"}, // no entry in states below
+	}}
+	s := &Server{Backend: b}
+	states := map[string]watcher.State{
+		"/wt/a": watcher.Working,
+		"/wt/b": watcher.Done,
+	}
+
+	got := s.quipsFor(states)
+
+	want := map[string]string{
+		"/wt/a": tui.PickQuip("sess-1", tui.QuipPool(watcher.Working)),
+		"/wt/b": tui.PickQuip("sess-2", tui.QuipPool(watcher.Done)),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("quipsFor = %v, want %v", got, want)
+	}
+}
+
+func TestQuipsForEmpty(t *testing.T) {
+	s := &Server{Backend: &fakeBackend{}}
+	if got := s.quipsFor(map[string]watcher.State{"/wt/a": watcher.Working}); len(got) != 0 {
+		t.Errorf("quipsFor with no matching sessions = %v, want empty", got)
+	}
+	if got := s.quipsFor(nil); got != nil {
+		t.Errorf("quipsFor(nil) = %v, want nil", got)
 	}
 }

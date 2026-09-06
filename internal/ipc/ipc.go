@@ -111,8 +111,15 @@ type Result struct {
 
 // snapshotWire carries a watcher.Snapshot over JSON; Snapshot.Err is an
 // error value and doesn't survive a round trip on its own.
+//
+// Quips carries the same flavor-text the TUI's header/detail cow shows,
+// keyed by worktree path like States. It's computed server-side (see
+// tui.PickQuip/QuipPool) so a second front end — the Mac app — shows the
+// identical text without reimplementing the word lists and hash-pick in
+// Swift.
 type snapshotWire struct {
 	States   map[string]watcher.State `json:"states"`
+	Quips    map[string]string        `json:"quips,omitempty"`
 	PollTime time.Time                `json:"poll_time"`
 	Err      string                   `json:"err,omitempty"`
 }

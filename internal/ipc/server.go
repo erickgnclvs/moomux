@@ -188,7 +188,7 @@ func (s *Server) stream(c net.Conn) {
 	for {
 		select {
 		case snap := <-ch:
-			w := snapshotWire{States: snap.States, PollTime: snap.PollTime}
+			w := snapshotWire{States: snap.States, Quips: s.quipsFor(snap.States), PollTime: snap.PollTime}
 			if snap.Err != nil {
 				w.Err = snap.Err.Error()
 			}
@@ -199,6 +199,25 @@ func (s *Server) stream(c net.Conn) {
 			return
 		}
 	}
+}
+
+// quipsFor picks the flavor-text quip for each session in states, keyed by
+// worktree path to match snapshotWire.States. Sessions is read fresh each
+// tick (not cached) so a rename/delete between ticks can't hand out a quip
+// for a path that no longer maps to the session it was picked for.
+func (s *Server) quipsFor(states map[string]watcher.State) map[string]string {
+	if len(states) == 0 || s.Backend == nil {
+		return nil
+	}
+	quips := make(map[string]string, len(states))
+	for _, sess := range s.Backend.Sessions() {
+		st, ok := states[sess.WorktreePath]
+		if !ok {
+			continue
+		}
+		quips[sess.WorktreePath] = tui.PickQuip(sess.ID, tui.QuipPool(st))
+	}
+	return quips
 }
 
 func (s *Server) dispatch(method string, a Args) (Result, error) {

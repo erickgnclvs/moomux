@@ -568,7 +568,7 @@ func (m *Model) renderHeader() string {
 		if haveCursor {
 			quipWidth := m.width - lipgloss.Width(cow) - 5
 			if quipWidth > 3 {
-				quip := muteStyle.Render(truncateToWidth(pickQuip(m.sessions[m.cursor].ID, quipPool(st)), quipWidth))
+				quip := muteStyle.Render(truncateToWidth(PickQuip(m.sessions[m.cursor].ID, QuipPool(st)), quipWidth))
 				left = lipgloss.JoinHorizontal(lipgloss.Center, cow, "  ", quip)
 			}
 		}
