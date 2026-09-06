@@ -115,8 +115,15 @@ var screens = map[string][]string{
 	"help":                   {"?"},
 	"help-bottom":            {"?"},
 	// needs-input has no keys of its own; renderScreen feeds it a
-	// StatusTickMsg marking the first sample session watcher.NeedsInput.
+	// StatusTickMsg marking the first sample session watcher.NeedsInput
+	// (see screenStates).
 	"needs-input": {},
+	// states puts all four agent-state dots on screen at once — the only
+	// place the served palette (internal/config) is fully visible — with
+	// the ± / ↑ git badges on the done row, so the amber warn color shows
+	// right beside the now-green done dot. No keys: the states arrive as a
+	// StatusTickMsg, see screenStates.
+	"states": {},
 	// Submits the new-project form with a path under ~/Documents that isn't
 	// a git repo, landing on the "skip git" choice screen with its macOS
 	// Files-and-Folders warning (see internal/tui/tcc.go). "$HOME" is
@@ -382,6 +389,14 @@ func sampleSessions() []session.Session {
 	}
 }
 
+// screenStates is the agent state each scenario forces on the sample
+// sessions, by index — fed in as a StatusTickMsg, the same message the real
+// watcher delivers.
+var screenStates = map[string][]watcher.State{
+	"needs-input": {watcher.NeedsInput},
+	"states":      {watcher.Working, watcher.Done, watcher.NeedsInput},
+}
+
 // renderScreen drives a freshly created Model through the key sequence
 // registered for screenName against canned sample data, returning its final
 // rendered view. It's the piece scripts/screenshot.sh's pty/HTML/Chromium
@@ -419,6 +434,16 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 				Agent:        "claude",
 			})
 		}
+	case "states":
+		// Four rows for four dots: the two sample sessions carry working and
+		// done, and these two carry needs-input and (by having no entry in
+		// screenStates at all) parked. Every agent-state color the core
+		// serves is on screen at once, which is the point of the scenario.
+		now := time.Now().UTC()
+		sessions = append(sessions[:2:2],
+			session.Session{ID: "demo:review-copy", Project: "demo", Name: "review-copy", Branch: "chore/copy", WorktreePath: "/tmp/demo/review-copy", TmuxSession: "moomux-review-copy", CreatedAt: now, Agent: "claude"},
+			session.Session{ID: "demo:stale-idea", Project: "demo", Name: "stale-idea", Branch: "spike/stale", WorktreePath: "/tmp/demo/stale-idea", TmuxSession: "moomux-stale-idea", CreatedAt: now, Agent: "codex"},
+		)
 	case "no-projects-startup", "no-projects":
 		cfg = &config.Config{Projects: map[string]config.Project{}}
 		sessions = nil
@@ -472,6 +497,11 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 			sessions[0].ID: {filesChanged: 3, unpushedCommits: 2},
 		}
 	}
+	if screenName == "states" && len(sessions) > 1 {
+		be.worktreeStatus = map[string]struct{ dirty, unpushed bool }{
+			sessions[1].ID: {dirty: true, unpushed: true},
+		}
+	}
 	if screenName == "pr-status" && len(sessions) > 1 {
 		// Must be set before drive() below, for the same reason as
 		// confirm-delete's worktreeStatus above: PR status is swept for
@@ -516,10 +546,14 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 	home, _ := os.UserHomeDir()
 
 	m.Update(tea.WindowSizeMsg{Width: width, Height: height})
-	if screenName == "needs-input" {
-		m.Update(tui.StatusTickMsg{Snap: watcher.Snapshot{
-			States: map[string]watcher.State{sessions[0].WorktreePath: watcher.NeedsInput},
-		}})
+	if want := screenStates[screenName]; want != nil {
+		states := map[string]watcher.State{}
+		for i, st := range want {
+			if i < len(sessions) {
+				states[sessions[i].WorktreePath] = st
+			}
+		}
+		m.Update(tui.StatusTickMsg{Snap: watcher.Snapshot{States: states}})
 	}
 	for _, k := range keys {
 		msg := keyMsgFor(strings.ReplaceAll(k, "$HOME", home))

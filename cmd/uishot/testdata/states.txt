@@ -1,0 +1,54 @@
+=== 40x20 ===
+   ^__^                                 
+ _/(**)  no time to graze               
+  \(__)                                 
+┌──────────────────────────────────────┐
+│  feature-auth                  🎫 ⬤  │
+│  bugfix-timeout            🔀 ± ↑ ⬤  │
+│  review-copy                      ⬤  │
+│  stale-idea                       ⬤  │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+└──────────────────────────────────────┘
+                                        
+ ? help                            vdev 
+=== 100x32 ===
+   ^__^                                                                                             
+   (**)\_                                                                                           
+   (__)\ )                                                                                          
+┌──────────────────────────────────────────┐┌──────────────────────────────────────────────────────┐
+│ SESSIONS                                 ││                                                      │
+│                                          ││                                                      │
+│  feature-auth                      🎫 ⬤  ││ project:   demo                                      │
+│  bugfix-timeout                🔀 ± ↑ ⬤  ││ status:    ⬤  grazing                                │
+│  review-copy                          ⬤  ││ name:      feature-auth                              │
+│  stale-idea                           ⬤  ││ agent:     claude                                    │
+│                                          ││ ticket:    https://tracker.example/TICK-123          │
+│                                          ││ tmux:      moomux-feature-auth                       │
+│                                          ││ worktree:  /tmp/demo/feature-auth                    │
+│                                          ││ created:   just now                                  │
+│                                          ││ prompt:    add JWT-based auth to the login flow,     │
+│                                          ││            including refresh token rotation,         │
+│                                          ││            session revocation on logout, and…        │
+│                                          ││                                                      │
+│                                          ││                                                      │
+│                                          ││                                                      │
+│                                          ││                                                      │
+│                                          ││  ________________________________________            │
+│                                          ││ < no time to graze                       >           │
+│                                          ││  ----------------------------------------            │
+│                                          ││         \   ^__^                                     │
+│                                          ││          \  (**)\_______                             │
+│                                          ││             (__)\       )\/\                         │
+│                                          ││                 ||----w |                            │
+│                                          ││                 ||     ||                            │
+└──────────────────────────────────────────┘└──────────────────────────────────────────────────────┘
+                                                                                                    
+ ? help                                                                                        vdev 

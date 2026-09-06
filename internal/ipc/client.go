@@ -148,6 +148,17 @@ func (c *Client) AgentOptions() ([]config.AgentOption, error) {
 	return r.Agents, nil
 }
 
+// Themes fetches the server's color palettes — the agent-state colors a
+// front end renders, and the list a theme picker offers. Like AgentOptions,
+// it isn't part of tui.Backend: fetched once at startup, not per render.
+func (c *Client) Themes() ([]config.Theme, error) {
+	r, err := c.call("Themes", Args{})
+	if err != nil {
+		return nil, err
+	}
+	return r.Themes, nil
+}
+
 func (c *Client) Sessions() []session.Session {
 	r, err := c.call("Sessions", Args{})
 	c.mu.Lock()
