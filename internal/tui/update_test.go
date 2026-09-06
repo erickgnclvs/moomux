@@ -1098,7 +1098,7 @@ func TestNewProjectFlow(t *testing.T) {
 	if m.agentNames()[m.projForm.agentIdx] != "codex" {
 		t.Fatalf("agent = %q", m.agentNames()[m.projForm.agentIdx])
 	}
-	m.projForm.focus = projFormInputCount + 3
+	m.projForm.focus = projFormInputCount + 4
 	press(m, tea.KeyLeft) // toggle no-worktree on
 	if !m.projForm.noWorktree {
 		t.Fatal("noWorktree not toggled")
@@ -1399,7 +1399,7 @@ func TestNewProjectTabCyclesFocus(t *testing.T) {
 	m := newTestModel(be)
 	m.Update(slashKey())
 	m.Update(keyRune("n"))
-	total := projFormInputCount + 4
+	total := projFormInputCount + 5
 	for i := 1; i < total; i++ {
 		press(m, tea.KeyTab)
 		if m.projForm.focus != i {

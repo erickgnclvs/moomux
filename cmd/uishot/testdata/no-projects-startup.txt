@@ -1,5 +1,4 @@
 === 40x20 ===
-                                        
 ╭──────────────────────────────────────╮
 │                                      │
 │  Add project                         │
@@ -10,6 +9,7 @@
 │  branch prefix:> branch prefix …     │
 │  emoji:‹ [auto] ›                    │
 │  agent:‹ [claude] ›                  │
+│  model:‹ [default] ›                 │
 │  dangerous:[off]                     │
 │  worktrees:[on]                      │
 │                                      │
@@ -37,6 +37,7 @@
            │  branch prefix: > branch prefix (option…                                   │           
            │  emoji:         [auto]  🐙  🦊  🚀  🔥  🌊  🍀  ⚡  🎯  🐝  🦉  🐄         │           
            │  agent:         [claude]  codex  opencode  ask each time                   │           
+           │  model:         [default]  sonnet  opus  fable                             │           
            │  dangerous:     [off]                                                      │           
            │  worktrees:     [on]                                                       │           
            │                                                                            │           
@@ -44,7 +45,6 @@
            │  tab/↑↓  ←→ choose  enter save  esc cancel                                 │           
            │                                                                            │           
            ╰────────────────────────────────────────────────────────────────────────────╯           
-                                                                                                    
                                                                                                     
                                                                                                     
                                                                                                     

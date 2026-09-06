@@ -697,6 +697,12 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 	if agent == "" {
 		agent = proj.AgentName()
 	}
+	if model == "" && agent == proj.AgentName() {
+		// Unspecified: fall through to the project's default model. Gated on
+		// the agent matching, since a model name only means anything for the
+		// agent it was picked for.
+		model = proj.Model
+	}
 	if err := validateAgent(agent); err != nil {
 		return session.Session{}, "", err
 	}

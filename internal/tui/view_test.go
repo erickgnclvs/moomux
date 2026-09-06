@@ -448,7 +448,7 @@ func TestShortProjectFormKeepsBottomControlVisible(t *testing.T) {
 	m.width, m.height = 50, 12
 	m.mode = ModeNewProject
 	m.projForm = newProjectForm()
-	m.projForm.focus = projFormInputCount + 1
+	m.projForm.focus = projFormInputCount + 4 // the worktree toggle, the last control
 	m.resizeFormInputs()
 
 	view := m.View()

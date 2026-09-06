@@ -387,8 +387,9 @@ var projFormFieldHints = []string{
 	3: "prepended to new branch names, e.g. alice/feature-x — blank to skip",
 	4: "shown instead of the project name in all-sessions — ←→ to choose",
 	5: "default agent for new sessions — \"ask each time\" prompts every time",
-	6: "on: new sessions run with the agent's permission-skipping flag; no effect for opencode or \"ask each time\"",
-	7: "off: sessions run directly in the repo, no worktree/branch",
+	6: "default model for new sessions — \"default\" leaves it to the agent",
+	7: "on: new sessions run with the agent's permission-skipping flag; no effect for opencode or \"ask each time\"",
+	8: "off: sessions run directly in the repo, no worktree/branch",
 }
 
 var editProjectFieldHints = []string{
@@ -398,8 +399,9 @@ var editProjectFieldHints = []string{
 	3: "prepended to branches created for new sessions — leave blank to skip",
 	4: "shown instead of the project name in all-sessions — ←→ to choose",
 	5: "default agent for new sessions — \"ask each time\" prompts every time",
-	6: "on: new sessions run with the agent's permission-skipping flag; no effect for opencode or \"ask each time\"",
-	7: "changes worktree behavior for new sessions only",
+	6: "default model for new sessions — \"default\" leaves it to the agent",
+	7: "on: new sessions run with the agent's permission-skipping flag; no effect for opencode or \"ask each time\"",
+	8: "changes worktree behavior for new sessions only",
 }
 
 func (m *Model) renderNewProject() string {
@@ -417,6 +419,9 @@ func (m *Model) renderNewProject() string {
 	b.WriteString("\n")
 	b.WriteString(m.renderFormLabel("agent", 15))
 	b.WriteString(m.renderAgentSelector())
+	b.WriteString("\n")
+	b.WriteString(m.renderFormLabel("model", 15))
+	b.WriteString(m.renderProjectModelSelector())
 	b.WriteString("\n")
 	b.WriteString(m.renderFormLabel("dangerous", 15))
 	b.WriteString(m.renderProjectDangerousToggle())
@@ -453,6 +458,9 @@ func (m *Model) renderEditProject() string {
 	b.WriteString(m.renderFormLabel("agent", 15))
 	b.WriteString(m.renderAgentSelector())
 	b.WriteString("\n")
+	b.WriteString(m.renderFormLabel("model", 15))
+	b.WriteString(m.renderProjectModelSelector())
+	b.WriteString("\n")
 	b.WriteString(m.renderFormLabel("dangerous", 15))
 	b.WriteString(m.renderProjectDangerousToggle())
 	b.WriteString("\n")
@@ -473,11 +481,11 @@ func (m *Model) renderProjectEmojiSelector() string {
 }
 
 func (m *Model) renderWorktreeToggle() string {
-	return renderToggle(!m.projForm.noWorktree, m.projForm.focus == projFormInputCount+3)
+	return renderToggle(!m.projForm.noWorktree, m.projForm.focus == projFormInputCount+4)
 }
 
 func (m *Model) renderProjectDangerousToggle() string {
-	return renderToggle(m.projForm.dangerous, m.projForm.focus == projFormInputCount+2)
+	return renderToggle(m.projForm.dangerous, m.projForm.focus == projFormInputCount+3)
 }
 
 // projectAgentChoices is the project form's agent selector: the real agents,
@@ -496,6 +504,46 @@ func (m *Model) renderAgentSelector() string {
 		m.projectAgentChoices(), selectedIdx,
 		m.projForm.focus == projFormInputCount+1,
 		m.overlayWidth(formHintWidth)-m.formLabelWidth("agent", 15),
+	)
+}
+
+// projectModelChoices is the project form's model selector: the chosen
+// agent's fixed model list, or just "default" for an agent that has none
+// (opencode) and for "ask each time", where there's no agent to pin a
+// model to.
+func (m *Model) projectModelChoices(agentIdx int) []string {
+	if agentIdx == askAgentIdx || agentIdx >= len(m.agentNames()) {
+		return []string{"default"}
+	}
+	name := m.agentNames()[agentIdx]
+	for _, o := range m.agentOptions {
+		if o.Name == name && len(o.Models) > 0 {
+			return o.Models
+		}
+	}
+	return []string{"default"}
+}
+
+// projFormModelChoices is projectModelChoices for the form's current agent,
+// plus any extraModel the project already had stored (see projectForm).
+func (m *Model) projFormModelChoices() []string {
+	choices := m.projectModelChoices(m.projForm.agentIdx)
+	if e := m.projForm.extraModel; e != "" {
+		return append([]string{choices[0], e}, choices[1:]...)
+	}
+	return choices
+}
+
+func (m *Model) renderProjectModelSelector() string {
+	choices := m.projFormModelChoices()
+	idx := m.projForm.modelIdx
+	if idx < 0 || idx >= len(choices) {
+		idx = 0
+	}
+	return renderSelector(
+		choices, idx,
+		m.projForm.focus == projFormInputCount+2,
+		m.overlayWidth(formHintWidth)-m.formLabelWidth("model", 15),
 	)
 }
 

@@ -214,6 +214,8 @@ func (m *Model) focusedOverlayLine(content string) int {
 		case projFormInputCount + 1:
 			return lineContaining(content, m.renderAgentSelector())
 		case projFormInputCount + 2:
+			return lineContaining(content, m.renderFormLabel("model", 15)+m.renderProjectModelSelector())
+		case projFormInputCount + 3:
 			// The dangerous and worktree toggles render an identical
 			// "[on]"/"[off]" value — see the newFormDangerousFocus case
 			// above for why the label has to be part of the needle too.
