@@ -245,6 +245,16 @@ func TestRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("themes survive the wire", func(t *testing.T) {
+		got, err := c.Themes()
+		if err != nil {
+			t.Fatalf("Themes: %v", err)
+		}
+		if !reflect.DeepEqual(got, config.Themes()) {
+			t.Fatalf("Themes() = %+v, want %+v", got, config.Themes())
+		}
+	})
+
 	t.Run("sessions survive the wire", func(t *testing.T) {
 		got := c.Sessions()
 		if len(got) != 1 || got[0] != b.sessions[0] {

@@ -6,6 +6,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
+
+	"github.com/erickgnclvs/moomux/internal/config"
 )
 
 // TestApplyThemeRebuildsPrerenderedDots guards the one thing easy to forget
@@ -140,7 +142,7 @@ func TestThemePickerLivePreviewAndEscReverts(t *testing.T) {
 	if m.themeCursor != 1 {
 		t.Fatalf("expected cursor 1 after down, got %d", m.themeCursor)
 	}
-	if colFg != themes[themeNames[1]].fg {
+	if colFg != adaptive(config.ThemeByName(themeNames[1]).Fg) {
 		t.Fatalf("expected down to live-preview theme %q immediately", themeNames[1])
 	}
 
@@ -148,7 +150,7 @@ func TestThemePickerLivePreviewAndEscReverts(t *testing.T) {
 	if m.mode != ModeSettings {
 		t.Fatalf("expected esc to return to ModeSettings, got %v", m.mode)
 	}
-	if colFg != themes["default"].fg {
+	if colFg != adaptive(config.ThemeByName("default").Fg) {
 		t.Fatal("expected esc to revert the live preview back to the persisted theme")
 	}
 	if len(be.setThemeCalls) != 0 {

@@ -44,6 +44,11 @@ app attaches sessions with `tmux -CC` (control mode) and parses tmux's line prot
 on the *names* moomux gives tmux sessions — renaming or restructuring `internal/tmux`'s session
 naming is a change the Swift side feels, invisibly.
 
+The color palettes are served now too (`config.Themes()`, the `Themes` IPC method) — agent-state
+colors, the theme list, and a `system` name per color so a native front end can use `.accentColor`
+et al. rather than frozen hex. The Swift side still has its own `enum Theme` and
+`SettingsSheet.themes`; deleting those in favour of the served table is the open follow-up.
+
 ## Releases and commit messages
 
 Every merge to `main` auto-tags and deploys a new version (`.github/workflows/deploy.yml` computes the next tag via `scripts/next_version.sh`, then `release.yml` builds and publishes it) — there's no manual release step, and no way to land a commit on `main` without it shipping.

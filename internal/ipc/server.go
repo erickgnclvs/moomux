@@ -234,6 +234,11 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 			return Result{}, errors.New("server has no agent options")
 		}
 		return Result{Agents: s.AgentOptions()}, nil
+	case "Themes":
+		// No Server hook, unlike AgentOptions: that table lives in
+		// internal/app, which this package can't import. This one is static
+		// data in config, which it already does.
+		return Result{Themes: config.Themes()}, nil
 	case "Sessions":
 		return Result{Sessions: b.Sessions()}, nil
 	case "Projects":

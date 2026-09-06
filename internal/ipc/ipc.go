@@ -101,6 +101,7 @@ type Result struct {
 	PR       *prstatus.Info       `json:"pr,omitempty"`
 	Cfg      *config.Config       `json:"cfg,omitempty"`
 	Agents   []config.AgentOption `json:"agents,omitempty"`
+	Themes   []config.Theme       `json:"themes,omitempty"`
 	Hint     string               `json:"hint,omitempty"`
 	Dirty    bool                 `json:"dirty,omitempty"`
 	Unpushed bool                 `json:"unpushed,omitempty"`
