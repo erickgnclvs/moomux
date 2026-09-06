@@ -8,6 +8,7 @@ import (
 
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
@@ -82,7 +83,7 @@ func (m *Model) renderList(width, height int) (string, []linkHit, []rowHit) {
 		// above" hint line (0 unless it's actually shown).
 		line := titleRows + rowOffset + (i - start)
 		rows = append(rows, rowHit{sessionID: s.ID, line: line})
-		row, iconHits := renderRow(s, m.effectiveState(s), width-2, selected, "", m.gitStatus[s.ID])
+		row, iconHits := renderRow(s, m.viewFor(s.ID), width-2, selected, "")
 		for _, h := range iconHits {
 			h.sessionID = s.ID
 			h.line = line
@@ -172,9 +173,9 @@ func scrollHintLine(glyph string, width int) string {
 	return lipgloss.NewStyle().Width(width).Align(lipgloss.Center).Render(muteStyle.Render(glyph))
 }
 
-func renderRow(s session.Session, st watcher.State, width int, selected bool, projectLabel string, git gitStatusInfo) (string, []linkHit) {
+func renderRow(s session.Session, v sessionview.View, width int, selected bool, projectLabel string) (string, []linkHit) {
 	dotStyle := dotParkedStyle
-	switch st {
+	switch v.State {
 	case watcher.Working:
 		dotStyle = dotWorkingStyle
 	case watcher.Done:
@@ -209,10 +210,10 @@ func renderRow(s session.Session, st watcher.State, width int, selected bool, pr
 	if s.PR != "" {
 		candidates = append(candidates, iconCandidate{iconPRStyle, "🔀", s.PR})
 	}
-	if git.ok && git.dirty {
+	if v.GitOK && v.Dirty {
 		candidates = append(candidates, iconCandidate{gitWarnStyle, "±", ""})
 	}
-	if git.ok && git.unpushed {
+	if v.GitOK && v.Unpushed {
 		candidates = append(candidates, iconCandidate{gitWarnStyle, "↑", ""})
 	}
 	const minNameWidth = 4

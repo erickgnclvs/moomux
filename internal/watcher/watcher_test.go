@@ -196,3 +196,26 @@ func TestWatcherSurfacesParseErrors(t *testing.T) {
 		t.Fatal("timed out")
 	}
 }
+
+// TestStateJSONRoundTrip guards the wire contract: State is serialized by
+// name, so re-ranking the iota (which the enum invites — see NeedsInput's
+// comment) can't silently reassign what a second front end renders.
+func TestStateJSONRoundTrip(t *testing.T) {
+	for _, st := range []State{Unknown, Parked, Done, Working, NeedsInput} {
+		b, err := json.Marshal(st)
+		if err != nil {
+			t.Fatalf("marshal %v: %v", st, err)
+		}
+		if want := `"` + st.String() + `"`; string(b) != want {
+			t.Errorf("marshal %v = %s, want %s", st, b, want)
+		}
+		var got State
+		if err := json.Unmarshal(b, &got); err != nil || got != st {
+			t.Errorf("round trip %v -> %s -> %v (err %v)", st, b, got, err)
+		}
+	}
+	var got State
+	if err := json.Unmarshal([]byte(`"bogus"`), &got); err == nil {
+		t.Error("unmarshaling an unknown state name succeeded; want an error")
+	}
+}

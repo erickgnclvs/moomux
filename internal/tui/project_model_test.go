@@ -4,13 +4,13 @@ import (
 	"testing"
 
 	"github.com/erickgnclvs/moomux/internal/config"
-	"github.com/erickgnclvs/moomux/internal/watcher"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 )
 
 func projectModelTestModel(p config.Project) *Model {
 	cfg := &config.Config{Projects: map[string]config.Project{"demo": p}}
 	be := &fakeBackend{cfg: *cfg}
-	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan sessionview.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 	return m

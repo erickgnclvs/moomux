@@ -5,29 +5,20 @@ import (
 
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/session"
-	"github.com/erickgnclvs/moomux/internal/watcher"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 )
 
-type StatusTickMsg struct{ Snap watcher.Snapshot }
+// StatusTickMsg carries one snapshot of derived per-session state from the
+// core. It replaces the model's views wholesale — a Snapshot is absolute
+// state, not a delta.
+type StatusTickMsg struct{ Snap sessionview.Snapshot }
 
-// TmuxTickMsg fires on tmuxRefreshInterval and drives refreshStatusCmd.
-// Separate from StatusTickMsg so tmux liveness is polled on its own steady
-// timer instead of once per watcher snapshot — see tmuxRefreshInterval.
-type TmuxTickMsg struct{}
-
-// StatusRefreshedMsg carries the results of an off-goroutine tmux-alive and
-// prompt scan, computed by refreshStatusCmd. Update() merges these into the
-// model; the computation itself must not touch model state.
-type StatusRefreshedMsg struct {
-	TmuxAlive map[string]bool
-	Prompts   map[string]string
-}
-
-// GitStatusMsg carries git status for sessions that just transitioned into
-// watcher.Parked, computed by fetchGitStatusCmd. Update() merges these into
-// m.gitStatus rather than replacing it wholesale.
+// GitStatusMsg carries the delete dialog's on-demand git-status check for
+// one session, computed by fetchGitStatusCmd. Routine git status arrives on
+// StatusTickMsg instead.
 type GitStatusMsg struct {
-	Status map[string]gitStatusInfo
+	ID     string
+	Status gitStatusInfo
 }
 
 // ChangeSummaryMsg carries the file/commit-count detail for one session's
@@ -37,13 +28,6 @@ type GitStatusMsg struct {
 type ChangeSummaryMsg struct {
 	ID      string
 	Summary changeSummary
-}
-
-// PRStatusMsg carries PR status for sessions with a PR attached, computed by
-// fetchPRStatusCmd. Update() merges these into m.prStatus rather than
-// replacing it wholesale, mirroring GitStatusMsg.
-type PRStatusMsg struct {
-	Status map[string]prStatusInfo
 }
 
 // StatusChannelClosedMsg is delivered when the status watcher channel is
@@ -146,6 +130,9 @@ type ProjectAddedMsg struct {
 	Name    string
 	Project config.Project
 	Err     error
+	// Warning accompanies a gitwt.ErrNotGitRepo Err: the core's note about
+	// the path, shown in the init-choice dialog. Empty otherwise.
+	Warning string
 	Cfg     *config.Config
 }
 

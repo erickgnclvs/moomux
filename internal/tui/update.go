@@ -3,7 +3,6 @@ package tui
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -13,20 +12,8 @@ import (
 	"github.com/erickgnclvs/moomux/internal/browser"
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/gitwt"
-	"github.com/erickgnclvs/moomux/internal/watcher"
+	"github.com/erickgnclvs/moomux/internal/session"
 )
-
-// updateTitlesCmd pushes each changed session's new status to its tmux
-// window name in the background (rename-window shells out, so this stays
-// off the Update goroutine).
-func updateTitlesCmd(backend Backend, changed map[string]watcher.State) tea.Cmd {
-	return func() tea.Msg {
-		for id, st := range changed {
-			_ = backend.SetSessionStatusTitle(id, st)
-		}
-		return nil
-	}
-}
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// One backend read per pass — see allSessions.
@@ -60,88 +47,53 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case StatusTickMsg:
-		for path, st := range msg.Snap.States {
-			m.states[path] = st
+		// A Snapshot is absolute state, so a real one replaces rather than
+		// merges: the core already folded every watcher's paths together,
+		// joined them with tmux liveness, ordered the session list, and
+		// pruned sessions that no longer exist.
+		//
+		// The exception is the error-only snapshot ipc.Client.Run emits when
+		// the connection drops (nil Views and Sessions) — that exists to
+		// flash the error once, and taking it literally would grey out every
+		// dot, drop every git badge and PR status, and reorder the list, as
+		// if the core had told us all that. Keep rendering the last real
+		// answer instead; the flash is what says it's stale.
+		if msg.Snap.Views != nil {
+			m.views = msg.Snap.Views
 		}
-		// MultiWatcher fans out one Snapshot per sub-watcher, each covering
-		// only its own agent's paths, so we can't replace m.states wholesale
-		// here without wiping every other watcher's entries. Instead prune
-		// against the full live session set so paths from deleted sessions
-		// don't linger forever.
-		m.pruneDeadSessions()
+		if msg.Snap.Sessions != nil {
+			m.snapSessions = msg.Snap.Sessions
+			m.snapOrder = make(map[string]int, len(msg.Snap.Sessions))
+			for i, s := range msg.Snap.Sessions {
+				m.snapOrder[s.ID] = i
+			}
+		}
+		m.invalidateSessions()
+		// Re-filter the visible list out of the new snapshot's list right
+		// away. Deferring it would leave the list on the previous snapshot
+		// until something unrelated happened to call refreshSessions(), at
+		// which point a session that parked (and so moved out of the
+		// live-first group) appears to jump position out of nowhere.
 		m.refreshSessions()
-		if msg.Snap.Err != nil {
+		if msg.Snap.Err != "" {
 			// Surface once rather than re-flashing on every subsequent tick
 			// while the same failure persists.
-			warning := "status scan warning: " + msg.Snap.Err.Error()
+			warning := "status scan warning: " + msg.Snap.Err
 			if m.flash != warning {
 				m.setFlash("error", warning)
 			}
 		}
-		changedTitles := map[string]watcher.State{}
-		for _, s := range m.allSessions() {
-			st := m.effectiveState(s)
-			if prev, ok := m.titleState[s.ID]; !ok || prev != st {
-				m.titleState[s.ID] = st
-				changedTitles[s.ID] = st
-			}
-		}
-		cmds := []tea.Cmd{listenStatus(m.statusCh)}
-		if len(changedTitles) > 0 {
-			cmds = append(cmds, updateTitlesCmd(m.backend, changedTitles))
-		}
-		if cmd := m.fetchStaleGitStatusCmd(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-		if cmd := m.fetchStalePRStatusCmd(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-		return m, tea.Batch(cmds...)
-
-	case TmuxTickMsg:
-		return m, tea.Batch(refreshStatusCmd(m), tickTmux())
-
-	case StatusRefreshedMsg:
-		m.tmuxAlive = msg.TmuxAlive
-		// tmuxAlive drives the live-session float in refreshSessions' sort,
-		// so a change here has to re-sort m.sessions immediately — otherwise
-		// the list only catches up next time something unrelated happens to
-		// call refreshSessions(), which reads as a session jumping into the
-		// middle of the list out of nowhere.
-		m.refreshSessions()
-		for id, p := range msg.Prompts {
-			if m.prompts[id] == "" {
-				m.prompts[id] = p
-			}
-		}
-		if !m.tmuxCheckedOnce {
-			// The startup tmux-alive check (fired immediately by Init(), not
-			// the routine 2s one) just resolved. Every session's git status
-			// is still unfetched at this point (checkedAt is zero), so this
-			// covers all of them without waiting for the first watcher tick,
-			// which may be a couple seconds off yet.
-			m.tmuxCheckedOnce = true
-			return m, tea.Batch(m.fetchStaleGitStatusCmd(), m.fetchStalePRStatusCmd())
-		}
-		return m, nil
+		return m, listenStatus(m.statusCh)
 
 	case GitStatusMsg:
-		for id, st := range msg.Status {
-			delete(m.gitStatusPending, id)
-			// Two overlapping fetches for the same session (a routine
-			// refresh racing the delete dialog's on-demand check, say) can
-			// resolve out of order — never let an older result clobber a
-			// fresher one already recorded.
-			if cur, ok := m.gitStatus[id]; ok && !st.checkedAt.After(cur.checkedAt) {
-				continue
-			}
-			m.gitStatus[id] = st
-		}
-		if m.confirmChecking && len(m.sessions) > 0 {
-			if st, ok := msg.Status[m.sessions[m.cursor].ID]; ok {
-				m.confirmGit = st
-				m.confirmChecking = false
-			}
+		// The delete dialog's own check resolved. Routine git status rides
+		// the view stream; this only ever answers the dialog. Guarded on the
+		// mode, like ChangeSummaryMsg below — confirmChecking isn't cleared
+		// when the dialog is cancelled, so keying off it alone would let a
+		// late result write confirmGit for a dialog that's already closed.
+		if m.mode == ModeConfirmDelete && len(m.sessions) > 0 && m.sessions[m.cursor].ID == msg.ID {
+			m.confirmGit = msg.Status
+			m.confirmChecking = false
 		}
 		return m, nil
 
@@ -151,23 +103,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case PRStatusMsg:
-		for id, st := range msg.Status {
-			delete(m.prStatusPending, id)
-			if cur, ok := m.prStatus[id]; ok && !st.checkedAt.After(cur.checkedAt) {
-				continue
-			}
-			m.prStatus[id] = st
-		}
-		return m, nil
-
 	case StatusChannelClosedMsg:
 		m.setFlash("error", "status watcher stopped")
 		return m, nil
 
 	case TmuxKilledMsg:
+		// Parking changes the display order (the session drops out of the
+		// live-first group), so this is a list change, not just a state one.
 		m.setFlash("info", "parked")
-		return m, refreshStatusCmd(m)
+		m.sessionsChanged()
+		m.refreshSessions()
+		return m, nil
 
 	case InfoMsg:
 		if m.busy {
@@ -209,11 +155,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			text += " — " + msg.Hint
 		}
 		m.setFlash("info", text)
-		// Remove from prompt cache so the next tick scans the new session.
-		delete(m.prompts, msg.Session.ID)
-		delete(m.promptCheckedAt, msg.Session.ID)
 		// A brand-new session is never archived — land on the active view so
 		// it's actually visible, regardless of which view was showing before.
+		m.sessionsChanged()
 		m.showArchived = false
 		for i, name := range m.projects {
 			if name == msg.Session.Project {
@@ -230,7 +174,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.multiFocus = idx
 			m.ensureMultiFocusVisible()
 		}
-		return m, refreshStatusCmd(m)
+		return m, nil
 
 	case SessionDeletedMsg:
 		text := "deleted"
@@ -238,8 +182,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			text += " — " + msg.Hint
 		}
 		m.setFlash("info", text)
+		m.sessionsChanged()
 		m.refreshSessionsFocusing(msg.NextID)
-		return m, refreshStatusCmd(m)
+		return m, nil
 
 	case SessionArchivedMsg:
 		if msg.Err != nil {
@@ -251,11 +196,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.setFlash("info", "restored")
 		}
+		m.sessionsChanged()
 		m.refreshSessionsFocusing(msg.NextID)
 		return m, nil
 
 	case SessionTaggedMsg:
 		m.setFlash("info", "tagged "+msg.Session.Name)
+		m.sessionsChanged()
 		m.refreshSessionsAndSync()
 		return m, nil
 
@@ -271,19 +218,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sessionForm.err = msg.Err.Error()
 			return m, nil
 		}
+		m.sessionsChanged()
 		m.refreshSessions()
 		m.focusSession(msg.Session.ID)
-		delete(m.prompts, msg.Session.ID)
-		delete(m.promptCheckedAt, msg.Session.ID)
 		m.mode = m.sessionDialogReturn
 		m.setFlash("info", "updated session "+msg.Session.Name)
-		return m, refreshStatusCmd(m)
+		return m, nil
 
 	case SessionMovedMsg:
 		if msg.Err != nil {
 			m.setError(msg.Err)
 			return m, nil
 		}
+		m.sessionsChanged()
 		m.refreshSessions()
 		m.focusSession(msg.ID)
 		return m, nil
@@ -293,6 +240,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// position (recently-opened sort, or the tmux-alive float once its
 		// window comes up) — follow it there instead of leaving the cursor
 		// on the old index.
+		m.sessionsChanged()
 		m.refreshSessions()
 		m.focusSession(msg.ID)
 		text := "opened " + msg.ID
@@ -315,7 +263,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if errors.Is(msg.Err, gitwt.ErrNotGitRepo) {
-				m.pending = pendingProject{name: msg.Name, p: msg.Project}
+				m.pending = pendingProject{name: msg.Name, p: msg.Project, warning: msg.Warning}
 				m.mode = ModeProjectInitChoice
 				m.resetOverlayViewport()
 				return m, nil
@@ -403,6 +351,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refreshProjects()
 		m.cursor = 0
+		m.sessionsChanged()
 		m.refreshSessions()
 		m.mode = m.projectDialogReturn
 		m.setFlash("info", "removed project "+msg.Name)
@@ -555,12 +504,12 @@ func (m *Model) newFormApplyProjectDefaults() {
 
 // newFormApplyProjectModel preselects the project's default model in the
 // new-session form — a selector index for claude/codex, the free-text
-// value for opencode, which has no fixed list to index into.
+// value for a free-text agent, which has no fixed list to index into.
 func (m *Model) newFormApplyProjectModel(p config.Project) {
 	if p.Model == "" {
 		return
 	}
-	if p.AgentName() == "opencode" {
+	if m.agentUsesFreeTextModel(p.AgentName()) {
 		m.newFormModelInput.SetValue(p.Model)
 		return
 	}
@@ -632,7 +581,8 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case key.Matches(msg, m.keys.Refresh):
 		m.refreshSessions()
-		return m, refreshStatusCmd(m)
+		m.nudge()
+		return m, nil
 	case key.Matches(msg, m.keys.RemoteLinks):
 		m.forceCopyLinks = !m.forceCopyLinks
 		state := "auto"
@@ -675,16 +625,14 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if len(m.sessions) > 0 {
 			id := m.sessions[m.cursor].ID
-			// Opens instantly on whatever's cached from the routine
-			// background refresh (or nothing yet) so the dialog never
-			// visibly pauses, then kicks off a fresh check of its own in the
-			// background — confirmChecking drives a small loading note in
-			// the dialog until GitStatusMsg lands and updates confirmGit for
-			// real. Deliberately not routed through fetchStaleGitStatusCmd's
-			// gitStatusPending bookkeeping: this is an explicit user action
-			// that wants the freshest answer right now, not deduped against
-			// whatever the periodic refresh happens to be doing.
-			m.confirmGit = m.gitStatus[id]
+			// Opens instantly on the last snapshot's status so the dialog
+			// never visibly pauses, then fires a check of its own —
+			// confirmChecking drives a small loading note until GitStatusMsg
+			// lands. Worth the extra call even though the snapshot carries a
+			// status: this is the guard before a destructive action, and the
+			// streamed one can be up to a minute old (see
+			// sessionview.gitStaleAfter).
+			m.confirmGit = m.gitStatusOf(id)
 			m.confirmSummary = changeSummary{}
 			m.confirmAck = false
 			m.confirmChecking = true
@@ -694,7 +642,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// offset and can open with the "what you're deleting" text
 			// scrolled off-screen, leaving only "y to confirm" visible.
 			m.resetOverlayViewport()
-			return m, tea.Batch(fetchGitStatusCmd(m.backend, []string{id}), fetchChangeSummaryCmd(m.backend, id))
+			return m, tea.Batch(fetchGitStatusCmd(m.backend, id), fetchChangeSummaryCmd(m.backend, id))
 		}
 	case key.Matches(msg, m.keys.Archive):
 		if m.busy {
@@ -1014,7 +962,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.newFormAgentIdx >= 0 {
 				agent = m.agentNames()[m.newFormAgentIdx]
 			}
-			if agent == "opencode" {
+			if m.agentUsesFreeTextModel(agent) {
 				// Free-text field: leave ←→ to the text input's own cursor
 				// movement, handled by the default routing below.
 				break
@@ -1080,7 +1028,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		proj := m.projects[m.newFormProjIdx]
 		agent := m.agentNames()[m.newFormAgentIdx]
 		model := m.newFormModelInput.Value()
-		if agent != "opencode" {
+		if !m.agentUsesFreeTextModel(agent) {
 			model = m.modelNamesFor(agent)[m.newFormModelIdx]
 		}
 		thinking := m.thinkingNamesFor(agent)[m.newFormThinkingIdx]
@@ -1099,6 +1047,12 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// with Update()/View(), which is the exact race this whole Cfg
 		// plumbing exists to avoid (see New()'s doc comment on m.cfg).
 		autoSubmitDefault := m.cfg.AutoSubmitDefault
+		req := session.CreateRequest{
+			Project: proj, Name: name, Agent: agent, Branch: branch, BaseBranch: baseBranch,
+			Ticket: ticket, PR: pr, Model: model, Thinking: thinking,
+			Prompt: firstPrompt, AutoSubmit: autoSubmit, OpenTerminal: openTerminal,
+			Dangerous: &dangerous,
+		}
 		return m, func() tea.Msg {
 			var cfgSnap *config.Config
 			if autoSubmit != autoSubmitDefault {
@@ -1106,39 +1060,9 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				// session creation if the config write fails.
 				cfgSnap = m.cfgSnapshotOnSuccess(m.backend.SetAutoSubmitDefault(autoSubmit))
 			}
-			s, hint, err := m.backend.CreateSession(proj, name, agent, branch, ticket, openTerminal, &dangerous, baseBranch, model, thinking)
+			s, hint, err := m.backend.CreateSession(req)
 			if err != nil {
 				return CreateFailedMsg{Err: err, Cfg: cfgSnap}
-			}
-			// The session (worktree + tmux pane) already exists at this
-			// point — a PR-tag or first-prompt failure below must not
-			// discard that success and report it as if creation itself
-			// failed; it's surfaced as a hint on the same SessionCreatedMsg
-			// instead, same as CreateSession's own degraded-but-succeeded
-			// terminal-open failures.
-			if pr != "" {
-				if updated, tagErr := m.backend.SetSessionTags(s.ID, ticket, pr); tagErr != nil {
-					hint = joinHint(hint, fmt.Sprintf("couldn't set PR tag: %v", tagErr))
-				} else {
-					s = updated
-				}
-			}
-			if firstPrompt != "" {
-				if agent != "codex" {
-					// codex's thinking level is a real -c model_reasoning_effort
-					// flag (already applied to the launch command above), not a
-					// prompt phrase.
-					firstPrompt = thinkingPromptPrefix(thinking) + firstPrompt
-				}
-				if extra := newFormPromptExtras(ticket, pr); extra != "" {
-					firstPrompt += "\n\n" + extra
-				}
-				if updated, promptErr := m.backend.SetSessionPrompt(s.ID, firstPrompt); promptErr == nil {
-					s = updated
-				}
-				if err := m.backend.StartFirstPrompt(s.TmuxSession, firstPrompt, autoSubmit); err != nil {
-					hint = joinHint(hint, fmt.Sprintf("couldn't send first prompt: %v", err))
-				}
 			}
 			return SessionCreatedMsg{Session: s, Hint: hint, Cfg: cfgSnap}
 		}
@@ -1160,7 +1084,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case 6:
 		m.prInput, cmd = m.prInput.Update(msg)
 	case newFormModelFocus:
-		if m.newFormAgentIdx >= 0 && m.agentNames()[m.newFormAgentIdx] == "opencode" {
+		if m.newFormAgentIdx >= 0 && m.agentUsesFreeTextModel(m.agentNames()[m.newFormAgentIdx]) {
 			m.newFormModelInput, cmd = m.newFormModelInput.Update(msg)
 		}
 	}
@@ -1169,44 +1093,6 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // joinHint combines two non-empty hint strings for display; either may be
 // empty.
-func joinHint(a, b string) string {
-	switch {
-	case a == "":
-		return b
-	case b == "":
-		return a
-	default:
-		return a + " — " + b
-	}
-}
-
-// newFormPromptExtras builds a "Ticket: ...\nPR: ..." block from whichever
-// of ticket/pr are non-empty, so the agent's first task carries the same
-// context the session list shows as clickable icons. Empty if neither is
-// set.
-func newFormPromptExtras(ticket, pr string) string {
-	var lines []string
-	if ticket != "" {
-		lines = append(lines, "Ticket: "+ticket)
-	}
-	if pr != "" {
-		lines = append(lines, "PR: "+pr)
-	}
-	return strings.Join(lines, "\n")
-}
-
-// thinkingPromptPrefix returns level+": " to prepend to the first prompt, or
-// "" for "default". There's no CLI flag for extended-thinking effort, so this
-// leans on the same magic words a user would type by hand.
-// ponytail: a no-op when there's no first prompt to prepend to — the form
-// doesn't warn about that combination, it just has no effect.
-func thinkingPromptPrefix(level string) string {
-	if level == "" || level == "default" {
-		return ""
-	}
-	return level + ": "
-}
-
 // newFormMoveFocus blurs the currently focused field and shifts focus by
 // delta (wrapping), then focuses whatever field lands there.
 func (m *Model) newFormMoveFocus(delta int) {
@@ -1244,7 +1130,7 @@ func (m *Model) newFormFocusInput() {
 	case 6:
 		m.prInput.Focus()
 	case newFormModelFocus:
-		if m.newFormAgentIdx >= 0 && m.agentNames()[m.newFormAgentIdx] == "opencode" {
+		if m.newFormAgentIdx >= 0 && m.agentUsesFreeTextModel(m.agentNames()[m.newFormAgentIdx]) {
 			m.newFormModelInput.Focus()
 		}
 	}
@@ -1400,14 +1286,14 @@ func (m *Model) updateNewProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		base := m.projForm.inputs[2].Value()
 		prefix := m.projForm.inputs[3].Value()
 		emoji := projectEmojiFieldValue(m.projForm.emojiChoices, m.projForm.emojiIdx)
-		if base == "" {
-			base = "main"
-		}
+		// An empty base branch is defaulted by the core (validateProjectLocked
+		// in internal/app), which is where it belongs — every client would
+		// otherwise need the same literal, and drift the day it changes.
 		agent, dangerous, promptAgent := m.projectAgentFields(m.projForm.agentIdx, m.projForm.dangerous)
 		p := config.Project{Repo: repo, BaseBranch: base, BranchPrefix: prefix, Emoji: emoji, Agent: agent, Model: m.projFormModel(), Dangerous: dangerous, PromptAgent: promptAgent, NoWorktree: m.projForm.noWorktree}
 		return m, func() tea.Msg {
-			err := m.backend.AddProject(name, p)
-			return ProjectAddedMsg{Kind: "add", Name: name, Project: p, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
+			warning, err := m.backend.AddProject(name, p)
+			return ProjectAddedMsg{Kind: "add", Name: name, Project: p, Err: err, Warning: warning, Cfg: m.cfgSnapshotOnSuccess(err)}
 		}
 	}
 	if m.projForm.focus < projFormInputCount {
@@ -1807,7 +1693,7 @@ func (m *Model) updateProjectPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// add one" hint.
 		m.projectDialogReturn = ModeProjectPicker
 		m.mode = ModeNewProject
-		m.projForm = newProjectForm()
+		m.projForm = m.newProjectForm()
 		m.resetOverlayViewport()
 		m.resizeFormInputs()
 		return m, nil

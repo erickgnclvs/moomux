@@ -1,4 +1,4 @@
-package tui
+package app
 
 import (
 	"os"
@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-func TestTCCWarning(t *testing.T) {
+func TestPathWarningWarning(t *testing.T) {
 	if runtime.GOOS != "darwin" {
-		if w := tccWarning("/whatever"); w != "" {
+		if w := newPathWarningApp(t).PathWarning("/whatever"); w != "" {
 			t.Fatalf("expected no warning on %s, got %q", runtime.GOOS, w)
 		}
 		t.Skip("TCC folder checks only apply on darwin")
@@ -36,10 +36,17 @@ func TestTCCWarning(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := tccWarning(c.path) != ""
+			got := newPathWarningApp(t).PathWarning(c.path) != ""
 			if got != c.warns {
-				t.Errorf("tccWarning(%q): got warning=%v, want %v", c.path, got, c.warns)
+				t.Errorf("newPathWarningApp(t).PathWarning(%q): got warning=%v, want %v", c.path, got, c.warns)
 			}
 		})
 	}
+}
+
+// newPathWarningApp is a bare App: PathWarning depends only on the process's
+// $HOME and GOOS, not on any project or store state.
+func newPathWarningApp(t *testing.T) *App {
+	t.Helper()
+	return &App{}
 }

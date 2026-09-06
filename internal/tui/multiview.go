@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -113,13 +112,13 @@ func (m *Model) ensureMultiFocusVisible() {
 }
 
 // multiViewSessionsFor returns proj's sessions matching the current
-// showArchived filter, live-tmux sessions floated to the top — mirrors
-// refreshSessions' filter and sort, but per-project rather than folded into
-// the single m.sessions list. Matching that sort matters: delegateToList
-// navigates the focused panel's selection through m.sessions (see
-// enterSingleProjectContext), so if this returned a different order the
-// panel would render, Up/Down would visibly skip over rows instead of
-// moving to the adjacent one.
+// showArchived filter — mirrors refreshSessions' filter, but per-project
+// rather than folded into the single m.sessions list. Neither sorts: both
+// preserve the core's display order (see sessionview.Snapshot.Sessions).
+// Agreeing on that order matters: delegateToList navigates the focused
+// panel's selection through m.sessions (see enterSingleProjectContext), so
+// if this returned a different order from what the panel renders, Up/Down
+// would visibly skip over rows instead of moving to the adjacent one.
 func (m *Model) multiViewSessionsFor(proj string) []session.Session {
 	var out []session.Session
 	for _, s := range m.allSessions() {
@@ -127,9 +126,6 @@ func (m *Model) multiViewSessionsFor(proj string) []session.Session {
 			out = append(out, s)
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		return m.tmuxAlive[out[i].ID] && !m.tmuxAlive[out[j].ID]
-	})
 	return out
 }
 
@@ -584,7 +580,7 @@ func (m *Model) renderSessionPanel(proj string, sessions []session.Session, curs
 		selected := focused && i == cursor
 		line := titleRows + rowOffset + (i - start)
 		rows = append(rows, rowHit{sessionID: s.ID, line: line})
-		row, iconHits := renderRow(s, m.effectiveState(s), width-2, selected, "", m.gitStatus[s.ID])
+		row, iconHits := renderRow(s, m.viewFor(s.ID), width-2, selected, "")
 		for _, h := range iconHits {
 			h.sessionID = s.ID
 			h.line = line

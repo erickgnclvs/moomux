@@ -9,7 +9,7 @@ import (
 
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/session"
-	"github.com/erickgnclvs/moomux/internal/watcher"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 )
 
 func slashKey() tea.KeyMsg {
@@ -492,7 +492,7 @@ func TestProjectPickerAddProjectCancelReturnsToPicker(t *testing.T) {
 func TestProjectPickerOpensWithZeroProjects(t *testing.T) {
 	be := &fakeBackend{}
 	cfg := &config.Config{Projects: map[string]config.Project{}}
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList // New() auto-opens ModeNewProject with zero projects

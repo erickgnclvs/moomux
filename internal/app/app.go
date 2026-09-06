@@ -661,6 +661,122 @@ func newBranchBaseBranch(proj config.Project, newBranch bool, baseBranchRef stri
 	return baseBranchRef
 }
 
+// CreateSession runs the whole "new session" transaction: bring up the
+// worktree and tmux pane, attach the PR tag, compose and store the first
+// prompt, and type it into the agent.
+//
+// Once the pane exists the session is real, so nothing after that point may
+// turn a partial failure back into a failed create — a PR tag or first
+// prompt that doesn't land is reported as a hint on an otherwise successful
+// result, the same way a terminal that wouldn't open already is.
+//
+// This lives here rather than in a front end because it is the sequence a
+// front end most easily gets subtly wrong: it used to be six backend calls
+// made in order by internal/tui, and `moomux spawn` — the only other caller
+// in this repo — had already drifted from it, composing the prompt
+// differently and skipping the tag and prompt-storing steps entirely.
+func (a *App) CreateSession(req session.CreateRequest) (session.Session, string, error) {
+	s, report, err := a.CreateSessionReport(req)
+	return s, report.Hint, err
+}
+
+// CreateReport is what a create degraded on, for callers that need more than
+// something to display. The TUI shows Hint and moves on; `moomux spawn`
+// exits non-zero when PromptErr is set, because an agent sitting in a fresh
+// pane with no task is not a success a script should read as one.
+type CreateReport struct {
+	Hint      string
+	PromptErr error
+}
+
+// CreateSessionReport is CreateSession with the degraded steps named rather
+// than flattened into one string.
+func (a *App) CreateSessionReport(req session.CreateRequest) (session.Session, CreateReport, error) {
+	var report CreateReport
+	s, hint, err := a.createSession(req.Project, req.Name, req.Agent, req.Branch, req.Ticket,
+		req.OpenTerminal, req.Dangerous, req.BaseBranch, req.Model, req.Thinking)
+	if err != nil {
+		return session.Session{}, report, err
+	}
+	if req.PR != "" {
+		if updated, tagErr := a.SetSessionTags(s.ID, req.Ticket, req.PR); tagErr != nil {
+			hint = joinHint(hint, fmt.Sprintf("couldn't set PR tag: %v", tagErr))
+		} else {
+			s = updated
+		}
+	}
+	// Compose off the agent that actually launched, not the one the request
+	// named: an empty Agent means "the project's default", which
+	// createSession resolves — and whether the thinking level became a
+	// launch flag or a prompt prefix depends on which agent that turned out
+	// to be. Composing off the unresolved name applied it both ways for a
+	// codex-default project asked for with no explicit -agent.
+	resolved := req
+	resolved.Agent = s.AgentName()
+	if prompt := a.FirstPrompt(resolved); prompt != "" {
+		// Storing it is best-effort: the prompt the agent is about to be
+		// handed matters more than moomux's own record of it.
+		if updated, promptErr := a.SetSessionPrompt(s.ID, prompt); promptErr == nil {
+			s = updated
+		}
+		if err := a.StartFirstPrompt(s.TmuxSession, prompt, req.AutoSubmit); err != nil {
+			report.PromptErr = err
+			hint = joinHint(hint, fmt.Sprintf("couldn't send first prompt: %v", err))
+		}
+	}
+	report.Hint = hint
+	return s, report, nil
+}
+
+// FirstPrompt composes the text actually typed into a new session's agent:
+// the requested prompt, prefixed with the thinking level for agents that
+// have no launch-time flag for it, then whichever of the ticket and PR URLs
+// were given.
+//
+// The thinking level is applied one way or the other, never both: an agent
+// with a real reasoning-effort flag already had it applied to its launch
+// command (see reasoningEffortFlag), so asking that agent for it again in
+// English would be noise. Branching on reasoningEffortFlag rather than on
+// the agent's name keeps one source for which agent is which.
+func (a *App) FirstPrompt(req session.CreateRequest) string {
+	if req.Prompt == "" {
+		// ponytail: a thinking level with no prompt to carry it is simply
+		// dropped for those agents. The form doesn't warn about the
+		// combination; it just has no effect.
+		return ""
+	}
+	prompt := req.Prompt
+	if reasoningEffortFlag(req.Agent, req.Thinking) == "" && req.Thinking != "" && req.Thinking != "default" {
+		prompt = req.Thinking + ": " + prompt
+	}
+	var extras []string
+	if req.Ticket != "" {
+		extras = append(extras, "Ticket: "+req.Ticket)
+	}
+	if req.PR != "" {
+		extras = append(extras, "PR: "+req.PR)
+	}
+	if len(extras) > 0 {
+		// The agent's first task carries the same context the session list
+		// shows as clickable icons.
+		prompt += "\n\n" + strings.Join(extras, "\n")
+	}
+	return prompt
+}
+
+// joinHint concatenates two degraded-but-succeeded notes, either of which
+// may be empty.
+func joinHint(a, b string) string {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	default:
+		return a + " — " + b
+	}
+}
+
 // CreateSession's hint, when non-empty, is a user-facing instruction
 // (e.g. "run: tmux attach -t ...") to show alongside success — it is
 // not an error. When openTerminal is false, the tmux session is started
@@ -671,13 +787,13 @@ func newBranchBaseBranch(proj config.Project, newBranch bool, baseBranchRef stri
 // is passed to the agent as --model. thinking, when non-empty and not
 // "default", is passed to codex as -c model_reasoning_effort=<value> (see
 // reasoningEffortFlag); it has no effect for claude/opencode, which have no
-// launch-time reasoning-effort flag — the caller is expected to apply their
-// magic-word prompt prefix itself (see thinkingPromptPrefix in internal/tui).
+// launch-time reasoning-effort flag — for those, FirstPrompt applies the
+// magic-word prompt prefix instead.
 // dangerous is a pointer so a caller can leave it unset: nil means "use the
 // project's own Dangerous setting", exactly like every other project-level
 // default here. A caller that wants to force it on or off regardless of the
 // project passes an explicit true/false.
-func (a *App) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
+func (a *App) createSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
 	proj, ok := a.project(project)
 	if !ok {
 		return session.Session{}, "", fmt.Errorf("unknown project %q", project)
@@ -1464,6 +1580,23 @@ func (a *App) openTerminal(tabID, tmuxSession, name string) (newTabID, hint stri
 	return "", hint, err
 }
 
+// SuggestedProject is the add-project form's prefill: the working directory
+// moomux's core is running in, and its base name. The common case is running
+// moomux from inside the repo you want to add, and nobody wants to retype an
+// absolute path.
+//
+// It's served rather than computed by the front end because the path has to
+// exist on the machine that will clone, branch and run agents in it — over
+// the socket that's this one, and a client offering its own cwd would prefill
+// a path the core can't use (for a native app, its bundle or "/").
+func (a *App) SuggestedProject() (name, repo string) {
+	cwd, err := os.Getwd()
+	if err != nil || cwd == "/" {
+		return "", ""
+	}
+	return filepath.Base(cwd), cwd
+}
+
 // TmuxAliveAll returns id→alive for every stored session using a single
 // tmux list-sessions call instead of one has-session subprocess per session.
 func (a *App) TmuxAliveAll() map[string]bool {
@@ -1564,17 +1697,22 @@ func (a *App) saveProjectLocked(name string, p config.Project) error {
 	return nil
 }
 
-func (a *App) AddProject(name string, p config.Project) error {
+// AddProject's warning, when non-empty, accompanies a gitwt.ErrNotGitRepo
+// failure: it's what the front end's "init it here / add as plain" dialog
+// shows about the path it's being asked about. Computed here rather than by
+// the client because it's a fact about the machine the path is on, which
+// over the socket is this one, not the client's.
+func (a *App) AddProject(name string, p config.Project) (warning string, err error) {
 	a.cfgMu.Lock()
 	defer a.cfgMu.Unlock()
 	if err := a.validateProjectLocked(name, &p); err != nil {
-		return err
+		return "", err
 	}
 	if err := gitwt.IsRepo(p.Repo); err != nil {
-		return err
+		return a.PathWarning(p.Repo), err
 	}
 	p.Kind = "git"
-	return a.saveProjectLocked(name, p)
+	return "", a.saveProjectLocked(name, p)
 }
 
 // InitProjectAndAdd creates the directory (if missing), runs `git init` with the

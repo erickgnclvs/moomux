@@ -49,6 +49,38 @@ colors, the theme list, and a `system` name per color so a native front end can 
 et al. rather than frozen hex. The Swift side still has its own `enum Theme` and
 `SettingsSheet.themes`; deleting those in favour of the served table is the open follow-up.
 
+**The protocol is documented in [docs/wire-protocol.md](docs/wire-protocol.md)** —
+what crosses the socket, why it's shaped that way, and the rules for adding to
+it. Read that before changing anything in `internal/ipc` or
+`internal/sessionview`.
+
+## Derived session state belongs in the core, not in each front end
+
+`internal/sessionview` is the answer to "what does a client render". It runs the raw agent
+watchers, joins their path-keyed output with tmux liveness (that join is what "parked" *is*),
+and maintains everything that costs a subprocess — git status, `gh pr view`, agent-log prompt
+recovery — then streams finished `View`s keyed by session id. It also keeps the tmux window
+titles in step with agent state, which is core upkeep and used to be driven by whichever front
+end happened to be attached.
+
+The rule: if a front end would have to *compute* something to draw it, the core computes it and
+serves it. That covers the effective state, its label and quip, the first prompt, dirty/unpushed,
+PR status, and the display order (`Snapshot.Sessions` arrives already sorted — the live-first
+tiebreak used to be per-client, so two front ends could list a project in different orders).
+Clients filter and render; they do not re-derive. The same `Watcher` feeds the local TUI and `moomux serve`, so there is exactly one
+implementation, and `internal/ipc` serializes `sessionview.Snapshot` as-is rather than reshaping
+it — a wire type in the middle is where the last drift came from.
+
+`watcher.State` serializes by *name* (`MarshalJSON` in `internal/watcher`), not as its iota. The
+enum is deliberately ranked (NeedsInput above Working), so the numbers exist to be reordered — as
+bare ints a re-rank would silently reassign every state the Swift side shows, with no compile
+error on either side. The names match `config.Themes`'s per-state colour keys, so a client gets
+one vocabulary.
+
+What stays a pull: `Sessions`, `ChangeSummary`, and the on-demand `WorktreeStatus` the delete
+dialog uses (it wants a freshly checked answer before a destructive action, and unlike
+`ChangeSummary` it also refreshes the remote ref). Everything routine rides the stream.
+
 ## Releases and commit messages
 
 Every merge to `main` auto-tags and deploys a new version (`.github/workflows/deploy.yml` computes the next tag via `scripts/next_version.sh`, then `release.yml` builds and publishes it) — there's no manual release step, and no way to land a commit on `main` without it shipping.

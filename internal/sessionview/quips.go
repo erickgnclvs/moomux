@@ -1,4 +1,4 @@
-package tui
+package sessionview
 
 import "github.com/erickgnclvs/moomux/internal/watcher"
 
@@ -38,10 +38,8 @@ var quipsParked = []string{
 	"on a moo-ratorium",
 }
 
-// QuipPool returns the quip pool matching a session's state. Exported so
-// internal/ipc's server can hand the Mac app the same picked text over the
-// wire, instead of it re-implementing this pool+hash logic in Swift.
-func QuipPool(st watcher.State) []string {
+// quipPool returns the quip pool matching a session's state.
+func quipPool(st watcher.State) []string {
 	switch st {
 	case watcher.Working:
 		return quipsWorking
@@ -54,24 +52,14 @@ func QuipPool(st watcher.State) []string {
 	}
 }
 
-// stateEyes returns the cow's eyes for a session's state, used by both the
-// header cow and the detail panel's cowsay.
-func stateEyes(st watcher.State) string {
-	switch st {
-	case watcher.Working:
-		return "**"
-	case watcher.Done:
-		return "oo"
-	case watcher.NeedsInput:
-		return "!!"
-	default:
-		return "--"
-	}
-}
-
-// PickQuip deterministically picks a pool entry for sessionID, so the same
-// session always shows the same quip for a given state.
-func PickQuip(sessionID string, pool []string) string {
+// Quip deterministically picks a quip for sessionID's state, so the same
+// session always shows the same flavor text for a given state. Exported
+// because it's the single source of the wording for every front end: the
+// core stamps it onto each View, and a client with no View yet (the frame
+// before the first snapshot lands) calls this rather than keeping a copy of
+// the word lists.
+func Quip(sessionID string, st watcher.State) string {
+	pool := quipPool(st)
 	if len(pool) == 0 {
 		return ""
 	}
@@ -80,4 +68,22 @@ func PickQuip(sessionID string, pool []string) string {
 		h = h*31 + uint32(c)
 	}
 	return pool[h%uint32(len(pool))]
+}
+
+// Label is the human-readable name for a session's state — the cow-flavored
+// wording the TUI shows in its detail panel. Lives here, next to the quips,
+// so it's served from the core with the rest of a View instead of being
+// re-hardcoded per front end (the state *colors* are already served this
+// way, via config.Themes).
+func Label(st watcher.State) string {
+	switch st {
+	case watcher.Working:
+		return "grazing"
+	case watcher.Done:
+		return "chewing cud"
+	case watcher.NeedsInput:
+		return "mooing for you"
+	default:
+		return "in the barn"
+	}
 }
