@@ -234,15 +234,14 @@ func renderRow(s session.Session, v sessionview.View, width int, selected bool, 
 	col := 0
 	addIcon := func(style lipgloss.Style, glyph, url string) {
 		w := lipgloss.Width(glyph)
-		hits = append(hits, linkHit{url: url, col0: col, col1: col + w})
-		icons += style.Render(glyph) + style.Render(" ")
+		hits = append(hits, linkHit{url: url, col0: col + 1, col1: col + 1 + w})
+		icons += style.Render(" ") + style.Render(glyph)
 		col += w + 1
 	}
 	for _, c := range candidates {
 		addIcon(c.style, c.glyph, c.url)
 	}
-	suffix := icons + dot
-	nameWidth := width - 1 - lipgloss.Width(suffix)
+	nameWidth := width - 1 - lipgloss.Width(icons) - dotWidth
 	if nameWidth < minNameWidth {
 		nameWidth = minNameWidth
 	}
@@ -290,12 +289,12 @@ func renderRow(s session.Session, v sessionview.View, width int, selected bool, 
 		sepStyle = sepStyle.Background(colSelBg)
 	}
 	name := prefix + nameStyle.Render(fmt.Sprintf("%-*s", nameWidth, truncate(s.Name, nameWidth)))
-	offset := nameWidth + lipgloss.Width(prefix) + 1
+	offset := dotWidth + 1 + lipgloss.Width(prefix) + nameWidth
 	for i := range hits {
 		hits[i].col0 += offset
 		hits[i].col1 += offset
 	}
-	return name + sepStyle.Render(" ") + suffix, hits
+	return dot + sepStyle.Render(" ") + name + icons, hits
 }
 
 // projectEmojiPalette is the fallback set for projects that haven't chosen
