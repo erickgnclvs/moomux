@@ -1301,7 +1301,20 @@ func (a *App) SetSessionStatusTitle(id string, st watcher.State) error {
 	}
 	name := a.titleName(s)
 	if current, err := a.Tmux.WindowName(s.TmuxSession); err == nil && current != "" {
-		name = stripStatusGlyph(current)
+		// Only a name that doesn't end in " <session name>" can be a user
+		// rename; anything that does is one we generated, so regenerate it
+		// from scratch rather than feeding tmux's own output back in.
+		// tmux replaces every non-ASCII character in a name with "_" (one
+		// per display cell) whenever it expands a format for a client it
+		// thinks can't handle UTF-8, so a read-back name can come back with
+		// the project emoji as "__" and the status glyph as "_". Writing
+		// that back made the corruption permanent, and left stripStatusGlyph
+		// with no glyph it recognised — so the next update prepended a
+		// second glyph instead of replacing the first, growing names like
+		// "⚠ _ _ _ __ speedly" one status change at a time.
+		if cur := stripStatusGlyph(current); !strings.HasSuffix(cur, " "+s.Name) {
+			name = cur
+		}
 	}
 	return a.Tmux.SetWindowName(s.TmuxSession, titleGlyph(st, name))
 }

@@ -2120,6 +2120,31 @@ func TestSetSessionStatusTitlePreservesUserRename(t *testing.T) {
 	}
 }
 
+// TestSetSessionStatusTitleHealsMangledName covers the emoji-eating loop:
+// tmux can hand back a window name with every non-ASCII character replaced
+// by "_" (per display cell), and writing that back both lost the project
+// emoji for good and hid the status glyph from stripStatusGlyph, so each
+// update prepended another one. The canonical name must win instead.
+func TestSetSessionStatusTitleHealsMangledName(t *testing.T) {
+	a, _, tm, _ := newTestApp(t, gitProject("/repo"))
+	s := session.Session{ID: "demo:a", Project: "demo", Name: "a", TmuxSession: "moomux-a"}
+	if err := a.Store.Put(s); err != nil {
+		t.Fatal(err)
+	}
+	tm.out = map[string]string{
+		"display-message -p -t =moomux-a: #{window_name}": "⚠ _ _ __ a",
+	}
+	tm.calls = nil
+
+	if err := a.SetSessionStatusTitle(s.ID, watcher.Working); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"rename-window", "-t", "=moomux-a:", "● 🔥 a"}
+	if len(tm.calls) != 2 || !reflect.DeepEqual(tm.calls[1], want) {
+		t.Fatalf("calls = %v, want rename call %v", tm.calls, want)
+	}
+}
+
 // TestRenameSession verifies a rename updates the display name, the live
 // tmux session, and the window title, while leaving ID/worktree/branch
 // alone — the failure mode without the fix is the tmux session and its
