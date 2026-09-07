@@ -26,8 +26,8 @@
 ┌────────────────────────────────────────────────┐┌────────────────────────────────────────────────┐
 │ 🔥 demo                                        ││ ⚡ spare                                       │
 │                                                ││                                                │
-│  feature-auth                            🎫 ⬤  ││   no sessions                                  │
-│  bugfix-timeout                          🔀 ⬤  ││                                                │
+│  ⬤ feature-auth                            🎫  ││   no sessions                                  │
+│  ⬤ bugfix-timeout                          🔀  ││                                                │
 │ ────────────────────────────────────────────── ││ ────────────────────────────────────────────── │
 │ project:   demo                                ││ nothing selected                               │
 │ status:    ⬤  in the barn                      ││                                                │

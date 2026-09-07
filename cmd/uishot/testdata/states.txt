@@ -3,10 +3,10 @@
  _/(**)  no time to graze               
   \(__)                                 
 ┌──────────────────────────────────────┐
-│  feature-auth                  🎫 ⬤  │
-│  bugfix-timeout            🔀 ± ↑ ⬤  │
-│  review-copy                      ⬤  │
-│  stale-idea                       ⬤  │
+│  ⬤ feature-auth                  🎫  │
+│  ⬤ bugfix-timeout            🔀 ± ↑  │
+│  ⬤ review-copy                       │
+│  ⬤ stale-idea                        │
 │                                      │
 │                                      │
 │                                      │
@@ -26,10 +26,10 @@
 ┌──────────────────────────────────────────┐┌──────────────────────────────────────────────────────┐
 │ SESSIONS                                 ││                                                      │
 │                                          ││                                                      │
-│  feature-auth                      🎫 ⬤  ││ project:   demo                                      │
-│  bugfix-timeout                🔀 ± ↑ ⬤  ││ status:    ⬤  grazing                                │
-│  review-copy                          ⬤  ││ name:      feature-auth                              │
-│  stale-idea                           ⬤  ││ agent:     claude                                    │
+│  ⬤ feature-auth                      🎫  ││ project:   demo                                      │
+│  ⬤ bugfix-timeout                🔀 ± ↑  ││ status:    ⬤  grazing                                │
+│  ⬤ review-copy                           ││ name:      feature-auth                              │
+│  ⬤ stale-idea                            ││ agent:     claude                                    │
 │                                          ││ ticket:    https://tracker.example/TICK-123          │
 │                                          ││ tmux:      moomux-feature-auth                       │
 │                                          ││ worktree:  /tmp/demo/feature-auth                    │

@@ -4,7 +4,7 @@
  (  |  )  on a moo-ratorium             
   || ||                                 
 ┌──────────────────────────────────────┐
-│  old-spike                        ⬤  │
+│  ⬤ old-spike                         │
 │                                      │
 │                                      │
 │                                      │
@@ -27,7 +27,7 @@
 ┌──────────────────────────────────────────┐┌──────────────────────────────────────────────────────┐
 │ ARCHIVED                                 ││                                                      │
 │                                          ││                                                      │
-│  old-spike                            ⬤  ││ project:   demo                                      │
+│  ⬤ old-spike                             ││ project:   demo                                      │
 │                                          ││ status:    ⬤  in the barn                            │
 │                                          ││ name:      old-spike                                 │
 │                                          ││ agent:     claude                                    │

@@ -3,8 +3,8 @@
  _/(--)  on a moo-ratorium              
   \(__)                                 
 ┌──────────────────────────────────────┐
-│  feature-auth                  🎫 ⬤  │
-│  bugfix-timeout                ⚠️ ⬤  │
+│  ⬤ feature-auth                  🎫  │
+│  ⬤ bugfix-timeout                ⚠️  │
 │                                      │
 │                                      │
 │                                      │
@@ -26,8 +26,8 @@
 ┌──────────────────────────────────────────┐┌──────────────────────────────────────────────────────┐
 │ SESSIONS¹                                ││                                                      │
 │                                          ││                                                      │
-│  feature-auth                      🎫 ⬤  ││ project:   demo                                      │
-│  bugfix-timeout                    ⚠️ ⬤  ││ status:    ⬤  in the barn                            │
+│  ⬤ feature-auth                      🎫  ││ project:   demo                                      │
+│  ⬤ bugfix-timeout                    ⚠️  ││ status:    ⬤  in the barn                            │
 │                                          ││ name:      bugfix-timeout                            │
 │                                          ││ agent:     codex                                     │
 │                                          ││ pr:        …tps://github.com/example/repo/pull/42    │
