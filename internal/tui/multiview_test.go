@@ -10,7 +10,7 @@ import (
 
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/session"
-	"github.com/erickgnclvs/moomux/internal/watcher"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 )
 
 func TestMultiViewProjectsFitsWidth(t *testing.T) {
@@ -427,15 +427,18 @@ func TestMultiViewCursorIsPerProject(t *testing.T) {
 // unsorted one, and the highlight jumps past whatever row that reordering
 // skipped over.
 func TestMultiViewDownFollowsPanelOrderWithLiveSession(t *testing.T) {
-	be := &fakeBackend{sessions: []session.Session{
-		{ID: "a1", Project: "alpha", Name: "a1"},
-		{ID: "a2", Project: "alpha", Name: "a2"},
-		{ID: "a3", Project: "alpha", Name: "a3"},
-	}}
+	be := &fakeBackend{
+		sessions: []session.Session{
+			{ID: "a1", Project: "alpha", Name: "a1"},
+			{ID: "a2", Project: "alpha", Name: "a2"},
+			{ID: "a3", Project: "alpha", Name: "a3"},
+		},
+		tmuxAlive: map[string]bool{"a2": true},
+	}
 	m := newMultiProjectTestModel(be)
 	m.mode = ModeMultiView
 	m.multiFocus = 0 // alpha
-	m.tmuxAlive = map[string]bool{"a2": true}
+	seedViews(m, be, nil)
 
 	panelOrder := m.multiViewSessionsFor("alpha")
 	if len(panelOrder) != 3 || panelOrder[0].ID != "a2" {
@@ -464,7 +467,7 @@ func TestMultiViewTabSlidesWindowWhenFocusLeaves(t *testing.T) {
 		"beta":  {Repo: "/tmp/beta"},
 		"gamma": {Repo: "/tmp/gamma"},
 	}}
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 40, 24 // multiPanelMinWidth=34: only 1 panel fits
 	m.mode = ModeMultiView

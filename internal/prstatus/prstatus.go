@@ -15,10 +15,13 @@ import (
 var runTimeout = 30 * time.Second
 
 // Info is a PR's merge/CI status as reported by `gh pr view`.
+// Info crosses the socket inside sessionview.View, so the json tags are a
+// contract with every front end — without them Go would serialize the
+// capitalized Go names, inconsistently with every other struct on the wire.
 type Info struct {
-	State     string // OPEN, MERGED, CLOSED
-	Mergeable string // MERGEABLE, CONFLICTING, UNKNOWN
-	CI        string // PASSING, FAILING, PENDING, NONE
+	State     string `json:"state"`     // OPEN, MERGED, CLOSED
+	Mergeable string `json:"mergeable"` // MERGEABLE, CONFLICTING, UNKNOWN
+	CI        string `json:"ci"`        // PASSING, FAILING, PENDING, NONE
 }
 
 type Runner interface {

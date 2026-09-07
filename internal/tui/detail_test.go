@@ -11,7 +11,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
-	"github.com/erickgnclvs/moomux/internal/watcher"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 )
 
 // TestDetailTruncatesLongTicketURLButKeepsItClickable asserts a ticket/PR
@@ -24,7 +24,7 @@ func TestDetailTruncatesLongTicketURLButKeepsItClickable(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{
 		{ID: "demo:one", Project: "demo", Name: "one", Ticket: longURL},
 	}}
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 
@@ -108,7 +108,7 @@ func TestPRStatusLabel(t *testing.T) {
 
 // TestDetailShowsPRStatusRowOnlyWhenCached guards the detail panel's wiring:
 // the "pr status" row only appears once a status has actually resolved into
-// m.prStatus, not merely because the session has a PR attached — otherwise
+// a resolved PR status on the view, not merely because a PR is attached — otherwise
 // a session that just gained a PR (before its first gh pr view resolves)
 // would show a misleading or empty status.
 func TestDetailShowsPRStatusRowOnlyWhenCached(t *testing.T) {
@@ -116,7 +116,7 @@ func TestDetailShowsPRStatusRowOnlyWhenCached(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{
 		{ID: "demo:one", Project: "demo", Name: "one", PR: "https://github.com/example/repo/pull/1"},
 	}}
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 
@@ -125,7 +125,7 @@ func TestDetailShowsPRStatusRowOnlyWhenCached(t *testing.T) {
 		t.Fatalf("expected no pr status row before a status resolves:\n%s", frame)
 	}
 
-	m.prStatus["demo:one"] = prStatusInfo{ok: true, info: prstatus.Info{State: "OPEN", Mergeable: "CONFLICTING", CI: "FAILING"}}
+	putView(m, "demo:one", sessionview.View{PR: &prstatus.Info{State: "OPEN", Mergeable: "CONFLICTING", CI: "FAILING"}})
 	frame, _ = m.renderDetail(80-2, 24-2)
 	if !strings.Contains(frame, "conflicts") || !strings.Contains(frame, "CI failing") {
 		t.Fatalf("expected the cached pr status to render:\n%s", frame)
@@ -152,7 +152,7 @@ func TestCompactDetailTrimsFieldsAndShortensPR(t *testing.T) {
 			WorktreePath: "/tmp/demo/one",
 		},
 	}}
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 
@@ -169,7 +169,7 @@ func TestCompactDetailTrimsFieldsAndShortensPR(t *testing.T) {
 	// pr status only ever shows once cached (TestDetailShowsPRStatusRowOnlyWhenCached
 	// guards that generally); set it here so this test can confirm compact
 	// mode keeps that row instead of accidentally guarding it on !compact.
-	m.prStatus["demo:one"] = prStatusInfo{ok: true, info: prstatus.Info{State: "MERGED"}}
+	putView(m, "demo:one", sessionview.View{PR: &prstatus.Info{State: "MERGED"}})
 
 	m.cfg.CompactDetail = true
 	frame, hits := m.renderDetail(80-2, 24-2)
@@ -211,7 +211,7 @@ func TestCompactDetailHidesCowOnNarrowLayout(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{
 		{ID: "demo:one", Project: "demo", Name: "one"},
 	}}
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 
 	m.width, m.height = narrowWidthBreak, 24

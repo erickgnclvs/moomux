@@ -1,13 +1,13 @@
 package tui
 
 import (
-	"errors"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
@@ -29,14 +29,14 @@ func cpuTestSessions(n int) []session.Session {
 // listenStatus — without parking on an open, empty channel.
 func newCPUTestModel(be *fakeBackend) *Model {
 	m := newTestModel(be)
-	ch := make(chan watcher.Snapshot)
+	ch := make(chan sessionview.Snapshot)
 	close(ch)
 	m.statusCh = ch
 	return m
 }
 
 func emptyTick() StatusTickMsg {
-	return StatusTickMsg{Snap: watcher.Snapshot{States: map[string]watcher.State{}, PollTime: time.Now()}}
+	return StatusTickMsg{Snap: sessionview.Snapshot{Views: map[string]sessionview.View{}, PollTime: time.Now()}}
 }
 
 // TestSessionsReadOncePerPass is the CPU fix: one Update or one View must
@@ -82,12 +82,13 @@ func TestSessionsRereadEachPass(t *testing.T) {
 	}
 }
 
-// TestStatusTickDoesNotPollTmux is the CPU fix: tmux liveness used to be
-// re-polled once per watcher snapshot — a `tmux list-sessions` subprocess
-// (~4.5ms of fork and exec) per snapshot from any of the three watchers,
-// several a second at idle and up to ten a second while an agent's
-// filesystem writes drove the debounced rescans.
-func TestStatusTickDoesNotPollTmux(t *testing.T) {
+// TestStatusTickDoesNoBackendWork guards the split: a snapshot is finished
+// state, so applying one must not send the TUI back to the backend for
+// anything. Every per-session probe a status tick used to fan out — tmux
+// liveness, git status, `gh pr view`, agent-log prompt scans — is the
+// core's job now (internal/sessionview), done once for every client rather
+// than once per client.
+func TestStatusTickDoesNoBackendWork(t *testing.T) {
 	be := &fakeBackend{sessions: cpuTestSessions(2)}
 	m := newCPUTestModel(be)
 
@@ -97,114 +98,54 @@ func TestStatusTickDoesNotPollTmux(t *testing.T) {
 	if n := be.tmuxAliveCalls.Load(); n != 0 {
 		t.Errorf("a status tick spawned %d tmux-alive polls, want 0", n)
 	}
-}
-
-// TestTmuxTickPollsAndReschedules covers what replaced it: liveness on its
-// own steady timer, which must keep itself running.
-func TestTmuxTickPollsAndReschedules(t *testing.T) {
-	be := &fakeBackend{sessions: cpuTestSessions(2)}
-	m := newCPUTestModel(be)
-
-	// Keep the reschedule from actually sleeping out the real interval.
-	orig := tmuxRefreshInterval
-	tmuxRefreshInterval = time.Millisecond
-	defer func() { tmuxRefreshInterval = orig }()
-
-	be.tmuxAliveCalls.Store(0)
-	_, cmd := m.Update(TmuxTickMsg{})
-	if cmd == nil {
-		t.Fatal("TmuxTickMsg produced no command")
+	if n := len(be.worktreeStatusCalls); n != 0 {
+		t.Errorf("a status tick spawned %d git-status calls, want 0", n)
 	}
-	msgs := collectMsgs(cmd)
-	if n := be.tmuxAliveCalls.Load(); n != 1 {
-		t.Errorf("tmux-alive polled %d times, want 1", n)
-	}
-	var rescheduled bool
-	for _, msg := range msgs {
-		if _, ok := msg.(TmuxTickMsg); ok {
-			rescheduled = true
-		}
-	}
-	if !rescheduled {
-		t.Error("TmuxTickMsg did not reschedule itself; liveness polling would stop after one tick")
+	if n := len(be.prStatusCalls); n != 0 {
+		t.Errorf("a status tick spawned %d PR-status calls, want 0", n)
 	}
 }
 
-// TestPromptScanBacksOff is the CPU fix: a session whose first prompt can't
-// be found leaves m.prompts empty, which is the very condition that selects
-// it for scanning — so it used to be re-scanned on every status tick
-// forever, each scan a line-by-line JSON walk of every .jsonl under
-// ~/.claude/projects/<cwd>/ or a sqlite3 subprocess per database.
-func TestPromptScanBacksOff(t *testing.T) {
-	be := &fakeBackend{sessions: cpuTestSessions(2)}
-	m := newTestModel(be)
-
-	// The sample worktrees have no agent logs, so every scan comes back
-	// empty — exactly the case that used to retry forever.
-	first := refreshStatusCmd(m)
-	if got := first().(StatusRefreshedMsg).Prompts; len(got) != 2 {
-		t.Fatalf("first pass scanned %d sessions, want 2", len(got))
-	}
-
-	second := refreshStatusCmd(m)
-	if got := second().(StatusRefreshedMsg).Prompts; len(got) != 0 {
-		t.Errorf("second pass re-scanned %d sessions, want 0 within promptRetryAfter", len(got))
-	}
-
-	// Past the backoff window it must try again — prompts do appear late,
-	// once the agent has written its log.
-	for id := range m.promptCheckedAt {
-		m.promptCheckedAt[id] = time.Now().Add(-promptRetryAfter - time.Second)
-	}
-	third := refreshStatusCmd(m)
-	if got := third().(StatusRefreshedMsg).Prompts; len(got) != 2 {
-		t.Errorf("after promptRetryAfter, scanned %d sessions, want 2", len(got))
-	}
-}
-
-// TestMergeSnapshots covers the coalescing rule: newer wins per path, and
-// paths only one snapshot knows about survive — snapshots come from
-// independent watchers that each cover only their own agent's paths, so
-// replacing rather than merging would wipe the others.
+// TestMergeSnapshots covers the coalescing rule. A Snapshot is absolute
+// state, so the newer one simply wins — the one thing that must survive is
+// an error the newer snapshot didn't repeat, which would otherwise never
+// reach the user at all.
 func TestMergeSnapshots(t *testing.T) {
-	older := watcher.Snapshot{
-		States:   map[string]watcher.State{"/wt/a": watcher.Working, "/wt/b": watcher.Done},
+	older := sessionview.Snapshot{
+		Views:    map[string]sessionview.View{"a": {ID: "a", State: watcher.Working}},
 		PollTime: time.Now().Add(-time.Second),
-		Err:      errors.New("older"),
+		Err:      "older",
 	}
-	newer := watcher.Snapshot{
-		States:   map[string]watcher.State{"/wt/a": watcher.Done, "/wt/c": watcher.NeedsInput},
+	newer := sessionview.Snapshot{
+		Views:    map[string]sessionview.View{"b": {ID: "b", State: watcher.Done}},
 		PollTime: time.Now(),
 	}
 
 	got := mergeSnapshots(older, newer)
-	want := map[string]watcher.State{"/wt/a": watcher.Done, "/wt/b": watcher.Done, "/wt/c": watcher.NeedsInput}
-	for path, st := range want {
-		if got.States[path] != st {
-			t.Errorf("%s: got %v, want %v", path, got.States[path], st)
-		}
+	if _, ok := got.Views["a"]; ok {
+		t.Error("merged snapshot kept a view the newer snapshot dropped; snapshots are absolute, not deltas")
 	}
-	if len(got.States) != len(want) {
-		t.Errorf("merged %d paths, want %d", len(got.States), len(want))
+	if got.Views["b"].State != watcher.Done {
+		t.Errorf("merged views = %v, want the newer snapshot's", got.Views)
 	}
 	if !got.PollTime.Equal(newer.PollTime) {
 		t.Error("merged snapshot did not take the newer PollTime")
 	}
-	if got.Err == nil {
-		t.Error("merged snapshot dropped the older snapshot's error")
-	}
-	if older.States["/wt/a"] != watcher.Working {
-		t.Error("mergeSnapshots mutated its input; those maps belong to the watcher goroutines")
+	if got.Err != "older" {
+		t.Errorf("merged Err = %q, want the older snapshot's error carried forward", got.Err)
 	}
 }
 
 // TestListenStatusCoalesces is the CPU fix: a burst of queued snapshots must
 // arrive as one message, not one full handler pass plus re-render each.
 func TestListenStatusCoalesces(t *testing.T) {
-	ch := make(chan watcher.Snapshot, 4)
-	ch <- watcher.Snapshot{States: map[string]watcher.State{"/wt/a": watcher.Working}, PollTime: time.Now()}
-	ch <- watcher.Snapshot{States: map[string]watcher.State{"/wt/b": watcher.Working}, PollTime: time.Now()}
-	ch <- watcher.Snapshot{States: map[string]watcher.State{"/wt/a": watcher.Done}, PollTime: time.Now()}
+	ch := make(chan sessionview.Snapshot, 4)
+	for _, st := range []watcher.State{watcher.Working, watcher.Done, watcher.NeedsInput} {
+		ch <- sessionview.Snapshot{
+			Views:    map[string]sessionview.View{"a": {ID: "a", State: st}},
+			PollTime: time.Now(),
+		}
+	}
 
 	msg, ok := listenStatus(ch)().(StatusTickMsg)
 	if !ok {
@@ -213,57 +154,9 @@ func TestListenStatusCoalesces(t *testing.T) {
 	if len(ch) != 0 {
 		t.Errorf("%d snapshots left queued; the burst was not drained", len(ch))
 	}
-	if msg.Snap.States["/wt/a"] != watcher.Done || msg.Snap.States["/wt/b"] != watcher.Working {
-		t.Errorf("coalesced states = %v", msg.Snap.States)
+	if got := msg.Snap.Views["a"].State; got != watcher.NeedsInput {
+		t.Errorf("coalesced state = %v, want the last snapshot in the burst", got)
 	}
-}
-
-// TestPruneDeadSessions is the memory fix: per-session bookkeeping used to
-// grow for the life of the process, holding entries — whole prompt strings
-// included — for every session ever deleted.
-func TestPruneDeadSessions(t *testing.T) {
-	be := &fakeBackend{sessions: cpuTestSessions(2)}
-	m := newTestModel(be)
-
-	gone, kept := be.sessions[0], be.sessions[1]
-	for _, s := range be.sessions {
-		m.states[s.WorktreePath] = watcher.Working
-		m.titleState[s.ID] = watcher.Working
-		m.gitStatus[s.ID] = gitStatusInfo{ok: true, checkedAt: time.Now()}
-		m.prStatus[s.ID] = prStatusInfo{ok: true, checkedAt: time.Now()}
-		m.prompts[s.ID] = "some prompt"
-		m.promptCheckedAt[s.ID] = time.Now()
-		m.gitStatusPending[s.ID] = true
-		m.prStatusPending[s.ID] = true
-	}
-
-	be.sessions = []session.Session{kept}
-	m.Update(emptyTick())
-
-	if _, ok := m.states[gone.WorktreePath]; ok {
-		t.Error("states kept a deleted session's path")
-	}
-	for name, present := range map[string]bool{
-		"titleState":       mapHas(m.titleState, gone.ID),
-		"gitStatus":        mapHas(m.gitStatus, gone.ID),
-		"prStatus":         mapHas(m.prStatus, gone.ID),
-		"prompts":          mapHas(m.prompts, gone.ID),
-		"promptCheckedAt":  mapHas(m.promptCheckedAt, gone.ID),
-		"gitStatusPending": mapHas(m.gitStatusPending, gone.ID),
-		"prStatusPending":  mapHas(m.prStatusPending, gone.ID),
-	} {
-		if present {
-			t.Errorf("%s kept a deleted session's entry", name)
-		}
-	}
-	if !mapHas(m.prompts, kept.ID) || !mapHas(m.titleState, kept.ID) {
-		t.Error("pruning dropped a live session's entry")
-	}
-}
-
-func mapHas[V any](m map[string]V, k string) bool {
-	_, ok := m[k]
-	return ok
 }
 
 // collectMsgs runs cmd (unwrapping tea.Batch) and returns every message it
@@ -282,4 +175,58 @@ func collectMsgs(cmd tea.Cmd) []tea.Msg {
 		return out
 	}
 	return []tea.Msg{msg}
+}
+
+// TestSessionListRidesTheStream is the render-path fix: the session list used
+// to be re-read from the backend on every Update and again on every View —
+// a sessions.json read and sort locally, or a whole unix round trip on the
+// socket-backed backend, twice per keystroke. It arrives on the snapshot
+// stream now, already in display order.
+func TestSessionListRidesTheStream(t *testing.T) {
+	be := &fakeBackend{sessions: cpuTestSessions(3), tmuxAlive: map[string]bool{"demo:sa": true}}
+	m := newCPUTestModel(be)
+	seedViews(m, be, nil)
+
+	be.sessionsCalls.Store(0)
+	m.mode = ModeList
+	m.View()
+	m.mode = ModeMultiView
+	m.View()
+	if n := be.sessionsCalls.Load(); n != 0 {
+		t.Errorf("rendering hit backend.Sessions() %d times with a snapshot in hand, want 0", n)
+	}
+
+	// And the order is the core's, not one the TUI re-derives.
+	if len(m.sessions) != 3 || m.sessions[0].ID != "demo:sa" {
+		t.Errorf("list = %v, want the served order (live session first)", m.sessions)
+	}
+}
+
+// TestMutationFallsBackToTheBackend is the other half: right after a change
+// this client made, the streamed list is a beat behind the store — so the
+// handler acting on that change (moving the cursor off a deleted session,
+// focusing a new one) must see the backend directly rather than a stale
+// snapshot.
+func TestMutationFallsBackToTheBackend(t *testing.T) {
+	be := &fakeBackend{sessions: cpuTestSessions(3), tmuxAlive: map[string]bool{}}
+	m := newCPUTestModel(be)
+	seedViews(m, be, nil)
+
+	var nudges int
+	m.Nudge = func() { nudges++ }
+
+	// The store loses a session; no snapshot has been emitted for it yet.
+	be.sessions = cpuTestSessions(2)
+	be.sessionsCalls.Store(0)
+	m.Update(SessionDeletedMsg{})
+
+	if n := be.sessionsCalls.Load(); n == 0 {
+		t.Error("after a delete the model kept using the stale streamed list")
+	}
+	if len(m.sessions) != 2 {
+		t.Errorf("list has %d sessions, want 2 — the delete must be visible immediately", len(m.sessions))
+	}
+	if nudges != 1 {
+		t.Errorf("sent %d nudges, want 1 — the core must be asked for a fresh list", nudges)
+	}
 }

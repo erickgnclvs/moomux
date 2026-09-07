@@ -37,6 +37,40 @@ type Session struct {
 	Prompt       string    `json:"prompt,omitempty"`      // first prompt typed into the agent at creation time, captured directly rather than relying on the agent's own log
 }
 
+// CreateRequest is everything one "new session" action carries.
+//
+// It's a struct rather than a parameter list because creating a session is a
+// transaction, not a single call: the worktree and tmux pane come up, the PR
+// tag is attached, the first prompt is composed and stored, and finally the
+// prompt is typed into the agent's pane. That sequence — and the rule that a
+// failure after the pane exists degrades to a hint rather than a failed
+// create — used to live in the TUI, which meant every front end had to
+// replay it exactly. It had already drifted: `moomux spawn` composed the
+// prompt differently and skipped two of the steps.
+type CreateRequest struct {
+	Project string
+	Name    string
+	Agent   string
+	// Branch is an existing branch to check out; empty means cut a new one.
+	Branch     string
+	BaseBranch string
+	Ticket     string
+	PR         string
+	Model      string
+	Thinking   string
+	// Prompt is the first task to hand the agent. Empty means don't type
+	// anything into the pane.
+	Prompt string
+	// AutoSubmit presses Enter after typing Prompt.
+	AutoSubmit bool
+	// OpenTerminal opens a terminal tab attached to the new session.
+	OpenTerminal bool
+	// Dangerous runs the agent with its permission-skipping flag. nil means
+	// "use the project's own default" — a plain bool can't express that,
+	// since an explicit false and an unset field would be identical.
+	Dangerous *bool
+}
+
 // AgentName returns the effective agent name, defaulting to "claude" for legacy sessions.
 func (s Session) AgentName() string {
 	if s.Agent == "" {

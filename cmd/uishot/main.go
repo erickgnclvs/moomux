@@ -23,6 +23,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/gitwt"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/tui"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
@@ -126,7 +127,7 @@ var screens = map[string][]string{
 	"states": {},
 	// Submits the new-project form with a path under ~/Documents that isn't
 	// a git repo, landing on the "skip git" choice screen with its macOS
-	// Files-and-Folders warning (see internal/tui/tcc.go). "$HOME" is
+	// Files-and-Folders warning (see App.PathWarning in internal/app). "$HOME" is
 	// expanded to the real home dir at runtime so the warning actually
 	// triggers regardless of machine. "ctrl+u" clears each field's cwd
 	// prefill (see newProjectForm) before typing over it.
@@ -238,11 +239,8 @@ type fakeBackend struct {
 	createErr error
 }
 
-func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
+func (f *fakeBackend) CreateSession(req session.CreateRequest) (session.Session, string, error) {
 	return session.Session{}, "", f.createErr
-}
-func (f *fakeBackend) StartFirstPrompt(tmuxSession, prompt string, autoSubmit bool) error {
-	return nil
 }
 func (f *fakeBackend) OpenSession(id string) (string, error)   { return "", nil }
 func (f *fakeBackend) DeleteSession(id string) (string, error) { return "", nil }
@@ -284,9 +282,9 @@ func (f *fakeBackend) SetSessionArchived(id string, archived bool) (session.Sess
 	return session.Session{}, nil
 }
 
-// TmuxAliveAll reports every sample session as alive so effectiveState
-// doesn't force them all to "parked" — that would hide whatever State a
-// scenario sets via a StatusTickMsg (see the "needs-input" scenario).
+// TmuxAliveAll reports every sample session as alive so the core's
+// state join doesn't force them all to "parked" — that would hide whatever
+// State a scenario sets via screenStates (see the "needs-input" scenario).
 func (f *fakeBackend) TmuxAliveAll() map[string]bool {
 	alive := make(map[string]bool, len(f.sessions))
 	for _, s := range f.sessions {
@@ -294,9 +292,20 @@ func (f *fakeBackend) TmuxAliveAll() map[string]bool {
 	}
 	return alive
 }
-func (f *fakeBackend) Sessions() []session.Session                           { return f.sessions }
-func (f *fakeBackend) Projects() []string                                    { return nil }
-func (f *fakeBackend) AddProject(name string, p config.Project) error        { return gitwt.ErrNotGitRepo }
+
+// SuggestedProject mirrors the real core's cwd prefill. TestScreens pins the
+// working directory to "/", which app.SuggestedProject reports as unusable —
+// so the add-project screens render with empty fields, deterministically.
+func (f *fakeBackend) SuggestedProject() (string, string) { return (&app.App{}).SuggestedProject() }
+
+func (f *fakeBackend) Sessions() []session.Session { return f.sessions }
+func (f *fakeBackend) Projects() []string          { return nil }
+func (f *fakeBackend) AddProject(name string, p config.Project) (string, error) {
+	// The path warning is the core's now, so ask the real one rather than
+	// canning a string here — that's what the project-init-choice scenario
+	// exists to show.
+	return (&app.App{}).PathWarning(p.Repo), gitwt.ErrNotGitRepo
+}
 func (f *fakeBackend) InitProjectAndAdd(name string, p config.Project) error { return nil }
 func (f *fakeBackend) AddPlainProject(name string, p config.Project) error   { return nil }
 func (f *fakeBackend) UpdateProject(name string, p config.Project) error     { return nil }
@@ -521,10 +530,10 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 		}
 	}
 	// Closed immediately: nothing in this synthetic harness ever sends on it,
-	// and closing lets drive() safely run a StatusTickMsg's/StatusRefreshedMsg's
-	// returned batch (which re-arms listenStatus(statusCh)) without blocking
-	// forever on an open, empty channel.
-	statusCh := make(chan watcher.Snapshot)
+	// and closing lets drive() safely run a StatusTickMsg's returned batch
+	// (which re-arms listenStatus(statusCh)) without blocking forever on an
+	// open, empty channel.
+	statusCh := make(chan sessionview.Snapshot)
 	close(statusCh)
 	tui.ApplySettings(cfg)
 	m := tui.New(cfg, be, (&app.App{}).AgentOptions(), statusCh, func() {})
@@ -533,28 +542,21 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 		m.Version = "0.5.3"
 		m.UpdateVersion = "0.5.4"
 	}
-	// tui.New() no longer calls TmuxAliveAll() synchronously (that now
-	// happens async, via Init(), so a slow tmux server can't block the real
-	// app's first render) — this harness never calls Init() at all, so
-	// without this every sample session would default to "not alive" and
-	// read as Parked regardless of the State a scenario sets below. This
-	// same StatusRefreshedMsg also triggers the startup git-status sweep
-	// (see model.go's tmuxCheckedOnce), fetching every session up front from
-	// whatever be.worktreeStatus already holds.
-	drive(m, tui.StatusRefreshedMsg{TmuxAlive: be.TmuxAliveAll()})
-
 	home, _ := os.UserHomeDir()
 
 	m.Update(tea.WindowSizeMsg{Width: width, Height: height})
-	if want := screenStates[screenName]; want != nil {
-		states := map[string]watcher.State{}
-		for i, st := range want {
-			if i < len(sessions) {
-				states[sessions[i].WorktreePath] = st
-			}
+	// The model holds no derived state of its own any more — it renders
+	// whatever snapshot the core last sent (see internal/sessionview). This
+	// harness never runs Init(), so nothing would ever arrive on statusCh;
+	// sessionview.Once builds the one snapshot a real run's first tick
+	// would have, from the same code path, against the fake backend.
+	states := map[string]watcher.State{}
+	for i, st := range screenStates[screenName] {
+		if i < len(sessions) {
+			states[sessions[i].WorktreePath] = st
 		}
-		m.Update(tui.StatusTickMsg{Snap: watcher.Snapshot{States: states}})
 	}
+	m.Update(tui.StatusTickMsg{Snap: sessionview.Once(be, "", states)})
 	for _, k := range keys {
 		msg := keyMsgFor(strings.ReplaceAll(k, "$HOME", home))
 		if screenName == "confirm-delete-checking" {

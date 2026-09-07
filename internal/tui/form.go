@@ -291,7 +291,7 @@ func (m *Model) renderNewFormModelSelector() string {
 	if m.newFormAgentIdx >= 0 {
 		agent = m.agentNames()[m.newFormAgentIdx]
 	}
-	if agent == "opencode" {
+	if m.agentUsesFreeTextModel(agent) {
 		return m.newFormModelInput.View()
 	}
 	return renderSelector(
@@ -572,8 +572,13 @@ func (m *Model) renderProjectInitChoice() string {
 	b.WriteString(titleStyle.Render("Path is not a git repository"))
 	b.WriteString("\n\n")
 	b.WriteString(fmt.Sprintf("path: %s\n", m.pending.p.Repo))
-	if w := tccWarning(m.pending.p.Repo); w != "" {
-		b.WriteString(warnStyle.Width(64).Render(w))
+	// Warning text comes from the core with the error that opened this
+	// dialog (App.AddProject returns it alongside the error, from
+	// App.PathWarning): whether a path is inside a protected
+	// folder is a fact about the machine it's on, which over the socket is
+	// not this one.
+	if m.pending.warning != "" {
+		b.WriteString(warnStyle.Width(64).Render(m.pending.warning))
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")

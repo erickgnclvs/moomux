@@ -8,7 +8,7 @@ import (
 
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/session"
-	"github.com/erickgnclvs/moomux/internal/watcher"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 )
 
 // newTestModel and newMultiProjectTestModel both force ModeList after
@@ -20,7 +20,7 @@ import (
 func newTestModel(be *fakeBackend) *Model {
 	cfg := &config.Config{Projects: map[string]config.Project{"demo": {Repo: "/tmp/demo"}}}
 	be.cfg = *cfg
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
@@ -33,7 +33,7 @@ func newMultiProjectTestModel(be *fakeBackend) *Model {
 		"beta":  {Repo: "/tmp/beta"},
 	}}
 	be.cfg = *cfg
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
@@ -272,13 +272,15 @@ func TestMoveSessionErrorSetsFlashWithoutReordering(t *testing.T) {
 // TestRefreshSessionsSortsLiveStatusFirst guards the active project's sort
 // order: a session with a live tmux window floats to the top of the list.
 func TestRefreshSessionsSortsLiveStatusFirst(t *testing.T) {
-	be := &fakeBackend{sessions: []session.Session{
-		{ID: "demo:a1", Project: "demo", Name: "a1"},
-		{ID: "demo:a2", Project: "demo", Name: "a2"},
-	}}
+	be := &fakeBackend{
+		sessions: []session.Session{
+			{ID: "demo:a1", Project: "demo", Name: "a1"},
+			{ID: "demo:a2", Project: "demo", Name: "a2"},
+		},
+		tmuxAlive: map[string]bool{"demo:a2": true},
+	}
 	m := newTestModel(be)
-	m.tmuxAlive = map[string]bool{"demo:a2": true}
-	m.refreshSessions()
+	seedViews(m, be, nil)
 
 	got := make([]string, len(m.sessions))
 	for i, s := range m.sessions {
