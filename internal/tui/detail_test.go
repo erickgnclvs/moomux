@@ -266,3 +266,53 @@ func TestFrameLinesKeepWidthUnderStyling(t *testing.T) {
 		}
 	}
 }
+
+func TestPRGlyph(t *testing.T) {
+	cases := []struct {
+		name string
+		info *prstatus.Info
+		want string
+	}{
+		{"unknown", nil, "🔀"},
+		{"merged", &prstatus.Info{State: "MERGED", CI: "PASSING"}, "✅"},
+		{"closed", &prstatus.Info{State: "CLOSED"}, "🚫"},
+		{"conflicts beat CI", &prstatus.Info{State: "OPEN", Mergeable: "CONFLICTING", CI: "FAILING"}, "⚠️"},
+		{"ci failing", &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "FAILING"}, "❌"},
+		{"ready", &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "PASSING"}, "🔀"},
+		// A merged PR's mergeable/CI stop meaning anything — state wins.
+		{"merged with stale conflicts", &prstatus.Info{State: "MERGED", Mergeable: "CONFLICTING"}, "✅"},
+	}
+	for _, c := range cases {
+		if got := prGlyph(c.info); got != c.want {
+			t.Errorf("%s: prGlyph = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestNewlyMergedFlash(t *testing.T) {
+	open := &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "PASSING"}
+	merged := &prstatus.Info{State: "MERGED"}
+	sessions := []session.Session{{ID: "a", Name: "alpha"}, {ID: "b", Name: "beta"}}
+	views := func(a, b *prstatus.Info) map[string]sessionview.View {
+		return map[string]sessionview.View{"a": {ID: "a", PR: a}, "b": {ID: "b", PR: b}}
+	}
+	cases := []struct {
+		name       string
+		prev, next map[string]sessionview.View
+		want       string
+	}{
+		{"one merged", views(open, open), views(merged, open), "PR merged: alpha"},
+		{"both merged", views(open, open), views(merged, merged), "2 PRs merged: alpha, beta"},
+		{"nothing changed", views(open, open), views(open, open), ""},
+		{"already merged doesn't re-flash", views(merged, open), views(merged, open), ""},
+		// First snapshot this client sees: no previous entry to compare
+		// against, so an already-merged PR is old news, not news.
+		{"first snapshot stays quiet", nil, views(merged, merged), ""},
+		{"no status yet", views(nil, nil), views(merged, nil), ""},
+	}
+	for _, c := range cases {
+		if got := newlyMergedFlash(c.prev, c.next, sessions); got != c.want {
+			t.Errorf("%s: newlyMergedFlash = %q, want %q", c.name, got, c.want)
+		}
+	}
+}

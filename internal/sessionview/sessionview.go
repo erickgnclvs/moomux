@@ -530,6 +530,11 @@ func (w *Watcher) gitDue(s session.Session) bool {
 	return time.Since(cur.checkedAt) > staleAfter(s.ID, gitStaleAfter)
 }
 
+// prDue, unlike gitDue, keeps polling a parked session. A parked worktree's
+// dirty/unpushed state can't change on its own, but its PR is exactly what
+// does: the work is finished and pushed, and the merge happens on GitHub,
+// with nothing local to notice it. A parked session that stopped being
+// re-checked would sit on "open" forever.
 func (w *Watcher) prDue(s session.Session) bool {
 	if s.PR == "" || w.pending[fetchKey{fetchPR, s.ID}] {
 		return false
