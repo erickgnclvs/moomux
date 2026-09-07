@@ -1989,8 +1989,23 @@ func (a *App) ChangeSummary(id string) (filesChanged, unpushedCommits int, ok bo
 // authenticated, or the PR can't be resolved).
 func (a *App) PRStatus(id string) (prstatus.Info, bool) {
 	s, exists := a.Store.Get(id)
-	if !exists || s.PR == "" {
+	if !exists || a.PR == nil {
 		return prstatus.Info{}, false
+	}
+	// An untagged session discovers its own PR from the branch in its
+	// worktree and records it, so `moomux tag -pr` is an override rather
+	// than the only way a PR ever gets attached — a PR opened from another
+	// machine, or from the GitHub web UI, is picked up just the same. Only
+	// the PR is inferred: a ticket isn't derivable from the branch.
+	if s.PR == "" {
+		info, url, err := a.PR.FetchBranch(s.WorktreePath)
+		if err != nil {
+			return prstatus.Info{}, false
+		}
+		if _, err := a.SetSessionTags(s.ID, s.Ticket, url); err != nil {
+			return prstatus.Info{}, false
+		}
+		return info, true
 	}
 	info, err := a.PR.Fetch(s.PR)
 	if err != nil {

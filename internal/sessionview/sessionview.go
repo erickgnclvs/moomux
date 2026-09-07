@@ -535,12 +535,21 @@ func (w *Watcher) gitDue(s session.Session) bool {
 // does: the work is finished and pushed, and the merge happens on GitHub,
 // with nothing local to notice it. A parked session that stopped being
 // re-checked would sit on "open" forever.
+//
+// A session with no PR attached is polled too, on a slower cadence: that
+// call is what discovers a PR opened for its branch (see App.PRStatus) and
+// attaches it, so a fetch that comes back empty is a cost paid by every
+// session that never gets one.
 func (w *Watcher) prDue(s session.Session) bool {
-	if s.PR == "" || w.pending[fetchKey{fetchPR, s.ID}] {
+	if w.pending[fetchKey{fetchPR, s.ID}] {
 		return false
 	}
+	stale := prStaleAfter
+	if s.PR == "" {
+		stale = prDiscoverAfter
+	}
 	cur, ok := w.pr[s.ID]
-	return !ok || time.Since(cur.checkedAt) > staleAfter(s.ID, prStaleAfter)
+	return !ok || time.Since(cur.checkedAt) > staleAfter(s.ID, stale)
 }
 
 // promptDue stops re-scanning once a prompt is found, and backs off when one
@@ -572,6 +581,11 @@ const (
 	// than a worktree's dirty state, and `gh` hits the network (slower,
 	// rate-limited) rather than a local git call.
 	prStaleAfter = 2 * time.Minute
+	// prDiscoverAfter paces the branch lookup for a session with no PR yet.
+	// Longer than prStaleAfter because most of those calls find nothing:
+	// plenty of sessions never open a PR at all, and `moomux tag -pr`
+	// attaches one immediately when an agent does.
+	prDiscoverAfter = 5 * time.Minute
 	// promptRetryAfter bounds how often a session with no discoverable
 	// first prompt is re-scanned.
 	promptRetryAfter = 30 * time.Second

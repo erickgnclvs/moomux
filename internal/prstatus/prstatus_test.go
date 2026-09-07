@@ -10,7 +10,7 @@ type fakeRunner struct {
 	err error
 }
 
-func (f *fakeRunner) Run(args ...string) (string, error) {
+func (f *fakeRunner) Run(_ string, args ...string) (string, error) {
 	if f.err != nil {
 		return "", f.err
 	}

@@ -206,6 +206,30 @@ func TestParkedGitStatusSkipsRoutineRefetch(t *testing.T) {
 	}
 }
 
+// TestUntaggedSessionPRDiscovery: a session with no PR attached is still
+// polled, on the slower discovery cadence — that fetch is what finds a PR
+// opened for its branch and attaches it (App.PRStatus).
+func TestUntaggedSessionPRDiscovery(t *testing.T) {
+	core := &fakeCore{sessions: []session.Session{sess("demo:a", "/wt/a")}}
+	w := newWatcher(core)
+
+	s := core.sessions[0]
+	if s.PR != "" {
+		t.Fatal("fixture must have no PR attached")
+	}
+	if !w.prDue(s) {
+		t.Fatal("an untagged session must be checked once for a PR")
+	}
+	w.pr["demo:a"] = prEntry{checkedAt: time.Now().Add(-2 * prStaleAfter)}
+	if w.prDue(s) {
+		t.Error("discovery must back off past prStaleAfter, not re-run on the PR cadence")
+	}
+	w.pr["demo:a"] = prEntry{checkedAt: time.Now().Add(-2 * prDiscoverAfter)}
+	if !w.prDue(s) {
+		t.Error("discovery must come due again once prDiscoverAfter has passed")
+	}
+}
+
 // TestParkedPRStatusKeepsRefetching is the counterpart to the git rule
 // above: a parked session is the one whose PR status matters most, since it
 // merges on GitHub with nothing local to notice.
@@ -266,7 +290,10 @@ func TestPendingSkipsDuplicateFetch(t *testing.T) {
 	w.schedule(context.Background(), results)
 	w.schedule(context.Background(), results)
 
-	<-results // let the first one land so the goroutines are done
+	// One tick now schedules two fetches per session — git status and the
+	// PR/branch lookup — so drain both before counting.
+	<-results
+	<-results
 	if n := len(core.calls(&core.gitCalls)); n != 1 {
 		t.Errorf("WorktreeStatus called %d times across two ticks, want 1", n)
 	}

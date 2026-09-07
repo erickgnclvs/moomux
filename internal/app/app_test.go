@@ -14,6 +14,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/codexhook"
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/gitwt"
+	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/tmux"
 	"github.com/erickgnclvs/moomux/internal/watcher"
@@ -3145,5 +3146,69 @@ func TestCreateSessionReportNamesTheFailedStep(t *testing.T) {
 	}
 	if !strings.Contains(report.Hint, "first prompt") {
 		t.Errorf("Hint = %q, want it to mention the prompt too", report.Hint)
+	}
+}
+
+// fakeGHRunner stands in for the gh CLI, recording the directory each call
+// ran in — a branch-scoped `gh pr view` only resolves the right PR when it
+// runs inside the session's worktree.
+type fakeGHRunner struct {
+	out  string
+	err  error
+	dirs []string
+	args [][]string
+}
+
+func (f *fakeGHRunner) Run(dir string, args ...string) (string, error) {
+	f.dirs = append(f.dirs, dir)
+	f.args = append(f.args, args)
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.out, nil
+}
+
+// TestPRStatusDiscoversUntaggedSession covers the auto-tagging path: a
+// session nobody ran `moomux tag` on picks up the PR open for its branch and
+// records it, so later polls go through the URL.
+func TestPRStatusDiscoversUntaggedSession(t *testing.T) {
+	a, _, _, _ := newTestApp(t, gitProject("/repo"))
+	gh := &fakeGHRunner{out: `{"url":"https://github.com/example/repo/pull/7","state":"OPEN","mergeable":"MERGEABLE","statusCheckRollup":[]}`}
+	a.PR = &prstatus.Client{Runner: gh}
+	s := session.Session{ID: "demo:a", Name: "a", Project: "demo", WorktreePath: "/wt/a", Ticket: "https://tracker.example/1"}
+	if err := a.Store.Put(s); err != nil {
+		t.Fatal(err)
+	}
+
+	info, ok := a.PRStatus(s.ID)
+	if !ok || info.State != "OPEN" {
+		t.Fatalf("PRStatus() = (%+v, %v), want an OPEN status", info, ok)
+	}
+	got, _ := a.Store.Get(s.ID)
+	if got.PR != "https://github.com/example/repo/pull/7" {
+		t.Errorf("session PR = %q, want the discovered URL", got.PR)
+	}
+	if got.Ticket != s.Ticket {
+		t.Errorf("session ticket = %q, want it left alone at %q", got.Ticket, s.Ticket)
+	}
+	if len(gh.dirs) != 1 || gh.dirs[0] != s.WorktreePath {
+		t.Errorf("gh ran in %v, want one call in %q", gh.dirs, s.WorktreePath)
+	}
+}
+
+// TestPRStatusNoPRForBranch: gh failing (no PR, not a GitHub repo, gh logged
+// out) leaves the session untagged rather than recording anything.
+func TestPRStatusNoPRForBranch(t *testing.T) {
+	a, _, _, _ := newTestApp(t, gitProject("/repo"))
+	a.PR = &prstatus.Client{Runner: &fakeGHRunner{err: errors.New("no pull requests found for branch")}}
+	s := session.Session{ID: "demo:a", Name: "a", Project: "demo", WorktreePath: "/wt/a"}
+	if err := a.Store.Put(s); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := a.PRStatus(s.ID); ok {
+		t.Fatal("PRStatus() = ok, want not ok when the branch has no PR")
+	}
+	if got, _ := a.Store.Get(s.ID); got.PR != "" {
+		t.Errorf("session PR = %q, want it left empty", got.PR)
 	}
 }
