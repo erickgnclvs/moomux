@@ -157,6 +157,8 @@ var screens = map[string][]string{
 	// Same cursor move, with the PR merged instead of blocked — covers the
 	// list row's merged glyph alongside the detail panel's "merged" row.
 	"pr-merged": {"down"},
+	// Same cursor move again, with CI still running — the pending glyph.
+	"pr-pending": {"down"},
 	// ModeMultiView is the default now (see tui.New), so "list" above already
 	// captures it; these confirm normal session key bindings (delete/tag/
 	// archived) still work and render their dialog correctly on top of it.
@@ -525,6 +527,11 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 	if screenName == "pr-merged" && len(sessions) > 1 {
 		be.prStatus = map[string]prstatus.Info{
 			sessions[1].ID: {State: "MERGED", Mergeable: "UNKNOWN", CI: "PASSING"},
+		}
+	}
+	if screenName == "pr-pending" && len(sessions) > 1 {
+		be.prStatus = map[string]prstatus.Info{
+			sessions[1].ID: {State: "OPEN", Mergeable: "MERGEABLE", CI: "PENDING"},
 		}
 	}
 	if screenName == "detail-ticket-and-pr" || screenName == "compact-detail" {

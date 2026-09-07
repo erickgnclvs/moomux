@@ -278,7 +278,12 @@ func TestPRGlyph(t *testing.T) {
 		{"closed", &prstatus.Info{State: "CLOSED"}, "🚫"},
 		{"conflicts beat CI", &prstatus.Info{State: "OPEN", Mergeable: "CONFLICTING", CI: "FAILING"}, "⚠️"},
 		{"ci failing", &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "FAILING"}, "❌"},
+		{"ci pending", &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "PENDING"}, "⏳"},
+		// A repo with no checks configured at all is not "pending".
+		{"no checks configured", &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "NONE"}, "🔀"},
 		{"ready", &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "PASSING"}, "🔀"},
+		{"conflicts beat pending", &prstatus.Info{State: "OPEN", Mergeable: "CONFLICTING", CI: "PENDING"}, "⚠️"},
+		{"merged with pending checks", &prstatus.Info{State: "MERGED", CI: "PENDING"}, "✅"},
 		// A merged PR's mergeable/CI stop meaning anything — state wins.
 		{"merged with stale conflicts", &prstatus.Info{State: "MERGED", Mergeable: "CONFLICTING"}, "✅"},
 	}
