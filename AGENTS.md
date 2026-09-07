@@ -103,6 +103,27 @@ like a cwd mismatch and got its live session killed on open; see `samePath` in
 `scripts/next_version_test.sh` — the release-versioning rules that ship every
 merge to `main`.
 
+### `./...` does not mean everything
+
+The e2e suite is behind `//go:build e2e`, so `go build ./...`, `go vet ./...`,
+`go test ./...` and `staticcheck ./...` all skip `e2e/` **silently** — no
+error, no "0 tests", nothing. It is a separate CI step for that reason
+(`go test -tags e2e ./e2e/...`), and it is the only suite that drives the real
+`App` against the real `git` and `tmux` binaries.
+
+That gap has already shipped a red PR: a change to `App.CreateSession`'s and
+`App.AddProject`'s signatures passed every local `./...` command and then
+failed both `test` jobs on a build error in `e2e/`. So verifying a change means
+both suites, not one:
+
+```bash
+go test ./... -race -shuffle=on -count=1
+go test -tags e2e ./e2e/... -race -shuffle=on -count=1
+```
+
+Anything touching an exported signature on `App` needs the second one before
+you believe the first.
+
 Two version pins to be aware of: `staticcheck` and `govulncheck` are run via
 `go run tool@version`, and their newer releases require a newer Go toolchain
 than `go.mod` asks for, so the `lint` job installs `go-version: stable` rather
