@@ -1501,14 +1501,22 @@ func samePath(a, b string) bool {
 	return ra == rb
 }
 
-func (a *App) OpenSession(id string) (string, error) {
+// EnsureTmux revives a session's tmux (and its agent) without touching a
+// terminal: store lookup, agent-support repair, cwd-mismatch recreate, the
+// lazy tmux-name migration, and the LastOpened stamp. Returns the hooks
+// hint, which may be empty.
+//
+// It exists split out from OpenSession because a front end that attaches
+// tmux itself (the macOS app's Attach button) must be able to wake a parked
+// session without the core opening an iTerm tab.
+func (a *App) EnsureTmux(id string) (string, error) {
 	s, ok := a.Store.Get(id)
 	if !ok {
 		return "", fmt.Errorf("unknown session %q", id)
 	}
 	hooksHint := a.repairAgentSupport(s)
 	has, err := a.Tmux.HasSession(s.TmuxSession)
-	slog.Info("open session", "id", id, "tmux_session", s.TmuxSession, "worktree", s.WorktreePath, "tmux_has_session", has)
+	slog.Info("ensure tmux", "id", id, "tmux_session", s.TmuxSession, "worktree", s.WorktreePath, "tmux_has_session", has)
 	if err != nil {
 		slog.Error("HasSession error", "id", id, "err", err)
 		return "", err
@@ -1554,6 +1562,25 @@ func (a *App) OpenSession(id string) (string, error) {
 		}
 	}
 	a.Tmux.ConfigureTitleTracking(s.TmuxSession, a.titleName(s))
+	s.LastOpened = time.Now()
+	if err := a.Store.Put(s); err != nil {
+		slog.Error("store last-opened failed", "id", id, "err", err)
+	}
+	return hooksHint, nil
+}
+
+func (a *App) OpenSession(id string) (string, error) {
+	hooksHint, err := a.EnsureTmux(id)
+	if err != nil {
+		return "", err
+	}
+	// Re-read: EnsureTmux may have stamped LastOpened and migrated
+	// TmuxSession/AgentPort, and Store.Put writes the whole struct — so the
+	// TermTabID write below has to build on its version, not a stale one.
+	s, ok := a.Store.Get(id)
+	if !ok {
+		return "", fmt.Errorf("unknown session %q", id)
+	}
 	var tabID, hint string
 	if browser.Remote() {
 		// Over SSH, the desktop terminal (iTerm/kitty/etc.) lives on a
@@ -1573,9 +1600,8 @@ func (a *App) OpenSession(id string) (string, error) {
 		hint = joinHints(hooksHint, hint)
 	}
 	s.TermTabID = tabID
-	s.LastOpened = time.Now()
 	if err := a.Store.Put(s); err != nil {
-		slog.Error("store last-opened failed", "id", id, "err", err)
+		slog.Error("store term tab failed", "id", id, "err", err)
 	}
 	slog.Info("session opened", "id", id)
 	return hint, nil

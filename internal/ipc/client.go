@@ -197,6 +197,11 @@ func (c *Client) OpenSession(id string) (string, error) {
 	return r.Hint, err
 }
 
+func (c *Client) EnsureTmux(id string) (string, error) {
+	r, err := c.call("EnsureTmux", Args{ID: id})
+	return r.Hint, err
+}
+
 func (c *Client) DeleteSession(id string) (string, error) {
 	r, err := c.call("DeleteSession", Args{ID: id})
 	return r.Hint, err

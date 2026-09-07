@@ -1498,6 +1498,35 @@ func TestOpenSessionUnknown(t *testing.T) {
 	}
 }
 
+func TestEnsureTmuxRevivesWithoutTerminal(t *testing.T) {
+	a, _, tm, term := newTestApp(t, gitProject("/repo"))
+	tn := TmuxSessionName("demo:feat", "feat")
+	_ = a.Store.Put(session.Session{
+		ID: "demo:feat", Project: "demo", Name: "feat", TmuxSession: "moomux-feat",
+		WorktreePath: "/wt/feat", Agent: "claude",
+	})
+	tm.failOn["has-session -t =moomux-feat"] = true
+	tm.out["list-panes -t ="+tn+": -F #{pane_id}"] = "%0\n"
+
+	before := time.Now()
+	if _, err := a.EnsureTmux("demo:feat"); err != nil {
+		t.Fatal(err)
+	}
+	if !tm.called("new-session -d -s " + tn + " -c /wt/feat") {
+		t.Fatalf("expected tmux recreate; calls = %v", tm.calls)
+	}
+	if len(term.calls) != 0 {
+		t.Fatalf("EnsureTmux must not touch the terminal; calls = %v", term.calls)
+	}
+	sess, ok := a.Store.Get("demo:feat")
+	if !ok {
+		t.Fatal("session vanished")
+	}
+	if sess.LastOpened.Before(before) {
+		t.Fatalf("LastOpened = %v, want at/after %v", sess.LastOpened, before)
+	}
+}
+
 func TestTmuxAliveAll(t *testing.T) {
 	a, _, tm, _ := newTestApp(t, gitProject("/repo"))
 	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", TmuxSession: "moomux-a"})

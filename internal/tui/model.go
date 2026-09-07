@@ -35,6 +35,11 @@ type Backend interface {
 	// and renders what comes back rather than replaying six calls in order.
 	CreateSession(req session.CreateRequest) (s session.Session, hint string, err error)
 	OpenSession(id string) (hint string, err error)
+	// EnsureTmux revives a session's tmux and agent without opening a
+	// terminal — for front ends that attach tmux themselves (the macOS
+	// app). The TUI doesn't call it; it lives here because Backend is the
+	// core's whole API, and that's what the socket serves.
+	EnsureTmux(id string) (hint string, err error)
 	DeleteSession(id string) (hint string, err error)
 	// WorktreeStatus reports id's worktree as dirty/unpushed; ok is false if
 	// status can't be determined (unknown session, or not a git repo). The

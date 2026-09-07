@@ -176,8 +176,14 @@ as plain folder" dialog.
 **Read** — `Config`, `Sessions`, `AgentOptions`, `Themes`, `SuggestedProject`,
 `WorktreeStatus`, `ChangeSummary`.
 
-**Session lifecycle** — `CreateSession`, `OpenSession`, `DeleteSession`,
-`KillTmux` (park).
+**Session lifecycle** — `CreateSession`, `OpenSession`, `EnsureTmux`,
+`DeleteSession`, `KillTmux` (park).
+
+`OpenSession` = `EnsureTmux` + open a terminal window on it. `EnsureTmux`
+alone revives a parked session's tmux and agent and stamps `LastOpened`,
+returning the same `hint`, but never touches iTerm — that's what a front end
+that attaches tmux itself (the macOS app) calls, so only its explicit "open
+in terminal" action spawns a tab.
 
 **Session edits** — `SetSessionTags`, `SetSessionPrompt`, `SetSessionAgent`,
 `RenameSession`, `SetSessionArchived`, `MoveSession`.

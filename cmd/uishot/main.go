@@ -248,6 +248,7 @@ func (f *fakeBackend) CreateSession(req session.CreateRequest) (session.Session,
 	return session.Session{}, "", f.createErr
 }
 func (f *fakeBackend) OpenSession(id string) (string, error)   { return "", nil }
+func (f *fakeBackend) EnsureTmux(id string) (string, error)    { return "", nil }
 func (f *fakeBackend) DeleteSession(id string) (string, error) { return "", nil }
 func (f *fakeBackend) WorktreeStatus(id string) (dirty, unpushed, ok bool) {
 	st, present := f.worktreeStatus[id]
