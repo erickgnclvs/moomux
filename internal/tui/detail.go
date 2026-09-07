@@ -451,6 +451,13 @@ func prGlyph(info *prstatus.Info) string {
 	if info.CI == "FAILING" {
 		return "❌"
 	}
+	// Checks still running isn't a problem, so it gets its own neutral glyph
+	// rather than the warn colours — an amber icon on every PR for the
+	// minutes CI takes would cry wolf. CI == "NONE" (a repo with no checks
+	// configured) is not pending: it falls through to the plain open glyph.
+	if info.CI == "PENDING" {
+		return "⏳"
+	}
 	return "🔀"
 }
 
