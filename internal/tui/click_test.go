@@ -183,6 +183,7 @@ func (f *fakeBackend) OpenSession(id string) (string, error) {
 	f.openCalls = append(f.openCalls, id)
 	return f.openHint, f.openErr
 }
+func (f *fakeBackend) EnsureTmux(id string) (string, error) { return "", nil }
 func (f *fakeBackend) DeleteSession(id string) (string, error) {
 	f.deleteCalls = append(f.deleteCalls, id)
 	if f.deleteErr == nil {

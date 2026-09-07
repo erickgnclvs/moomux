@@ -250,6 +250,9 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 	case "OpenSession":
 		hint, err := b.OpenSession(a.ID)
 		return Result{Hint: hint}, err
+	case "EnsureTmux":
+		hint, err := b.EnsureTmux(a.ID)
+		return Result{Hint: hint}, err
 	case "DeleteSession":
 		hint, err := b.DeleteSession(a.ID)
 		return Result{Hint: hint}, err

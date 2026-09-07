@@ -65,6 +65,7 @@ func (f *fakeBackend) CreateSession(req session.CreateRequest) (session.Session,
 	return session.Session{ID: "moomux:new", Name: req.Name}, "run: tmux attach -t x", nil
 }
 func (f *fakeBackend) OpenSession(id string) (string, error) { return "opened " + id, nil }
+func (f *fakeBackend) EnsureTmux(id string) (string, error)  { return "ensured " + id, nil }
 func (f *fakeBackend) DeleteSession(id string) (string, error) {
 	return "", errors.New("worktree dirty")
 }
