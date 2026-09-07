@@ -206,6 +206,31 @@ func TestParkedGitStatusSkipsRoutineRefetch(t *testing.T) {
 	}
 }
 
+// TestParkedPRStatusKeepsRefetching is the counterpart to the git rule
+// above: a parked session is the one whose PR status matters most, since it
+// merges on GitHub with nothing local to notice.
+func TestParkedPRStatusKeepsRefetching(t *testing.T) {
+	core := &fakeCore{sessions: []session.Session{sess("demo:a", "/wt/a")}}
+	core.sessions[0].PR = "https://github.com/o/r/pull/1"
+	w := newWatcher(core)
+
+	s := core.sessions[0]
+	if w.stateOf(s) != watcher.Parked {
+		t.Fatalf("fixture must be parked, got %v", w.stateOf(s))
+	}
+	if !w.prDue(s) {
+		t.Fatal("a PR with nothing cached must be fetched")
+	}
+	w.pr["demo:a"] = prEntry{ok: true, checkedAt: time.Now()}
+	if w.prDue(s) {
+		t.Error("a freshly checked PR must not be re-fetched")
+	}
+	w.pr["demo:a"] = prEntry{ok: true, checkedAt: time.Now().Add(-2 * prStaleAfter)}
+	if !w.prDue(s) {
+		t.Error("a parked session's stale PR status must still come due")
+	}
+}
+
 // TestGitStatusTrackedRegardlessOfState is the other half: "never checked"
 // is maximally stale whatever the agent is doing.
 func TestGitStatusTrackedRegardlessOfState(t *testing.T) {

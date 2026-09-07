@@ -429,3 +429,56 @@ func humanizeAge(d time.Duration) string {
 		return fmt.Sprintf("%d days ago", int(d.Hours()/24))
 	}
 }
+
+// prGlyph is the list row's PR icon. The merge/CI status already rides the
+// view stream (only the detail panel used to show it), and "merged" or
+// "blocked" is exactly what you want to spot without opening a session.
+// nil means no status yet, or the lookup failed — same icon as a plain
+// open PR, since "unknown" isn't worth its own glyph.
+func prGlyph(info *prstatus.Info) string {
+	if info == nil {
+		return "🔀"
+	}
+	switch info.State {
+	case "MERGED":
+		return "✅"
+	case "CLOSED":
+		return "🚫"
+	}
+	if info.Mergeable == "CONFLICTING" {
+		return "⚠️"
+	}
+	if info.CI == "FAILING" {
+		return "❌"
+	}
+	return "🔀"
+}
+
+// newlyMergedFlash reports the flash text for PRs that flipped to MERGED
+// between two snapshots, or "" when none did.
+//
+// The transition is spotted by diffing the stream rather than served by the
+// core: "merged" itself is derived state the core owns (View.PR), but
+// *"merged since you last looked"* is per-client by nature — two front ends
+// have seen different amounts. Comparing against the views being replaced
+// means each transition flashes exactly once, and a session that was already
+// merged the first time this client saw it (prev has no entry) says nothing.
+func newlyMergedFlash(prev, next map[string]sessionview.View, sessions []session.Session) string {
+	var names []string
+	for _, s := range sessions {
+		old, had := prev[s.ID]
+		if !had || old.PR == nil || old.PR.State == "MERGED" {
+			continue
+		}
+		if v, ok := next[s.ID]; ok && v.PR != nil && v.PR.State == "MERGED" {
+			names = append(names, s.Name)
+		}
+	}
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return "PR merged: " + names[0]
+	}
+	return fmt.Sprintf("%d PRs merged: %s", len(names), strings.Join(names, ", "))
+}

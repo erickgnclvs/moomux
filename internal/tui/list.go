@@ -208,7 +208,7 @@ func renderRow(s session.Session, v sessionview.View, width int, selected bool, 
 		candidates = append(candidates, iconCandidate{iconTicketStyle, "🎫", s.Ticket})
 	}
 	if s.PR != "" {
-		candidates = append(candidates, iconCandidate{iconPRStyle, "🔀", s.PR})
+		candidates = append(candidates, iconCandidate{iconPRStyle, prGlyph(v.PR), s.PR})
 	}
 	if v.GitOK && v.Dirty {
 		candidates = append(candidates, iconCandidate{gitWarnStyle, "±", ""})

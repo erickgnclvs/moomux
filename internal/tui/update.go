@@ -58,7 +58,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// dot, drop every git badge and PR status, and reorder the list, as
 		// if the core had told us all that. Keep rendering the last real
 		// answer instead; the flash is what says it's stale.
+		mergedNote := ""
 		if msg.Snap.Views != nil {
+			mergedNote = newlyMergedFlash(m.views, msg.Snap.Views, msg.Snap.Sessions)
 			m.views = msg.Snap.Views
 		}
 		if msg.Snap.Sessions != nil {
@@ -75,6 +77,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// which point a session that parked (and so moved out of the
 		// live-first group) appears to jump position out of nowhere.
 		m.refreshSessions()
+		if mergedNote != "" {
+			m.setFlash("info", mergedNote)
+		}
 		if msg.Snap.Err != "" {
 			// Surface once rather than re-flashing on every subsequent tick
 			// while the same failure persists.

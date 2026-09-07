@@ -4,7 +4,7 @@
   \(__)                                 
 ┌──────────────────────────────────────┐
 │  feature-auth                  🎫 ⬤  │
-│  bugfix-timeout                ⚠️ ⬤  │
+│  bugfix-timeout                ✅ ⬤  │
 │                                      │
 │                                      │
 │                                      │
@@ -27,11 +27,11 @@
 │ SESSIONS¹                                ││                                                      │
 │                                          ││                                                      │
 │  feature-auth                      🎫 ⬤  ││ project:   demo                                      │
-│  bugfix-timeout                    ⚠️ ⬤  ││ status:    ⬤  in the barn                            │
+│  bugfix-timeout                    ✅ ⬤  ││ status:    ⬤  in the barn                            │
 │                                          ││ name:      bugfix-timeout                            │
 │                                          ││ agent:     codex                                     │
 │                                          ││ pr:        …tps://github.com/example/repo/pull/42    │
-│                                          ││ pr status: open, conflicts, CI failing               │
+│                                          ││ pr status: merged                                    │
 │                                          ││ tmux:      moomux-bugfix-timeout                     │
 │                                          ││ worktree:  /tmp/demo/bugfix-timeout                  │
 │                                          ││ created:   just now                                  │
