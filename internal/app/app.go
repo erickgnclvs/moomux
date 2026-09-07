@@ -2015,14 +2015,36 @@ func (a *App) ChangeSummary(id string) (filesChanged, unpushedCommits int, ok bo
 // authenticated, or the PR can't be resolved).
 func (a *App) PRStatus(id string) (prstatus.Info, bool) {
 	s, exists := a.Store.Get(id)
-	if !exists || s.PR == "" {
+	if !exists || a.PR == nil {
 		return prstatus.Info{}, false
 	}
-	info, err := a.PR.Fetch(s.PR)
+	// An untagged session resolves its PR from the branch in its own
+	// worktree (dir only matters for that form), so `moomux tag -pr` is an
+	// override rather than the only way one ever gets attached: a PR opened
+	// from another machine, or from the GitHub web UI, is picked up just the
+	// same. A ticket link in the PR's title or body is picked up alongside
+	// it — including for a session that already had its PR tagged but no
+	// ticket, since the lookup returns both either way.
+	dir := ""
+	if s.PR == "" {
+		dir = s.WorktreePath
+	}
+	pr, err := a.PR.Fetch(dir, s.PR)
 	if err != nil {
 		return prstatus.Info{}, false
 	}
-	return info, true
+	// Only ever fill a blank field: a value someone set by hand (or a
+	// ticket deliberately re-pointed) outranks anything inferred here.
+	ticket := s.Ticket
+	if ticket == "" {
+		ticket = pr.Ticket
+	}
+	if s.PR != pr.URL || s.Ticket != ticket {
+		if _, err := a.SetSessionTags(s.ID, ticket, pr.URL); err != nil {
+			return prstatus.Info{}, false
+		}
+	}
+	return pr.Info, true
 }
 
 // DeleteSession removes the session's worktree, branch, and store entry. The
