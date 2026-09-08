@@ -223,7 +223,7 @@ func renderRow(s session.Session, v sessionview.View, width int, selected bool, 
 		for _, c := range candidates {
 			iconsWidth += lipgloss.Width(c.glyph) + 1
 		}
-		if width-1-iconsWidth-dotWidth >= minNameWidth {
+		if width-2-iconsWidth-dotWidth >= minNameWidth {
 			break
 		}
 		candidates = candidates[:len(candidates)-1]
@@ -241,7 +241,7 @@ func renderRow(s session.Session, v sessionview.View, width int, selected bool, 
 	for _, c := range candidates {
 		addIcon(c.style, c.glyph, c.url)
 	}
-	nameWidth := width - 1 - lipgloss.Width(icons) - dotWidth
+	nameWidth := width - 2 - lipgloss.Width(icons) - dotWidth
 	if nameWidth < minNameWidth {
 		nameWidth = minNameWidth
 	}
@@ -289,12 +289,12 @@ func renderRow(s session.Session, v sessionview.View, width int, selected bool, 
 		sepStyle = sepStyle.Background(colSelBg)
 	}
 	name := prefix + nameStyle.Render(fmt.Sprintf("%-*s", nameWidth, truncate(s.Name, nameWidth)))
-	offset := dotWidth + 1 + lipgloss.Width(prefix) + nameWidth
+	offset := dotWidth + 2 + lipgloss.Width(prefix) + nameWidth
 	for i := range hits {
 		hits[i].col0 += offset
 		hits[i].col1 += offset
 	}
-	return dot + sepStyle.Render(" ") + name + icons, hits
+	return dot + sepStyle.Render("  ") + name + icons, hits
 }
 
 // projectEmojiPalette is the fallback set for projects that haven't chosen

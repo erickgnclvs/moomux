@@ -3,7 +3,7 @@
  _/(--)  mootering off for now          
   \(__)                                 
 ┌──────────────────────────────────────┐
-│  ⬤ compact-detail-section     🎫 🔀  │
+│  ⬤  compact-detail-section    🎫 🔀  │
 │                                      │
 │                                      │
 │                                      │
@@ -26,7 +26,7 @@
 ┌────────────────────────────────────────────────┐┌────────────────────────────────────────────────┐
 │ 🦊 dev_setup                                   ││ 🐄 moomux                                      │
 │                                                ││                                                │
-│  ⬤ show-ports                                  ││  ⬤ compact-detail-section               🎫 🔀  │
+│  ⬤  show-ports                                 ││  ⬤  compact-detail-section              🎫 🔀  │
 │                                                ││                                                │
 │                                                ││                                                │
 │                                                ││                                                │
