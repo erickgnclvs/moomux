@@ -191,7 +191,10 @@ func (s *Store) Get(id string) (Session, bool) {
 // All returns every session ordered by manual Order ascending (0 = unset,
 // so unordered sessions sort first — matching where a freshly created
 // session should land), falling back to CreatedAt descending among
-// sessions with equal Order.
+// sessions with equal Order, and finally to ID so the order is total: the
+// input is a map, so any pair that ties on every other field would come
+// back in a different order on every call, and clients (the Mac app's
+// sidebar) re-diff their whole list when it changes.
 func (s *Store) All() []Session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -203,21 +206,28 @@ func (s *Store) All() []Session {
 		if out[i].Order != out[j].Order {
 			return out[i].Order < out[j].Order
 		}
-		return out[i].CreatedAt.After(out[j].CreatedAt)
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
 	})
 	return out
 }
 
 // SortByRecent reorders sessions most-recently-opened first, falling back to
 // CreatedAt descending for sessions that share a LastOpened (including the
-// zero value shared by every never-opened session). Used in place of the
-// manual Order sort when Config.SortRecentFirst is on.
+// zero value shared by every never-opened session), then ID so the order is
+// total. Used in place of the manual Order sort when Config.SortRecentFirst
+// is on.
 func SortByRecent(sessions []Session) {
 	sort.SliceStable(sessions, func(i, j int) bool {
 		if !sessions[i].LastOpened.Equal(sessions[j].LastOpened) {
 			return sessions[i].LastOpened.After(sessions[j].LastOpened)
 		}
-		return sessions[i].CreatedAt.After(sessions[j].CreatedAt)
+		if !sessions[i].CreatedAt.Equal(sessions[j].CreatedAt) {
+			return sessions[i].CreatedAt.After(sessions[j].CreatedAt)
+		}
+		return sessions[i].ID < sessions[j].ID
 	})
 }
 
