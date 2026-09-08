@@ -3,8 +3,8 @@
  _/(--)  out to pasture                 
   \(__)                                 
 ┌──────────────────────────────────────┐
-│  ⬤ feature-auth               🎫 🔀  │
-│  ⬤ bugfix-timeout                🔀  │
+│  ⬤  feature-auth              🎫 🔀  │
+│  ⬤  bugfix-timeout               🔀  │
 │                                      │
 │                                      │
 │                                      │
@@ -26,8 +26,8 @@
 ┌──────────────────────────────────────────┐┌──────────────────────────────────────────────────────┐
 │ SESSIONS¹                                ││                                                      │
 │                                          ││                                                      │
-│  ⬤ feature-auth                   🎫 🔀  ││ status:    ⬤  in the barn                            │
-│  ⬤ bugfix-timeout                    🔀  ││ name:      feature-auth                              │
+│  ⬤  feature-auth                  🎫 🔀  ││ status:    ⬤  in the barn                            │
+│  ⬤  bugfix-timeout                   🔀  ││ name:      feature-auth                              │
 │                                          ││ pr:        #5478                                     │
 │                                          ││ pr status: open, CI passing                          │
 │                                          ││ tmux:      moomux-feature-auth                       │

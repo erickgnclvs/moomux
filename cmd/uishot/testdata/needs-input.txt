@@ -3,8 +3,8 @@
  _/(!!)  can't budge without a moo-ti…  
   \(__)                                 
 ┌──────────────────────────────────────┐
-│  ⬤ feature-auth                  🎫  │
-│  ⬤ bugfix-timeout                🔀  │
+│  ⬤  feature-auth                 🎫  │
+│  ⬤  bugfix-timeout               🔀  │
 │                                      │
 │                                      │
 │                                      │
@@ -26,8 +26,8 @@
 ┌──────────────────────────────────────────┐┌──────────────────────────────────────────────────────┐
 │ SESSIONS¹                                ││                                                      │
 │                                          ││                                                      │
-│  ⬤ feature-auth                      🎫  ││ project:   demo                                      │
-│  ⬤ bugfix-timeout                    🔀  ││ status:    ⬤  mooing for you                         │
+│  ⬤  feature-auth                     🎫  ││ project:   demo                                      │
+│  ⬤  bugfix-timeout                   🔀  ││ status:    ⬤  mooing for you                         │
 │                                          ││ name:      feature-auth                              │
 │                                          ││ agent:     claude                                    │
 │                                          ││ ticket:    https://tracker.example/TICK-123          │
