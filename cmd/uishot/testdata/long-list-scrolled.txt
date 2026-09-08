@@ -4,17 +4,17 @@
   \(__)                                 
 ┌──────────────────────────────────────┐
 │                  ⌃                   │
-│  session-07                       ⬤  │
-│  session-08                       ⬤  │
-│  session-09                       ⬤  │
-│  session-10                       ⬤  │
-│  session-11                       ⬤  │
-│  session-12                       ⬤  │
-│  session-13                       ⬤  │
-│  session-14                       ⬤  │
-│  session-15                       ⬤  │
-│  session-16                       ⬤  │
-│  session-17                       ⬤  │
+│  ⬤  session-07                       │
+│  ⬤  session-08                       │
+│  ⬤  session-09                       │
+│  ⬤  session-10                       │
+│  ⬤  session-11                       │
+│  ⬤  session-12                       │
+│  ⬤  session-13                       │
+│  ⬤  session-14                       │
+│  ⬤  session-15                       │
+│  ⬤  session-16                       │
+│  ⬤  session-17                       │
 │                  ⌄                   │
 └──────────────────────────────────────┘
                                         
@@ -27,27 +27,27 @@
 │ SESSIONS                                 ││                                                      │
 │                                          ││                                                      │
 │                    ⌃                     ││ project:   demo                                      │
-│  session-02                           ⬤  ││ status:    ⬤  in the barn                            │
-│  session-03                           ⬤  ││ name:      session-12                                │
-│  session-04                           ⬤  ││ agent:     claude                                    │
-│  session-05                           ⬤  ││ tmux:      moomux-session-12                         │
-│  session-06                           ⬤  ││ worktree:  /tmp/demo/session-12                      │
-│  session-07                           ⬤  ││ created:   just now                                  │
-│  session-08                           ⬤  ││                                                      │
-│  session-09                           ⬤  ││                                                      │
-│  session-10                           ⬤  ││                                                      │
-│  session-11                           ⬤  ││                                                      │
-│  session-12                           ⬤  ││                                                      │
-│  session-13                           ⬤  ││                                                      │
-│  session-14                           ⬤  ││                                                      │
-│  session-15                           ⬤  ││                                                      │
-│  session-16                           ⬤  ││  ________________________________________            │
-│  session-17                           ⬤  ││ < out to pasture                         >           │
-│  session-18                           ⬤  ││  ----------------------------------------            │
-│  session-19                           ⬤  ││         \   ^__^                                     │
-│  session-20                           ⬤  ││          \  (--)\_______                             │
-│  session-21                           ⬤  ││             (__)\       )\/\                         │
-│  session-22                           ⬤  ││                 ||----w |                            │
+│  ⬤  session-02                           ││ status:    ⬤  in the barn                            │
+│  ⬤  session-03                           ││ name:      session-12                                │
+│  ⬤  session-04                           ││ agent:     claude                                    │
+│  ⬤  session-05                           ││ tmux:      moomux-session-12                         │
+│  ⬤  session-06                           ││ worktree:  /tmp/demo/session-12                      │
+│  ⬤  session-07                           ││ created:   just now                                  │
+│  ⬤  session-08                           ││                                                      │
+│  ⬤  session-09                           ││                                                      │
+│  ⬤  session-10                           ││                                                      │
+│  ⬤  session-11                           ││                                                      │
+│  ⬤  session-12                           ││                                                      │
+│  ⬤  session-13                           ││                                                      │
+│  ⬤  session-14                           ││                                                      │
+│  ⬤  session-15                           ││                                                      │
+│  ⬤  session-16                           ││  ________________________________________            │
+│  ⬤  session-17                           ││ < out to pasture                         >           │
+│  ⬤  session-18                           ││  ----------------------------------------            │
+│  ⬤  session-19                           ││         \   ^__^                                     │
+│  ⬤  session-20                           ││          \  (--)\_______                             │
+│  ⬤  session-21                           ││             (__)\       )\/\                         │
+│  ⬤  session-22                           ││                 ||----w |                            │
 │                    ⌄                     ││                 ||     ||                            │
 └──────────────────────────────────────────┘└──────────────────────────────────────────────────────┘
                                                                                                     

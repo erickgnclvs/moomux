@@ -22,6 +22,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/ipc"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/terminal"
 	"github.com/erickgnclvs/moomux/internal/tmux"
 	"github.com/erickgnclvs/moomux/internal/tmuxconf"
@@ -372,32 +373,35 @@ func runSpawn(args []string) error {
 		return err
 	}
 
-	s, hint, err := a.CreateSession(*project, *name, *agent, *branch, *ticket, false, dangerousOverride, "", *model, *thinking)
+	// One call, the same one the TUI makes: composing the first prompt and
+	// deciding what to do with the thinking level are the core's, so spawn
+	// and the TUI can't disagree about them. They used to — this path
+	// applied the thinking prefix by hand and never stored the prompt on
+	// the session at all, so a spawned session showed no prompt in the list.
+	s, report, err := a.CreateSessionReport(session.CreateRequest{
+		Project: *project, Name: *name, Agent: *agent, Branch: *branch, Ticket: *ticket,
+		Model: *model, Thinking: *thinking, Prompt: *prompt, AutoSubmit: *prompt != "",
+		Dangerous: dangerousOverride,
+	})
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}
-	if hint != "" {
-		fmt.Println(hint)
+	// stderr, not stdout: stdout's contract here is the tmux session name a
+	// caller reads, and a hint is a warning about something that degraded
+	// (a PR tag that didn't attach, a terminal that didn't open) rather than
+	// part of that output.
+	if report.Hint != "" {
+		fmt.Fprintln(os.Stderr, "moomux:", report.Hint)
 	}
 	fmt.Println(s.TmuxSession)
-
-	if *prompt != "" {
-		firstPrompt := *prompt
-		// codex's thinking level is a real -c model_reasoning_effort flag,
-		// already applied to the launch command above; claude/opencode have
-		// no such flag, so lean on the same magic words a user would type
-		// into the prompt by hand.
-		if *agent != "codex" && *thinking != "" && *thinking != "default" {
-			firstPrompt = *thinking + ": " + firstPrompt
-		}
-		// StartFirstPrompt waits for the agent to actually be ready for
-		// input (rather than a fixed delay) and errors out — instead of
-		// silently returning success — if the pane looks stuck on something
-		// else, e.g. an interactive SSH passphrase prompt from a
-		// worktree-create userscript or the agent's own launch command.
-		if err := a.StartFirstPrompt(s.TmuxSession, firstPrompt, true); err != nil {
-			return fmt.Errorf("send prompt: %w (session %s was created but may need manual attention: tmux attach -t %s)", err, s.TmuxSession, s.TmuxSession)
-		}
+	// A prompt that never landed is a failure for this command even though
+	// the session itself is fine: spawn is fire-and-forget, so the exit
+	// status is the only place a caller finds out its agent is sitting there
+	// with no task. The session name is printed first, so a caller that
+	// wants to attach and fix it by hand still has it.
+	if report.PromptErr != nil {
+		return fmt.Errorf("send prompt: %w (session %s was created but needs attention: tmux attach -t %s)",
+			report.PromptErr, s.TmuxSession, s.TmuxSession)
 	}
 	return nil
 }
@@ -621,19 +625,20 @@ func run() error {
 	}
 
 	home, _ := os.UserHomeDir()
-	return runProgram(cfg, a, a.AgentOptions(), buildWatcher(home))
+	return runProgram(cfg, a, a.AgentOptions(), buildSource(a, home))
 }
 
-// runProgram drives the TUI against any backend + watcher, so the local
+// runProgram drives the TUI against any backend + view source, so the local
 // (*app.App) path and the socket-backed (*ipc.Client) path share one setup.
-func runProgram(cfg *config.Config, b tui.Backend, agentOptions []config.AgentOption, w watcher.Watcher) error {
+func runProgram(cfg *config.Config, b tui.Backend, agentOptions []config.AgentOption, src sessionview.Source) error {
 	ctx, cancel := context.WithCancel(context.Background())
-	statusCh := make(chan watcher.Snapshot, 4)
-	go w.Run(ctx, statusCh)
+	statusCh := make(chan sessionview.Snapshot, 4)
+	go src.Run(ctx, statusCh)
 
 	tui.ApplySettings(cfg)
 	m := tui.New(cfg, b, agentOptions, statusCh, cancel)
 	m.Version = version
+	m.Nudge = src.Nudge
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		cancel()
@@ -670,7 +675,7 @@ func runServe(args []string) error {
 	}
 	defer ln.Close()
 	fmt.Fprintln(os.Stderr, "moomux: serving on", *sock)
-	return (&ipc.Server{Backend: a, Config: a.ConfigSnapshot, AgentOptions: a.AgentOptions, Watcher: buildWatcher(home)}).Serve(ln)
+	return (&ipc.Server{Backend: a, Config: a.ConfigSnapshot, AgentOptions: a.AgentOptions, Source: buildSource(a, home)}).Serve(ln)
 }
 
 // runRemote implements `moomux ui -socket`: the same TUI, driven entirely
@@ -693,6 +698,14 @@ func runRemote(args []string) error {
 		return fmt.Errorf("connect %s: %w (is `moomux serve` running?)", *sock, err)
 	}
 	return runProgram(cfg, c, agentOptions, c)
+}
+
+// buildSource wraps the raw agent watchers in the layer that turns their
+// output into what a front end renders — effective state, labels, quips,
+// git/PR status, recovered prompts — so the local TUI and every socket
+// client read the identical thing rather than each deriving its own.
+func buildSource(a *app.App, home string) *sessionview.Watcher {
+	return &sessionview.Watcher{Core: a, Raw: buildWatcher(home), Home: home}
 }
 
 func buildWatcher(home string) watcher.Watcher {

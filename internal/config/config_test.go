@@ -277,3 +277,19 @@ func TestProjectAgentRoundtrip(t *testing.T) {
 		t.Fatalf("Agent = %q", got.Projects["codex_proj"].Agent)
 	}
 }
+
+func TestCloneDeepCopiesProjectFolders(t *testing.T) {
+	cfg := Config{Projects: map[string]Project{
+		"demo": {Repo: "/repo", Folders: map[string]FolderMeta{"auth": {}}},
+	}}
+
+	clone := cfg.Clone()
+	clone.Projects["demo"].Folders["auth"] = FolderMeta{Collapsed: true}
+
+	// A shallow Clone leaves every copy sharing one folder map, so App's
+	// live config and each front end's snapshot would write over each other
+	// (and race, since the TUI reads its own copy unlocked).
+	if cfg.Projects["demo"].Folders["auth"].Collapsed {
+		t.Fatal("writing to the clone's folder map mutated the original — Folders is aliased, not cloned")
+	}
+}

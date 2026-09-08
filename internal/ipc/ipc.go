@@ -5,19 +5,17 @@
 // orchestration core without linking any Go.
 //
 // Wire format is one JSON request line in, one JSON response line out, then
-// the connection closes. The exception is "Watch", which streams snapshot
-// lines until the client hangs up.
+// the connection closes. The exception is "Watch", which streams
+// sessionview.Snapshot lines until the client hangs up, and accepts nudge
+// lines back on the same connection.
 package ipc
 
 import (
 	"errors"
-	"time"
 
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/gitwt"
-	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
-	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
 // DefaultSocket is where `moomux serve` listens unless told otherwise.
@@ -67,44 +65,36 @@ type Args struct {
 	Name string   `json:"name,omitempty"`
 	// NewName is RenameFolder's target name; Name carries its oldName, same
 	// as every other folder method's single Name/folder-name parameter.
-	NewName     string        `json:"new_name,omitempty"`
-	Project     string        `json:"project,omitempty"`
-	Agent       string        `json:"agent,omitempty"`
-	Branch      string        `json:"branch,omitempty"`
-	BaseBranch  string        `json:"base_branch,omitempty"`
-	Ticket      string        `json:"ticket,omitempty"`
-	PR          string        `json:"pr,omitempty"`
-	Prompt      string        `json:"prompt,omitempty"`
-	Model       string        `json:"model,omitempty"`
-	Thinking    string        `json:"thinking,omitempty"`
-	Theme       string        `json:"theme,omitempty"`
-	Appearance  string        `json:"appearance,omitempty"`
-	TmuxSession string        `json:"tmux_session,omitempty"`
-	Delta       int           `json:"delta,omitempty"`
-	State       watcher.State `json:"state,omitempty"`
-	// Dangerous is shared by CreateSession and SetSessionAgent. It's a
-	// pointer so CreateSession's caller can leave it unset (nil, simply
-	// omitted on the wire) to mean "use the project's own default" — a plain
-	// bool can't express that, since an explicit false and an absent field
-	// would be indistinguishable. SetSessionAgent's dangerous is always an
-	// explicit choice, so its server-side handler treats a nil Dangerous
-	// (which it never sends) the same as false.
-	Dangerous    *bool          `json:"dangerous,omitempty"`
-	OpenTerminal bool           `json:"open_terminal,omitempty"`
-	AutoSubmit   bool           `json:"auto_submit,omitempty"`
-	On           bool           `json:"on,omitempty"` // archived / recentFirst / compact / autoTmux
-	Proj         config.Project `json:"proj,omitempty"`
+	NewName    string `json:"new_name,omitempty"`
+	Project    string `json:"project,omitempty"`
+	Agent      string `json:"agent,omitempty"`
+	Ticket     string `json:"ticket,omitempty"`
+	PR         string `json:"pr,omitempty"`
+	Prompt     string `json:"prompt,omitempty"`
+	Theme      string `json:"theme,omitempty"`
+	Appearance string `json:"appearance,omitempty"`
+	Delta      int    `json:"delta,omitempty"`
+	// Req is CreateSession's whole request. One field rather than a dozen
+	// flat ones, because creating a session is a transaction the core runs
+	// end to end — see session.CreateRequest.
+	Req *session.CreateRequest `json:"req,omitempty"`
+	// Dangerous is SetSessionAgent's, always an explicit choice — the
+	// tri-state "use the project's default" lives on Req.Dangerous instead.
+	// Kept a pointer so a nil (which SetSessionAgent never sends) reads as
+	// false rather than as something meaningful.
+	Dangerous *bool          `json:"dangerous,omitempty"`
+	On        bool           `json:"on,omitempty"` // archived / recentFirst / compact / autoTmux
+	Proj      config.Project `json:"proj"`
 }
 
 // Result is the matching union of every return shape. Same trade as Args.
 type Result struct {
 	Session  *session.Session     `json:"session,omitempty"`
 	Sessions []session.Session    `json:"sessions,omitempty"`
-	Strings  []string             `json:"strings,omitempty"`
-	Alive    map[string]bool      `json:"alive,omitempty"`
-	PR       *prstatus.Info       `json:"pr,omitempty"`
 	Cfg      *config.Config       `json:"cfg,omitempty"`
 	Agents   []config.AgentOption `json:"agents,omitempty"`
+	Themes   []config.Theme       `json:"themes,omitempty"`
+	Name     string               `json:"name,omitempty"`
 	Hint     string               `json:"hint,omitempty"`
 	Dirty    bool                 `json:"dirty,omitempty"`
 	Unpushed bool                 `json:"unpushed,omitempty"`
@@ -113,12 +103,13 @@ type Result struct {
 	Commits  int                  `json:"commits,omitempty"`
 }
 
-// snapshotWire carries a watcher.Snapshot over JSON; Snapshot.Err is an
-// error value and doesn't survive a round trip on its own.
-type snapshotWire struct {
-	States   map[string]watcher.State `json:"states"`
-	PollTime time.Time                `json:"poll_time"`
-	Err      string                   `json:"err,omitempty"`
+// nudgeRequest is the only thing a client sends on a live "Watch"
+// connection after the initial request: "give me a snapshot now". Snapshots
+// themselves go the other way as sessionview.Snapshot, encoded as-is — the
+// core has already done the deriving, so there's nothing left for a wire
+// type to translate.
+type nudgeRequest struct {
+	Nudge bool `json:"nudge"`
 }
 
 // wireErr carries the server's error message while still unwrapping to the

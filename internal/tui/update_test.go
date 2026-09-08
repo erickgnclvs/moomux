@@ -3,7 +3,6 @@ package tui
 import (
 	"errors"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -12,8 +11,8 @@ import (
 
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/gitwt"
-	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
@@ -81,7 +80,7 @@ func TestNewSessionFormFlow(t *testing.T) {
 		t.Fatalf("createCalls = %v", be.createCalls)
 	}
 	got := be.createCalls[0]
-	if got.project != "demo" || got.name != "myfeat" || got.agent != "claude" || got.ticket != "https://t/1" {
+	if got.Project != "demo" || got.Name != "myfeat" || got.Agent != "claude" || got.Ticket != "https://t/1" {
 		t.Fatalf("createCall = %+v", got)
 	}
 	if m.mode != ModeList || !strings.Contains(m.flash, "created myfeat") {
@@ -105,14 +104,11 @@ func TestNewSessionFormSendsFirstPrompt(t *testing.T) {
 	if len(be.createCalls) != 1 {
 		t.Fatalf("createCalls = %v", be.createCalls)
 	}
-	if len(be.firstPromptCalls) != 1 || be.firstPromptCalls[0].prompt != "do the thing" {
-		t.Fatalf("firstPromptCalls = %v", be.firstPromptCalls)
+	if got := be.createCalls[0]; got.Prompt != "do the thing" {
+		t.Fatalf("request carried prompt %q", got.Prompt)
 	}
-	if be.firstPromptCalls[0].autoSubmit {
-		t.Fatalf("auto-submit should default to off: %v", be.firstPromptCalls)
-	}
-	if len(be.sessions) != 1 || be.sessions[0].Prompt != "do the thing" {
-		t.Fatalf("session prompt not persisted: %v", be.sessions)
+	if be.createCalls[0].AutoSubmit {
+		t.Fatalf("auto-submit should default to off: %+v", be.createCalls[0])
 	}
 }
 
@@ -143,8 +139,8 @@ func TestNewSessionFormAutoSubmitToggle(t *testing.T) {
 	}
 
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if len(be.firstPromptCalls) != 1 || !be.firstPromptCalls[0].autoSubmit {
-		t.Fatalf("firstPromptCalls = %v, want autoSubmit=true", be.firstPromptCalls)
+	if len(be.createCalls) != 1 || !be.createCalls[0].AutoSubmit {
+		t.Fatalf("createCalls = %+v, want AutoSubmit=true", be.createCalls)
 	}
 	if len(be.setAutoSubmitDefaultCalls) != 1 || !be.setAutoSubmitDefaultCalls[0] {
 		t.Fatalf("setAutoSubmitDefaultCalls = %v, want [true] since the toggle changed from the form's default", be.setAutoSubmitDefaultCalls)
@@ -177,8 +173,8 @@ func TestNewSessionFormAutoSubmitDefaultsFromConfigAndOnlyPersistsOnChange(t *te
 	press(m, tea.KeyTab) // prompt -> ticket, so Enter submits rather than adding a newline
 
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if len(be.firstPromptCalls) != 1 || !be.firstPromptCalls[0].autoSubmit {
-		t.Fatalf("firstPromptCalls = %v, want autoSubmit=true", be.firstPromptCalls)
+	if len(be.createCalls) != 1 || !be.createCalls[0].AutoSubmit {
+		t.Fatalf("createCalls = %+v, want AutoSubmit=true", be.createCalls)
 	}
 	if len(be.setAutoSubmitDefaultCalls) != 0 {
 		t.Fatalf("setAutoSubmitDefaultCalls = %v, want none since the toggle matched the existing default", be.setAutoSubmitDefaultCalls)
@@ -248,57 +244,29 @@ func TestNewSessionFormPromptSupportsMultilineNavigation(t *testing.T) {
 	}
 }
 
-// TestNewSessionFormSurvivesPostCreatePRTagFailure guards against a
-// SetSessionTags failure (PR field) discarding the fact that CreateSession
-// already succeeded — the worktree and tmux session exist regardless, so
-// the UI must still show the new session (via SessionCreatedMsg), just with
-// a hint about the tag failure, not report the whole creation as failed.
-func TestNewSessionFormSurvivesPostCreatePRTagFailure(t *testing.T) {
-	be := &fakeBackend{tagErr: errors.New("tag boom")}
+// TestNewSessionFormShowsHintWithoutFailingTheCreate guards the degraded-
+// but-succeeded path: once the worktree and tmux session exist the session
+// is real, so a follow-up step that didn't land (the PR tag, the first
+// prompt) comes back as a hint on an otherwise successful create. The UI
+// must show the new session and mention the hint, not report a failure.
+// Which steps can degrade, and what they say, is the core's — see
+// TestCreateSessionDegradesToHint in internal/app.
+func TestNewSessionFormShowsHintWithoutFailingTheCreate(t *testing.T) {
+	be := &fakeBackend{createHint: "couldn't set PR tag: tag boom"}
 	m := newTestModel(be)
 
 	m.Update(keyRune("n"))
 	typeText(m, "myfeat")
-	for i := 0; i < 5; i++ {
-		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt -> ticket -> PR
-	}
-	typeText(m, "https://github.com/x/y/pull/2")
 
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if len(be.createCalls) != 1 {
-		t.Fatalf("createCalls = %v", be.createCalls)
-	}
 	if m.mode != ModeList || !strings.Contains(m.flash, "created myfeat") {
-		t.Fatalf("post-create tag failure must not be reported as a failed creation: mode=%v flash=%q", m.mode, m.flash)
+		t.Fatalf("a hint must not be reported as a failed creation: mode=%v flash=%q", m.mode, m.flash)
 	}
 	if !strings.Contains(m.flash, "tag boom") {
-		t.Fatalf("tag failure should still be surfaced as a hint: flash=%q", m.flash)
+		t.Fatalf("hint should still be surfaced: flash=%q", m.flash)
 	}
 	if len(m.sessions) != 1 {
 		t.Fatalf("session list was not refreshed with the created session: %v", m.sessions)
-	}
-}
-
-// TestNewSessionFormSurvivesPostCreateFirstPromptFailure is the same guard
-// for StartFirstPrompt.
-func TestNewSessionFormSurvivesPostCreateFirstPromptFailure(t *testing.T) {
-	be := &fakeBackend{firstPromptErr: errors.New("prompt boom")}
-	m := newTestModel(be)
-
-	m.Update(keyRune("n"))
-	typeText(m, "myfeat")
-	for i := 0; i < 3; i++ {
-		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt
-	}
-	typeText(m, "do the thing")
-	press(m, tea.KeyTab) // prompt -> ticket, so Enter submits rather than adding a newline
-
-	run(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.mode != ModeList || !strings.Contains(m.flash, "created myfeat") {
-		t.Fatalf("post-create prompt failure must not be reported as a failed creation: mode=%v flash=%q", m.mode, m.flash)
-	}
-	if !strings.Contains(m.flash, "prompt boom") {
-		t.Fatalf("prompt failure should still be surfaced as a hint: flash=%q", m.flash)
 	}
 }
 
@@ -345,12 +313,13 @@ func TestNewSessionFormAppendsTicketAndPRToFirstPrompt(t *testing.T) {
 	typeText(m, "https://github.com/x/y/pull/2")
 
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if len(be.tagCalls) != 1 || be.tagCalls[0].ticket != "https://ticket.example/1" || be.tagCalls[0].pr != "https://github.com/x/y/pull/2" {
-		t.Fatalf("tagCalls = %v", be.tagCalls)
-	}
-	want := "do the thing\n\nTicket: https://ticket.example/1\nPR: https://github.com/x/y/pull/2"
-	if len(be.firstPromptCalls) != 1 || be.firstPromptCalls[0].prompt != want {
-		t.Fatalf("firstPromptCalls = %v, want prompt %q", be.firstPromptCalls, want)
+	// The form's job is to hand the core a complete request; composing the
+	// prompt out of it (and attaching the PR tag) is the core's — see
+	// TestFirstPromptComposition in internal/app.
+	got := be.createCalls[0]
+	if got.Prompt != "do the thing" || got.Ticket != "https://ticket.example/1" ||
+		got.PR != "https://github.com/x/y/pull/2" {
+		t.Fatalf("createCall = %+v", got)
 	}
 }
 
@@ -441,7 +410,7 @@ func TestNewSessionFormDefaultsToActiveProjectWithMultipleProjects(t *testing.T)
 	press(m, tea.KeyTab) // -> name
 	typeText(m, "myfeat")
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if len(be.createCalls) != 1 || be.createCalls[0].project != "beta" {
+	if len(be.createCalls) != 1 || be.createCalls[0].Project != "beta" {
 		t.Fatalf("createCalls = %v", be.createCalls)
 	}
 }
@@ -479,7 +448,7 @@ func TestNewSessionCreateErrorKeepsForm(t *testing.T) {
 func TestNewSessionNoProjectsFlashesError(t *testing.T) {
 	cfg := &config.Config{Projects: map[string]config.Project{}}
 	be := &fakeBackend{}
-	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan sessionview.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList // New() opens the project form when no projects exist
 	m.Update(keyRune("n"))
@@ -583,12 +552,11 @@ func TestDeleteCursorSurvivesTmuxAliveRaceInBetween(t *testing.T) {
 		t.Fatal("expected a delete command")
 	}
 
-	// An intervening tmux-alive tick lands before the delete's own message:
-	// c's tmux pane happens to end right as b's does, resorting the list
-	// (and, under the old cursor-index fallback, shifting where "next" would
-	// land) before SessionDeletedMsg is even processed.
-	m.tmuxAlive = map[string]bool{"c": true}
-	m.refreshSessions()
+	// An intervening snapshot lands before the delete's own message: c's
+	// tmux pane happens to end right as b's does, resorting the list (and,
+	// under the old cursor-index fallback, shifting where "next" would land)
+	// before SessionDeletedMsg is even processed.
+	putView(m, "c", sessionview.View{State: watcher.Working})
 
 	msg := cmd()
 	m.Update(msg)
@@ -698,329 +666,6 @@ func drainAll(m *Model, cmd tea.Cmd) {
 	drainAll(m, next)
 }
 
-// TestGitStatusTrackedRegardlessOfState guards the "never checked" half of
-// the design: a session that's actively Working with no cached status yet
-// still gets fetched on the next tick, same as any other never-checked
-// session (parked or not) — staleGitStatusIDs treats "never checked" as
-// maximally stale regardless of state. See TestParkedGitStatusSkipsRoutineRefetch
-// for the other half: once checked, a Parked session stops being re-fetched.
-func TestGitStatusTrackedRegardlessOfState(t *testing.T) {
-	be := &fakeBackend{
-		sessions:       []session.Session{{ID: "demo:a", Project: "demo", Name: "a", WorktreePath: "/wt/a"}},
-		worktreeStatus: map[string]gitStatusInfo{"demo:a": {dirty: true, ok: true}},
-	}
-	m := newTestModel(be)
-	m.tmuxAlive["demo:a"] = true
-	m.states["/wt/a"] = watcher.Working
-
-	drainCmd(m, m.fetchStaleGitStatusCmd())
-
-	if len(be.worktreeStatusCalls) != 1 || be.worktreeStatusCalls[0] != "demo:a" {
-		t.Fatalf("expected one WorktreeStatus call for a Working session with no cached status, got %v", be.worktreeStatusCalls)
-	}
-	if got := m.gitStatus["demo:a"]; !got.dirty {
-		t.Fatalf("gitStatus[demo:a] = %+v, want dirty=true", got)
-	}
-}
-
-// TestStaleGitStatusIsRefetched guards the staleness half of
-// staleGitStatusIDs: a cached status older than its jittered threshold is
-// worth a fresh fetch even though it was already checked once, since the
-// worktree can change while the session sits untouched (edits from another
-// terminal, a push from elsewhere).
-func TestStaleGitStatusIsRefetched(t *testing.T) {
-	be := &fakeBackend{
-		sessions:       []session.Session{{ID: "demo:a", Project: "demo", Name: "a", WorktreePath: "/wt/a"}},
-		worktreeStatus: map[string]gitStatusInfo{"demo:a": {dirty: true, ok: true}},
-	}
-	m := newTestModel(be)
-	m.tmuxAlive["demo:a"] = true
-	// Well past even the top of the jitter range (gitStatusStaleAfter * (1 +
-	// gitStatusStaleJitter)), so this is unambiguously stale regardless of
-	// demo:a's particular jitter.
-	m.gitStatus["demo:a"] = gitStatusInfo{ok: true, checkedAt: time.Now().Add(-2 * gitStatusStaleAfter)}
-
-	drainCmd(m, m.fetchStaleGitStatusCmd())
-
-	if len(be.worktreeStatusCalls) != 1 || be.worktreeStatusCalls[0] != "demo:a" {
-		t.Fatalf("stale cached entry should trigger exactly one refetch, calls = %v", be.worktreeStatusCalls)
-	}
-	if got := m.gitStatus["demo:a"]; !got.dirty {
-		t.Fatalf("gitStatus[demo:a] not refreshed from the stale cache: %+v", got)
-	}
-}
-
-// TestParkedGitStatusSkipsRoutineRefetch guards the CPU fix: once a Parked
-// session (tmux dead) has a cached git status, it must not be re-fetched on
-// the routine cycle no matter how stale that cache gets — its worktree has
-// no agent running in it, so dirty/unpushed can't change on their own.
-func TestParkedGitStatusSkipsRoutineRefetch(t *testing.T) {
-	be := &fakeBackend{
-		sessions: []session.Session{{ID: "demo:a", Project: "demo", Name: "a", WorktreePath: "/wt/a"}},
-	}
-	m := newTestModel(be)
-	// tmuxAlive left unset for demo:a, so effectiveState is Parked.
-	m.gitStatus["demo:a"] = gitStatusInfo{ok: true, checkedAt: time.Now().Add(-2 * gitStatusStaleAfter)}
-
-	if cmd := m.fetchStaleGitStatusCmd(); cmd != nil {
-		t.Fatal("a Parked session with a cached status should not be re-selected for routine refresh")
-	}
-	if len(be.worktreeStatusCalls) != 0 {
-		t.Fatalf("no WorktreeStatus call expected for a Parked session, got %v", be.worktreeStatusCalls)
-	}
-
-	// Once tmux comes back, the stale cache (never refreshed while parked)
-	// should be picked up immediately.
-	m.tmuxAlive["demo:a"] = true
-	m.states["/wt/a"] = watcher.Working
-	if cmd := m.fetchStaleGitStatusCmd(); cmd == nil {
-		t.Fatal("expected a refetch as soon as the session stops being Parked")
-	}
-}
-
-// TestFreshGitStatusIsNotRefetched is the other half: a cached entry well
-// within the staleness threshold must not trigger another
-// `git status`/`rev-list` call — that's the whole point of caching by
-// staleness instead of re-checking every session on every tick.
-func TestFreshGitStatusIsNotRefetched(t *testing.T) {
-	be := &fakeBackend{
-		sessions: []session.Session{{ID: "demo:a", Project: "demo", Name: "a", WorktreePath: "/wt/a"}},
-	}
-	m := newTestModel(be)
-	m.gitStatus["demo:a"] = gitStatusInfo{ok: true, checkedAt: time.Now()}
-
-	if cmd := m.fetchStaleGitStatusCmd(); cmd != nil {
-		t.Fatal("a fresh cached entry should not produce a fetch cmd")
-	}
-	if len(be.worktreeStatusCalls) != 0 {
-		t.Fatalf("no WorktreeStatus call expected, got %v", be.worktreeStatusCalls)
-	}
-}
-
-// TestGitStatusPendingSkipsDuplicateFetch guards against piling up
-// concurrent `git status` calls for the same session: once a fetch is in
-// flight (gitStatusPending), staleGitStatusIDs must not select that id again
-// even though its cache is still missing/stale — otherwise a session whose
-// git command is just running long would get re-issued a fresh fetch on
-// every single tick until the first one finally returns.
-func TestGitStatusPendingSkipsDuplicateFetch(t *testing.T) {
-	be := &fakeBackend{
-		sessions: []session.Session{{ID: "demo:a", Project: "demo", Name: "a", WorktreePath: "/wt/a"}},
-	}
-	m := newTestModel(be)
-
-	cmd := m.fetchStaleGitStatusCmd()
-	if cmd == nil {
-		t.Fatal("expected a fetch cmd for a never-checked session")
-	}
-	if !m.gitStatusPending["demo:a"] {
-		t.Fatal("demo:a should be marked pending once its fetch is dispatched")
-	}
-
-	// A second tick, before the first fetch resolves, must not re-select it.
-	if again := m.fetchStaleGitStatusCmd(); again != nil {
-		t.Fatal("a session with a fetch already in flight should not be re-selected")
-	}
-
-	// Resolving the first fetch clears pending and allows a future refetch.
-	drainCmd(m, cmd)
-	if m.gitStatusPending["demo:a"] {
-		t.Fatal("demo:a should no longer be pending once its fetch resolves")
-	}
-}
-
-// TestGitStatusMsgKeepsFresherResult guards against two overlapping fetches
-// for the same session (a routine refresh racing the delete dialog's
-// on-demand check, say) resolving out of order: whichever has the later
-// checkedAt wins, regardless of arrival order.
-func TestGitStatusMsgKeepsFresherResult(t *testing.T) {
-	be := &fakeBackend{sessions: []session.Session{{ID: "demo:a", Project: "demo", Name: "a"}}}
-	m := newTestModel(be)
-
-	newer := time.Now()
-	older := newer.Add(-time.Hour)
-
-	m.Update(GitStatusMsg{Status: map[string]gitStatusInfo{"demo:a": {dirty: true, ok: true, checkedAt: newer}}})
-	if got := m.gitStatus["demo:a"]; !got.dirty || !got.checkedAt.Equal(newer) {
-		t.Fatalf("gitStatus[demo:a] = %+v after the first (newer) result", got)
-	}
-
-	// A stale, late-arriving result with an older checkedAt must not
-	// overwrite the fresher one already recorded.
-	m.Update(GitStatusMsg{Status: map[string]gitStatusInfo{"demo:a": {dirty: false, ok: true, checkedAt: older}}})
-	if got := m.gitStatus["demo:a"]; !got.dirty || !got.checkedAt.Equal(newer) {
-		t.Fatalf("gitStatus[demo:a] = %+v, want the newer result to survive", got)
-	}
-}
-
-// TestGitStatusStaleThresholdIsJittered guards against a thundering herd:
-// sessions all first fetched around the same moment (notably, every session
-// at startup) must not all come due for refresh in the same tick forever
-// after. gitStatusStaleThreshold must vary by session id (not return the
-// same duration for every id) and must be stable across repeated calls for
-// the same id (so staleness doesn't flap from one check to the next).
-func TestGitStatusStaleThresholdIsJittered(t *testing.T) {
-	a := gitStatusStaleThreshold("demo:a")
-	b := gitStatusStaleThreshold("demo:b")
-	if a == b {
-		t.Fatalf("expected different sessions to get different jittered thresholds, both = %v", a)
-	}
-	for _, got := range []time.Duration{a, b} {
-		lo := time.Duration(float64(gitStatusStaleAfter) * (1 - gitStatusStaleJitter))
-		hi := time.Duration(float64(gitStatusStaleAfter) * (1 + gitStatusStaleJitter))
-		if got < lo || got > hi {
-			t.Fatalf("threshold %v outside jitter range [%v, %v]", got, lo, hi)
-		}
-	}
-	if again := gitStatusStaleThreshold("demo:a"); again != a {
-		t.Fatalf("threshold for the same id changed across calls: %v then %v", a, again)
-	}
-}
-
-// TestInitFetchesGitStatusForEverySession guards the startup path: since
-// every session's git status is unfetched (checkedAt is zero) the moment the
-// app starts, the first tmux-alive resolution must kick off a fetch for all
-// of them, not just whichever happen to be parked — regardless of agent
-// state, without waiting for the first watcher tick.
-func TestInitFetchesGitStatusForEverySession(t *testing.T) {
-	be := &fakeBackend{
-		sessions: []session.Session{
-			{ID: "demo:a", Project: "demo", Name: "a", WorktreePath: "/wt/a"},
-			{ID: "demo:b", Project: "demo", Name: "b", WorktreePath: "/wt/b"},
-		},
-		worktreeStatus: map[string]gitStatusInfo{"demo:a": {dirty: true, ok: true}},
-	}
-	m := newTestModel(be)
-	// "b" is alive and Working — still expected to be checked, since git
-	// status tracking is no longer gated on parked state.
-	m.tmuxAlive["demo:b"] = true
-	m.states["/wt/b"] = watcher.Working
-
-	drainCmd(m, m.fetchStaleGitStatusCmd())
-
-	gotIDs := append([]string(nil), be.worktreeStatusCalls...)
-	sort.Strings(gotIDs)
-	if !reflect.DeepEqual(gotIDs, []string{"demo:a", "demo:b"}) {
-		t.Fatalf("expected a WorktreeStatus call for every session, got %v", gotIDs)
-	}
-	got, ok := m.gitStatus["demo:a"]
-	if !ok || !got.dirty {
-		t.Fatalf("gitStatus[demo:a] = %+v, ok=%v; want dirty=true", got, ok)
-	}
-	if _, ok := m.gitStatus["demo:b"]; !ok {
-		t.Fatal("gitStatus[demo:b] should have been fetched too — it's not gated on parked state")
-	}
-}
-
-// TestPRStatusOnlyFetchedForSessionsWithPRAttached guards stalePRStatusIDs'
-// filter: unlike git status, a PR-status fetch only makes sense for sessions
-// that actually have a PR attached — calling `gh pr view` with no PR would
-// be meaningless.
-func TestPRStatusOnlyFetchedForSessionsWithPRAttached(t *testing.T) {
-	be := &fakeBackend{
-		sessions: []session.Session{
-			{ID: "demo:a", Project: "demo", Name: "a", PR: "https://github.com/example/repo/pull/1"},
-			{ID: "demo:b", Project: "demo", Name: "b"},
-		},
-		prStatus: map[string]prStatusInfo{
-			"demo:a": {ok: true, info: prstatus.Info{State: "OPEN"}},
-		},
-	}
-	m := newTestModel(be)
-
-	drainCmd(m, m.fetchStalePRStatusCmd())
-
-	if !reflect.DeepEqual(be.prStatusCalls, []string{"demo:a"}) {
-		t.Fatalf("prStatusCalls = %v, want only demo:a (no PR attached to demo:b)", be.prStatusCalls)
-	}
-	if got := m.prStatus["demo:a"]; !got.ok || got.info.State != "OPEN" {
-		t.Fatalf("prStatus[demo:a] = %+v", got)
-	}
-}
-
-// TestStalePRStatusIsRefetched and TestFreshPRStatusIsNotRefetched mirror
-// their git-status counterparts: a cached entry outside its jittered
-// threshold is worth a fresh `gh pr view` call, one inside it is not.
-func TestStalePRStatusIsRefetched(t *testing.T) {
-	be := &fakeBackend{
-		sessions: []session.Session{{ID: "demo:a", Project: "demo", Name: "a", PR: "https://github.com/example/repo/pull/1"}},
-		prStatus: map[string]prStatusInfo{"demo:a": {ok: true, info: prstatus.Info{State: "MERGED"}}},
-	}
-	m := newTestModel(be)
-	m.prStatus["demo:a"] = prStatusInfo{ok: true, checkedAt: time.Now().Add(-2 * prStatusStaleAfter)}
-
-	drainCmd(m, m.fetchStalePRStatusCmd())
-
-	if !reflect.DeepEqual(be.prStatusCalls, []string{"demo:a"}) {
-		t.Fatalf("prStatusCalls = %v, want exactly one refetch", be.prStatusCalls)
-	}
-	if got := m.prStatus["demo:a"]; got.info.State != "MERGED" {
-		t.Fatalf("prStatus[demo:a] not refreshed from the stale cache: %+v", got)
-	}
-}
-
-func TestFreshPRStatusIsNotRefetched(t *testing.T) {
-	be := &fakeBackend{
-		sessions: []session.Session{{ID: "demo:a", Project: "demo", Name: "a", PR: "https://github.com/example/repo/pull/1"}},
-	}
-	m := newTestModel(be)
-	m.prStatus["demo:a"] = prStatusInfo{ok: true, checkedAt: time.Now()}
-
-	if cmd := m.fetchStalePRStatusCmd(); cmd != nil {
-		t.Fatal("a fresh cached entry should not produce a fetch cmd")
-	}
-	if len(be.prStatusCalls) != 0 {
-		t.Fatalf("no PRStatus call expected, got %v", be.prStatusCalls)
-	}
-}
-
-// TestPRStatusPendingSkipsDuplicateFetch mirrors
-// TestGitStatusPendingSkipsDuplicateFetch: a fetch already in flight must not
-// be re-issued on the next tick before it resolves.
-func TestPRStatusPendingSkipsDuplicateFetch(t *testing.T) {
-	be := &fakeBackend{
-		sessions: []session.Session{{ID: "demo:a", Project: "demo", Name: "a", PR: "https://github.com/example/repo/pull/1"}},
-	}
-	m := newTestModel(be)
-
-	cmd := m.fetchStalePRStatusCmd()
-	if cmd == nil {
-		t.Fatal("expected a fetch cmd for a never-checked PR")
-	}
-	if !m.prStatusPending["demo:a"] {
-		t.Fatal("demo:a should be marked pending once its fetch is dispatched")
-	}
-	if again := m.fetchStalePRStatusCmd(); again != nil {
-		t.Fatal("a session with a fetch already in flight should not be re-selected")
-	}
-
-	drainCmd(m, cmd)
-	if m.prStatusPending["demo:a"] {
-		t.Fatal("demo:a should no longer be pending once its fetch resolves")
-	}
-}
-
-// TestPRStatusMsgKeepsFresherResult mirrors TestGitStatusMsgKeepsFresherResult:
-// an older, late-arriving result must not clobber a fresher one already
-// recorded.
-func TestPRStatusMsgKeepsFresherResult(t *testing.T) {
-	be := &fakeBackend{sessions: []session.Session{{ID: "demo:a", Project: "demo", Name: "a", PR: "https://github.com/example/repo/pull/1"}}}
-	m := newTestModel(be)
-
-	newer := time.Now()
-	older := newer.Add(-time.Hour)
-
-	m.Update(PRStatusMsg{Status: map[string]prStatusInfo{"demo:a": {ok: true, info: prstatus.Info{State: "MERGED"}, checkedAt: newer}}})
-	if got := m.prStatus["demo:a"]; got.info.State != "MERGED" || !got.checkedAt.Equal(newer) {
-		t.Fatalf("prStatus[demo:a] = %+v after the first (newer) result", got)
-	}
-
-	m.Update(PRStatusMsg{Status: map[string]prStatusInfo{"demo:a": {ok: true, info: prstatus.Info{State: "OPEN"}, checkedAt: older}}})
-	if got := m.prStatus["demo:a"]; got.info.State != "MERGED" || !got.checkedAt.Equal(newer) {
-		t.Fatalf("prStatus[demo:a] = %+v, want the newer result to survive", got)
-	}
-}
-
 func TestConfirmDeleteErrorFlashes(t *testing.T) {
 	be := &fakeBackend{
 		sessions:  []session.Session{{ID: "demo:a", Project: "demo", Name: "a"}},
@@ -1039,7 +684,7 @@ func TestTagFormFlow(t *testing.T) {
 		{ID: "demo:a", Project: "demo", Name: "a", Ticket: "old-ticket", PR: "old-pr"},
 	}}
 	m := newTestModel(be)
-	m.prompts["demo:a"] = "old agent prompt"
+	putView(m, "demo:a", sessionview.View{Prompt: "old agent prompt"})
 
 	m.Update(keyRune("t"))
 	if m.mode != ModeTagForm {
@@ -1098,7 +743,7 @@ func TestNewProjectFlow(t *testing.T) {
 	if m.agentNames()[m.projForm.agentIdx] != "codex" {
 		t.Fatalf("agent = %q", m.agentNames()[m.projForm.agentIdx])
 	}
-	m.projForm.focus = projFormInputCount + 3
+	m.projForm.focus = projFormInputCount + 4
 	press(m, tea.KeyLeft) // toggle no-worktree on
 	if !m.projForm.noWorktree {
 		t.Fatal("noWorktree not toggled")
@@ -1112,7 +757,10 @@ func TestNewProjectFlow(t *testing.T) {
 		t.Fatalf("addProjectCalls = %v", be.addProjectCalls)
 	}
 	got := be.addProjectCalls[0]
-	want := config.Project{Repo: "/tmp/newproj", BaseBranch: "main", BranchPrefix: "me", Agent: "codex", NoWorktree: true}
+	// BaseBranch is left empty: the form doesn't default it, the core does
+	// (validateProjectLocked in internal/app), so every front end gets the
+	// same answer instead of each carrying the literal.
+	want := config.Project{Repo: "/tmp/newproj", BranchPrefix: "me", Agent: "codex", NoWorktree: true}
 	if got.name != "newproj" || !reflect.DeepEqual(got.p, want) {
 		t.Fatalf("call = %+v", got)
 	}
@@ -1188,9 +836,6 @@ func TestEditSessionFlow(t *testing.T) {
 	if m.mode != ModeList || !strings.Contains(m.flash, "updated session a") {
 		t.Fatalf("mode=%v flash=%q", m.mode, m.flash)
 	}
-	if _, ok := m.prompts["demo:a"]; ok {
-		t.Fatal("agent edit must invalidate the cached prompt")
-	}
 }
 
 // TestEditSessionFlowRenames covers the name field itself: typing a new name
@@ -1246,7 +891,7 @@ func TestEditProjectFlow(t *testing.T) {
 		},
 	}}
 	be := &fakeBackend{}
-	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan sessionview.Snapshot), func() {})
 	m.width, m.height = 100, 32
 
 	m.Update(slashKey())
@@ -1295,7 +940,7 @@ func TestEditProjectArrowsMoveTextCursor(t *testing.T) {
 		"demo": {Kind: "git", Repo: "/tmp/demo", BaseBranch: "main"},
 	}}
 	be := &fakeBackend{}
-	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan sessionview.Snapshot), func() {})
 	m.width, m.height = 100, 32
 
 	m.Update(slashKey())
@@ -1339,7 +984,7 @@ func TestEditPlainProjectShowsOnlyRepoAndAgent(t *testing.T) {
 		"notes": {Kind: "plain", Repo: "/tmp/notes", Agent: "claude"},
 	}}
 	be := &fakeBackend{}
-	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan sessionview.Snapshot), func() {})
 	m.width, m.height = 80, 24
 
 	m.Update(slashKey())
@@ -1378,7 +1023,7 @@ func TestEditProjectPreservesOutOfPaletteEmoji(t *testing.T) {
 		"notes": {Kind: "git", Repo: "/tmp/notes", BaseBranch: "main", Emoji: "😀"},
 	}}
 	be := &fakeBackend{}
-	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan sessionview.Snapshot), func() {})
 	m.width, m.height = 80, 24
 
 	m.Update(slashKey())
@@ -1399,7 +1044,7 @@ func TestNewProjectTabCyclesFocus(t *testing.T) {
 	m := newTestModel(be)
 	m.Update(slashKey())
 	m.Update(keyRune("n"))
-	total := projFormInputCount + 4
+	total := projFormInputCount + 5
 	for i := 1; i < total; i++ {
 		press(m, tea.KeyTab)
 		if m.projForm.focus != i {
@@ -1557,7 +1202,7 @@ func TestDeleteProjectWithSessionsIsBlocked(t *testing.T) {
 func TestDeleteProjectWithNoProjectsFlashesError(t *testing.T) {
 	cfg := &config.Config{Projects: map[string]config.Project{}}
 	be := &fakeBackend{}
-	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan sessionview.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 	m.Update(keyRune("D"))
@@ -1650,7 +1295,7 @@ func TestNavigationAndProjectSwitching(t *testing.T) {
 		{ID: "alpha:b", Project: "alpha", Name: "b"},
 		{ID: "beta:c", Project: "beta", Name: "c"},
 	}}
-	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan sessionview.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 
@@ -1692,7 +1337,7 @@ func TestProjectCyclingSkipsEmptyProjects(t *testing.T) {
 		{ID: "alpha:a", Project: "alpha", Name: "a"},
 		{ID: "beta:c", Project: "beta", Name: "c"},
 	}}
-	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan sessionview.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 
@@ -1734,7 +1379,7 @@ func TestProjectCyclingStaysWhenOnlyActiveHasSessions(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{
 		{ID: "alpha:a", Project: "alpha", Name: "a"},
 	}}
-	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan sessionview.Snapshot), func() {})
 	m.width, m.height = 80, 24
 
 	press(m, tea.KeyTab)
@@ -1764,7 +1409,7 @@ func TestProjectCyclingSkipsProjectsWithOnlyArchivedSessions(t *testing.T) {
 		{ID: "archived-only:z", Project: "archived-only", Name: "z", Archived: true},
 		{ID: "beta:c", Project: "beta", Name: "c"},
 	}}
-	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan sessionview.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 
@@ -1791,7 +1436,7 @@ func TestPlainLetterAlternatesForChordedKeys(t *testing.T) {
 		{ID: "beta:c", Project: "beta", Name: "c"},
 	}}
 	be.cfg = *cfg
-	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan sessionview.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 
@@ -1841,24 +1486,24 @@ func TestBracketsAreTextInputInForms(t *testing.T) {
 	typeText(m, "feat[1]")
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	if len(be.createCalls) != 1 || be.createCalls[0].name != "feat[1]" {
+	if len(be.createCalls) != 1 || be.createCalls[0].Name != "feat[1]" {
 		t.Fatalf("createCalls = %+v", be.createCalls)
 	}
 }
 
-func TestRefreshRunsStatusCmd(t *testing.T) {
+// TestRefreshNudgesCore covers the refresh key. The TUI has nothing of its
+// own left to refresh — it renders whatever the last snapshot said — so all
+// it can do is ask the core for one now instead of at its next tick.
+func TestRefreshNudgesCore(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{{ID: "demo:a", Project: "demo", Name: "a"}}}
 	m := newTestModel(be)
-	_, cmd := m.Update(keyRune("r"))
-	if cmd == nil {
-		t.Fatal("refresh must return a status refresh command")
+	var nudges int
+	m.Nudge = func() { nudges++ }
+
+	m.Update(keyRune("r"))
+	if nudges != 1 {
+		t.Fatalf("refresh sent %d nudges, want 1", nudges)
 	}
-	msg := cmd()
-	refreshed, ok := msg.(StatusRefreshedMsg)
-	if !ok {
-		t.Fatalf("msg = %T", msg)
-	}
-	m.Update(refreshed)
 }
 
 func TestHelpMode(t *testing.T) {
@@ -1944,31 +1589,20 @@ func TestStatusMessages(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{{ID: "demo:a", Project: "demo", Name: "a", WorktreePath: "/wt/a"}}}
 	m := newTestModel(be)
 
-	_, cmd := m.Update(StatusTickMsg{Snap: watcher.Snapshot{
-		States: map[string]watcher.State{"/wt/a": watcher.Working},
-		Err:    errors.New("scan hiccup"),
+	_, cmd := m.Update(StatusTickMsg{Snap: sessionview.Snapshot{
+		Views: map[string]sessionview.View{
+			"demo:a": {ID: "demo:a", State: watcher.Working, Prompt: "do the thing"},
+		},
+		Err: "scan hiccup",
 	}})
 	if cmd == nil {
 		t.Fatal("status tick must re-arm the listener")
 	}
-	if m.states["/wt/a"] != watcher.Working || !strings.Contains(m.flash, "scan hiccup") {
-		t.Fatalf("states=%v flash=%q", m.states, m.flash)
+	if got := m.viewFor("demo:a"); got.State != watcher.Working || got.Prompt != "do the thing" {
+		t.Fatalf("view = %+v", got)
 	}
-	if m.flashKind != "error" {
-		t.Fatalf("flashKind = %q, want %q", m.flashKind, "error")
-	}
-
-	m.Update(StatusRefreshedMsg{
-		TmuxAlive: map[string]bool{"demo:a": true},
-		Prompts:   map[string]string{"demo:a": "do the thing"},
-	})
-	if !m.tmuxAlive["demo:a"] || m.prompts["demo:a"] != "do the thing" {
-		t.Fatalf("alive=%v prompts=%v", m.tmuxAlive, m.prompts)
-	}
-	// existing prompt is not overwritten
-	m.Update(StatusRefreshedMsg{Prompts: map[string]string{"demo:a": "other"}})
-	if m.prompts["demo:a"] != "do the thing" {
-		t.Fatalf("prompt overwritten: %q", m.prompts["demo:a"])
+	if !strings.Contains(m.flash, "scan hiccup") || m.flashKind != "error" {
+		t.Fatalf("flash = %q (%s)", m.flash, m.flashKind)
 	}
 
 	m.Update(StatusChannelClosedMsg{})
@@ -1985,37 +1619,38 @@ func TestStatusMessages(t *testing.T) {
 	}
 }
 
-func TestStatusTickPrunesRemovedSessionStates(t *testing.T) {
-	be := &fakeBackend{sessions: []session.Session{
-		{ID: "demo:a", Project: "demo", Name: "a", WorktreePath: "/wt/a"},
-		{ID: "demo:removed", Project: "demo", Name: "removed", WorktreePath: "/wt/removed"},
-	}}
+// TestStatusTickReplacesViews is what pruning became: a snapshot is
+// absolute state, so applying one drops any view the core no longer sends —
+// no client-side bookkeeping to leak entries for deleted sessions.
+func TestStatusTickReplacesViews(t *testing.T) {
+	be := &fakeBackend{
+		sessions: []session.Session{
+			{ID: "demo:a", Project: "demo", Name: "a", WorktreePath: "/wt/a"},
+			{ID: "demo:removed", Project: "demo", Name: "removed", WorktreePath: "/wt/removed"},
+		},
+		tmuxAlive: map[string]bool{"demo:a": true, "demo:removed": true},
+	}
 	m := newTestModel(be)
 
-	m.Update(StatusTickMsg{Snap: watcher.Snapshot{
-		States: map[string]watcher.State{"/wt/a": watcher.Working, "/wt/removed": watcher.Working},
-	}})
-	if _, ok := m.states["/wt/removed"]; !ok {
-		t.Fatal("setup: expected stale path present before session removal")
+	seedViews(m, be, map[string]watcher.State{"/wt/a": watcher.Working, "/wt/removed": watcher.Working})
+	if _, ok := m.views["demo:removed"]; !ok {
+		t.Fatal("setup: expected a view for the session before it was removed")
 	}
 
-	// Session for /wt/removed no longer exists in the backend (deleted).
 	be.sessions = []session.Session{{ID: "demo:a", Project: "demo", Name: "a", WorktreePath: "/wt/a"}}
-	m.Update(StatusTickMsg{Snap: watcher.Snapshot{
-		States: map[string]watcher.State{"/wt/a": watcher.Done},
-	}})
+	seedViews(m, be, map[string]watcher.State{"/wt/a": watcher.Done})
 
-	if _, ok := m.states["/wt/removed"]; ok {
-		t.Fatalf("states = %v, want /wt/removed pruned after its session was removed", m.states)
+	if _, ok := m.views["demo:removed"]; ok {
+		t.Fatalf("views = %v, want the deleted session dropped", m.views)
 	}
-	if m.states["/wt/a"] != watcher.Done {
-		t.Fatalf("states[/wt/a] = %v, want still tracked", m.states["/wt/a"])
+	if got := m.viewFor("demo:a").State; got != watcher.Done {
+		t.Fatalf("views[demo:a].State = %v, want still tracked", got)
 	}
 }
 
 func TestListenStatus(t *testing.T) {
-	ch := make(chan watcher.Snapshot, 1)
-	ch <- watcher.Snapshot{}
+	ch := make(chan sessionview.Snapshot, 1)
+	ch <- sessionview.Snapshot{}
 	if _, ok := listenStatus(ch)().(StatusTickMsg); !ok {
 		t.Fatal("expected StatusTickMsg")
 	}

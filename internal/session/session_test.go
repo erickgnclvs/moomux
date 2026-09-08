@@ -368,3 +368,59 @@ func TestSessionAgentPortRoundtrip(t *testing.T) {
 		t.Fatalf("AgentPort = %d", got.AgentPort)
 	}
 }
+
+// Store.All() ranges a map, so a comparator that lets two sessions tie
+// returns them in a different order on every call — which makes every Watch
+// snapshot look reordered to a client. Fresh Store loads per iteration,
+// since Go randomizes map iteration per range, not per map.
+func TestAllIsDeterministicWhenOrderAndCreatedAtTie(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.json")
+	created := time.Date(2026, 5, 17, 10, 0, 0, 0, time.UTC)
+	seed := &Store{Path: path}
+	_ = seed.Load()
+	for i := range 30 {
+		_ = seed.Put(Session{ID: fmt.Sprintf("p:s%02d", i), Project: "p", CreatedAt: created})
+	}
+
+	var want []string
+	for range 20 {
+		s := &Store{Path: path}
+		if err := s.Load(); err != nil {
+			t.Fatal(err)
+		}
+		got := ids(s.All())
+		if want == nil {
+			want = got
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("order changed between loads:\n want %v\n got  %v", want, got)
+			}
+		}
+	}
+}
+
+func TestSortByRecentIsDeterministicWhenEveryFieldTies(t *testing.T) {
+	created := time.Date(2026, 5, 17, 10, 0, 0, 0, time.UTC)
+	var want []string
+	for shift := range 5 {
+		sessions := make([]Session, 0, 6)
+		for i := range 6 {
+			// Feed a different starting permutation each pass: a stable sort
+			// on a comparator with ties just preserves whatever it was given.
+			sessions = append(sessions, Session{ID: fmt.Sprintf("s%d", (i+shift)%6), CreatedAt: created})
+		}
+		SortByRecent(sessions)
+		got := ids(sessions)
+		if want == nil {
+			want = got
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("order depends on input permutation:\n want %v\n got  %v", want, got)
+			}
+		}
+	}
+}

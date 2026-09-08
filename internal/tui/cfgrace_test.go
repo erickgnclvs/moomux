@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/erickgnclvs/moomux/internal/config"
-	"github.com/erickgnclvs/moomux/internal/watcher"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 )
 
 // aliasingBackend's AddProject mutates the exact *config.Config handed to
@@ -19,12 +19,14 @@ type aliasingBackend struct {
 	live *config.Config
 }
 
-func (b *aliasingBackend) AddProject(name string, p config.Project) error {
+func (b *aliasingBackend) SuggestedProject() (string, string) { return "", "" }
+
+func (b *aliasingBackend) AddProject(name string, p config.Project) (string, error) {
 	if b.live.Projects == nil {
 		b.live.Projects = map[string]config.Project{}
 	}
 	b.live.Projects[name] = p
-	return nil
+	return "", nil
 }
 
 func (b *aliasingBackend) ConfigSnapshot() config.Config { return *b.live }
@@ -43,7 +45,7 @@ func (b *aliasingBackend) ConfigSnapshot() config.Config { return *b.live }
 func TestConfigRaceFreeAcrossMutationAndRender(t *testing.T) {
 	cfg := &config.Config{Projects: map[string]config.Project{"demo": {Repo: "/tmp/demo"}}}
 	be := &aliasingBackend{live: cfg}
-	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan sessionview.Snapshot), func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList
 
@@ -70,7 +72,7 @@ func TestConfigRaceFreeAcrossMutationAndRender(t *testing.T) {
 		// the mutation, then fetch a snapshot for Update() to apply later —
 		// all on this goroutine, concurrently with the read loop below.
 		for i := 0; i < 20000; i++ {
-			_ = be.AddProject("newproj", config.Project{Repo: "/tmp/newproj"})
+			_, _ = be.AddProject("newproj", config.Project{Repo: "/tmp/newproj"})
 			_ = be.ConfigSnapshot()
 		}
 	}()

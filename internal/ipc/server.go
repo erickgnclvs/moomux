@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -15,8 +14,8 @@ import (
 
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/tui"
-	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
 // Server exposes a tui.Backend over a unix socket.
@@ -33,18 +32,21 @@ type Server struct {
 	// new-session picker offers, served the same way as Config so a client
 	// never keeps its own copy. app.App.AgentOptions satisfies this.
 	AgentOptions func() []config.AgentOption
-	Watcher      watcher.Watcher // optional; powers the "Watch" stream
+	// Source is the derived per-session state stream — effective state,
+	// labels, quips, git/PR status, recovered prompts — computed once here
+	// rather than by each client. Optional; powers the "Watch" stream.
+	Source sessionview.Source
 
-	// subMu guards the fan-out below. Watcher.Run is started once, on the
+	// subMu guards the fan-out below. Source.Run is started once, on the
 	// first "Watch" client, and every later client is added as a subscriber
 	// to that one run rather than starting its own.
 	subMu       sync.Mutex
-	subs        map[chan watcher.Snapshot]struct{}
+	subs        map[chan sessionview.Snapshot]struct{}
 	watcherOnce bool
 }
 
-// subscribe registers a channel for watcher snapshots, starting the watcher
-// on the first caller.
+// subscribe registers a channel for snapshots, starting the source on the
+// first caller.
 //
 // One run per connection was a whole duplicate polling stack per client: its
 // own directory rescans, its own sqlite3 subprocess per database per tick,
@@ -52,14 +54,14 @@ type Server struct {
 // file in a watched directory — its own several hundred file descriptors.
 // Two front ends attached at once (the TUI and the Mac app) paid all of it
 // twice, for byte-identical snapshots.
-func (s *Server) subscribe() chan watcher.Snapshot {
+func (s *Server) subscribe() chan sessionview.Snapshot {
 	// Buffered so one client that stops reading (or is slow to write to)
 	// can't stall delivery to the others; send is non-blocking regardless.
-	ch := make(chan watcher.Snapshot, 8)
+	ch := make(chan sessionview.Snapshot, 8)
 	s.subMu.Lock()
 	defer s.subMu.Unlock()
 	if s.subs == nil {
-		s.subs = map[chan watcher.Snapshot]struct{}{}
+		s.subs = map[chan sessionview.Snapshot]struct{}{}
 	}
 	s.subs[ch] = struct{}{}
 	if !s.watcherOnce {
@@ -69,20 +71,20 @@ func (s *Server) subscribe() chan watcher.Snapshot {
 	return ch
 }
 
-func (s *Server) unsubscribe(ch chan watcher.Snapshot) {
+func (s *Server) unsubscribe(ch chan sessionview.Snapshot) {
 	s.subMu.Lock()
 	defer s.subMu.Unlock()
 	delete(s.subs, ch)
 }
 
-// fanOut runs the watcher for the life of the server and copies every
+// fanOut runs the source for the life of the server and copies every
 // snapshot to each current subscriber. It deliberately never stops: the
 // watchers are cheap to leave running relative to tearing one down and
 // standing a fresh one up on every reconnect, and a server with no clients
 // is idle anyway.
 func (s *Server) fanOut() {
-	in := make(chan watcher.Snapshot, 8)
-	go s.Watcher.Run(context.Background(), in)
+	in := make(chan sessionview.Snapshot, 8)
+	go s.Source.Run(context.Background(), in)
 	for snap := range in {
 		s.subMu.Lock()
 		for ch := range s.subs {
@@ -101,9 +103,8 @@ func (s *Server) fanOut() {
 // Listen removes any stale socket at path and starts listening on it.
 func Listen(path string) (net.Listener, error) {
 	// The socket is an unauthenticated control channel: anyone who can dial
-	// it can call StartFirstPrompt (type and submit arbitrary text into the
-	// owner's agent pane) or CreateSession (which runs the worktree-create
-	// userscripts). Go binds unix sockets 0755 by default, so the chmod to
+	// it can call CreateSession — which runs the worktree-create userscripts
+	// and types a caller-supplied first prompt into the new agent's pane. Go binds unix sockets 0755 by default, so the chmod to
 	// 0600 below is what actually gates it — connect(2) needs write
 	// permission on the socket. 0700 here only helps when this call is what
 	// creates the directory; the default one already exists (it holds
@@ -149,12 +150,17 @@ func (s *Server) Serve(ln net.Listener) error {
 
 func (s *Server) handle(c net.Conn) {
 	defer c.Close()
+	// One reader for the life of the connection, handed on to stream: a
+	// second bufio.Reader would drop whatever the first buffered past the
+	// request line, so a nudge arriving in the same read as the Watch
+	// request would vanish and the client would wait out a whole tick.
+	r := bufio.NewReader(c)
 	var req request
-	if err := json.NewDecoder(bufio.NewReader(c)).Decode(&req); err != nil {
+	if err := json.NewDecoder(r).Decode(&req); err != nil {
 		return
 	}
 	if req.Method == "Watch" {
-		s.stream(c)
+		s.stream(c, r)
 		return
 	}
 	res, err := s.dispatch(req.Method, req.Args)
@@ -168,31 +174,40 @@ func (s *Server) handle(c net.Conn) {
 	}
 }
 
-// stream pushes watcher snapshots until the client hangs up. The write
-// error on a closed connection is what ends it — there's no unsubscribe.
-func (s *Server) stream(c net.Conn) {
-	if s.Watcher == nil {
+// stream pushes snapshots until the client hangs up. The write error on a
+// closed connection is what ends it — there's no unsubscribe.
+//
+// The client's half of the connection isn't dead air: each line it sends is
+// a nudge, asking the source for a snapshot now rather than at its next
+// tick (see sessionview.Source.Nudge). Reading it is also how a client that
+// hangs up releases this goroutine immediately, rather than at the next
+// snapshot write.
+func (s *Server) stream(c net.Conn, r *bufio.Reader) {
+	if s.Source == nil {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ch := s.subscribe()
 	defer s.unsubscribe(ch)
-	// Watch the connection so a client that hangs up releases this goroutine
-	// immediately, rather than at the next snapshot write.
 	go func() {
-		io.Copy(io.Discard, c) // returns when the peer closes
-		cancel()
+		defer cancel() // returns when the peer closes
+		dec := json.NewDecoder(r)
+		for {
+			var n nudgeRequest
+			if err := dec.Decode(&n); err != nil {
+				return
+			}
+			if n.Nudge {
+				s.Source.Nudge()
+			}
+		}
 	}()
 	enc := json.NewEncoder(c)
 	for {
 		select {
 		case snap := <-ch:
-			w := snapshotWire{States: snap.States, PollTime: snap.PollTime}
-			if snap.Err != nil {
-				w.Err = snap.Err.Error()
-			}
-			if err := enc.Encode(w); err != nil {
+			if err := enc.Encode(snap); err != nil {
 				return
 			}
 		case <-ctx.Done():
@@ -215,20 +230,28 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 			return Result{}, errors.New("server has no agent options")
 		}
 		return Result{Agents: s.AgentOptions()}, nil
+	case "Themes":
+		// No Server hook, unlike AgentOptions: that table lives in
+		// internal/app, which this package can't import. This one is static
+		// data in config, which it already does.
+		return Result{Themes: config.Themes()}, nil
 	case "Sessions":
 		return Result{Sessions: b.Sessions()}, nil
-	case "Projects":
-		return Result{Strings: b.Projects()}, nil
-	case "TmuxAliveAll":
-		return Result{Alive: b.TmuxAliveAll()}, nil
+	case "SuggestedProject":
+		name, repo := b.SuggestedProject()
+		return Result{Name: name, Hint: repo}, nil
 
 	case "CreateSession":
-		sess, hint, err := b.CreateSession(a.Project, a.Name, a.Agent, a.Branch, a.Ticket, a.OpenTerminal, a.Dangerous, a.BaseBranch, a.Model, a.Thinking)
+		if a.Req == nil {
+			return Result{}, errors.New("CreateSession: missing request")
+		}
+		sess, hint, err := b.CreateSession(*a.Req)
 		return Result{Session: &sess, Hint: hint}, err
-	case "StartFirstPrompt":
-		return Result{}, b.StartFirstPrompt(a.TmuxSession, a.Prompt, a.AutoSubmit)
 	case "OpenSession":
 		hint, err := b.OpenSession(a.ID)
+		return Result{Hint: hint}, err
+	case "EnsureTmux":
+		hint, err := b.EnsureTmux(a.ID)
 		return Result{Hint: hint}, err
 	case "DeleteSession":
 		hint, err := b.DeleteSession(a.ID)
@@ -242,12 +265,7 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 	case "ChangeSummary":
 		files, commits, ok := b.ChangeSummary(a.ID)
 		return Result{Files: files, Commits: commits, OK: ok}, nil
-	case "PRStatus":
-		info, ok := b.PRStatus(a.ID)
-		return Result{PR: &info, OK: ok}, nil
 
-	case "SetSessionStatusTitle":
-		return Result{}, b.SetSessionStatusTitle(a.ID, a.State)
 	case "SetSessionTags":
 		return sessionResult(b.SetSessionTags(a.ID, a.Ticket, a.PR))
 	case "SetSessionPrompt":
@@ -282,7 +300,10 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		return s.mutResult(b.DeleteFolder(a.Project, a.Name))
 
 	case "AddProject":
-		return s.mutResult(b.AddProject(a.Name, a.Proj))
+		warning, err := b.AddProject(a.Name, a.Proj)
+		res, err := s.mutResult(err)
+		res.Hint = warning
+		return res, err
 	case "InitProjectAndAdd":
 		return s.mutResult(b.InitProjectAndAdd(a.Name, a.Proj))
 	case "AddPlainProject":

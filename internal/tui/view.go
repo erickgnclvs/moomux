@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/erickgnclvs/moomux/internal/watcher"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 )
 
 // narrowWidthBreak is the terminal width below which the list and detail
@@ -214,6 +214,8 @@ func (m *Model) focusedOverlayLine(content string) int {
 		case projFormInputCount + 1:
 			return lineContaining(content, m.renderAgentSelector())
 		case projFormInputCount + 2:
+			return lineContaining(content, m.renderFormLabel("model", 15)+m.renderProjectModelSelector())
+		case projFormInputCount + 3:
 			// The dangerous and worktree toggles render an identical
 			// "[on]"/"[off]" value — see the newFormDangerousFocus case
 			// above for why the label has to be part of the needle too.
@@ -546,7 +548,7 @@ func (m *Model) renderListView() string {
 
 // headerCowArt returns the small critter shown in the header: the normal
 // face-on cow, or — while viewing the archived list — the barn it's put out
-// to, echoing effectiveState's own "in the barn" label for a parked
+// to, echoing the core's own "in the barn" label for a parked
 // session. mirrored picks the narrow layout's right-facing cow orientation;
 // the barn has no facing direction, so it's the same either way. Unlike the
 // cow, the barn doesn't reflect eyes/session state — archived sessions are
@@ -563,11 +565,11 @@ func headerCowArt(eyes string, archived, mirrored bool) string {
 
 func (m *Model) renderHeader() string {
 	eyes := "oo"
-	st := watcher.Parked
+	var view sessionview.View
 	haveCursor := len(m.sessions) > 0 && m.cursor < len(m.sessions)
 	if haveCursor {
-		st = m.effectiveState(m.sessions[m.cursor])
-		eyes = stateEyes(st)
+		view = m.viewFor(m.sessions[m.cursor].ID)
+		eyes = stateEyes(view.State)
 	}
 
 	var left string
@@ -581,7 +583,7 @@ func (m *Model) renderHeader() string {
 		if haveCursor {
 			quipWidth := m.width - lipgloss.Width(cow) - 5
 			if quipWidth > 3 {
-				quip := muteStyle.Render(truncateToWidth(pickQuip(m.sessions[m.cursor].ID, quipPool(st)), quipWidth))
+				quip := muteStyle.Render(truncateToWidth(view.Quip, quipWidth))
 				left = lipgloss.JoinHorizontal(lipgloss.Center, cow, "  ", quip)
 			}
 		}

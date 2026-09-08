@@ -252,9 +252,53 @@ func (a *App) newTmuxSession(tmuxName, cwd, cmd, windowName string) error {
 		spec = nil
 	}
 	if spec == nil {
-		return a.Tmux.NewSession(tmuxName, cwd, cmd, windowName)
+		if err := a.Tmux.NewSession(tmuxName, cwd, cmd, windowName); err != nil {
+			return err
+		}
+		// The launch command is typed into a shell that has *just* forked
+		// (see NewSession's send-keys) — if that shell hasn't finished its
+		// own startup (rc files, prompt theme) by the time the command and
+		// Enter land, the Enter keypress can be swallowed by the shell's
+		// still-initializing line editor, leaving the command sitting typed
+		// but never run. waitForPaneReady then observes the shell's own late
+		// prompt render as "the pane changed and stabilized" and wrongly
+		// declares the agent ready — so StartFirstPrompt pastes the user's
+		// task into a bare shell prompt instead of the agent, with no error
+		// anywhere. Confirming the command actually left the input line
+		// here, and retrying Enter if it didn't, closes that race at its
+		// source rather than papering over it in the readiness check.
+		a.confirmLaunchCommandSubmitted(tmuxName, cmd)
+		return nil
 	}
 	return a.Tmux.NewSessionWithLayout(tmuxName, cwd, windowName, spec, cmd)
+}
+
+// confirmLaunchCommandSubmitted polls tmuxName's pane and, if it still shows
+// cmd sitting unexecuted on the shell's input line after a shell-startup
+// race swallowed the Enter NewSession sent with it, resends a bare Enter —
+// mirroring pressEnterUntilSubmitted's identical retry for the first-prompt
+// case. No-op if cmd is empty (no launch command was sent at all).
+func (a *App) confirmLaunchCommandSubmitted(tmuxName, cmd string) {
+	if cmd == "" {
+		return
+	}
+	for attempt := 0; ; attempt++ {
+		submitted := false
+		for i := 0; i < enterConfirmPolls; i++ {
+			time.Sleep(paneStablePoll)
+			cur, err := a.Tmux.CapturePane(tmuxName)
+			if err == nil && !strings.Contains(cur, cmd) {
+				submitted = true
+				break
+			}
+		}
+		if submitted || attempt >= enterConfirmRetries {
+			return
+		}
+		if err := a.Tmux.PressEnter(tmuxName); err != nil {
+			return
+		}
+	}
 }
 
 // agentInstallers are the per-agent writers that wire moomux's integrations
@@ -617,6 +661,122 @@ func newBranchBaseBranch(proj config.Project, newBranch bool, baseBranchRef stri
 	return baseBranchRef
 }
 
+// CreateSession runs the whole "new session" transaction: bring up the
+// worktree and tmux pane, attach the PR tag, compose and store the first
+// prompt, and type it into the agent.
+//
+// Once the pane exists the session is real, so nothing after that point may
+// turn a partial failure back into a failed create — a PR tag or first
+// prompt that doesn't land is reported as a hint on an otherwise successful
+// result, the same way a terminal that wouldn't open already is.
+//
+// This lives here rather than in a front end because it is the sequence a
+// front end most easily gets subtly wrong: it used to be six backend calls
+// made in order by internal/tui, and `moomux spawn` — the only other caller
+// in this repo — had already drifted from it, composing the prompt
+// differently and skipping the tag and prompt-storing steps entirely.
+func (a *App) CreateSession(req session.CreateRequest) (session.Session, string, error) {
+	s, report, err := a.CreateSessionReport(req)
+	return s, report.Hint, err
+}
+
+// CreateReport is what a create degraded on, for callers that need more than
+// something to display. The TUI shows Hint and moves on; `moomux spawn`
+// exits non-zero when PromptErr is set, because an agent sitting in a fresh
+// pane with no task is not a success a script should read as one.
+type CreateReport struct {
+	Hint      string
+	PromptErr error
+}
+
+// CreateSessionReport is CreateSession with the degraded steps named rather
+// than flattened into one string.
+func (a *App) CreateSessionReport(req session.CreateRequest) (session.Session, CreateReport, error) {
+	var report CreateReport
+	s, hint, err := a.createSession(req.Project, req.Name, req.Agent, req.Branch, req.Ticket,
+		req.OpenTerminal, req.Dangerous, req.BaseBranch, req.Model, req.Thinking)
+	if err != nil {
+		return session.Session{}, report, err
+	}
+	if req.PR != "" {
+		if updated, tagErr := a.SetSessionTags(s.ID, req.Ticket, req.PR); tagErr != nil {
+			hint = joinHint(hint, fmt.Sprintf("couldn't set PR tag: %v", tagErr))
+		} else {
+			s = updated
+		}
+	}
+	// Compose off the agent that actually launched, not the one the request
+	// named: an empty Agent means "the project's default", which
+	// createSession resolves — and whether the thinking level became a
+	// launch flag or a prompt prefix depends on which agent that turned out
+	// to be. Composing off the unresolved name applied it both ways for a
+	// codex-default project asked for with no explicit -agent.
+	resolved := req
+	resolved.Agent = s.AgentName()
+	if prompt := a.FirstPrompt(resolved); prompt != "" {
+		// Storing it is best-effort: the prompt the agent is about to be
+		// handed matters more than moomux's own record of it.
+		if updated, promptErr := a.SetSessionPrompt(s.ID, prompt); promptErr == nil {
+			s = updated
+		}
+		if err := a.StartFirstPrompt(s.TmuxSession, prompt, req.AutoSubmit); err != nil {
+			report.PromptErr = err
+			hint = joinHint(hint, fmt.Sprintf("couldn't send first prompt: %v", err))
+		}
+	}
+	report.Hint = hint
+	return s, report, nil
+}
+
+// FirstPrompt composes the text actually typed into a new session's agent:
+// the requested prompt, prefixed with the thinking level for agents that
+// have no launch-time flag for it, then whichever of the ticket and PR URLs
+// were given.
+//
+// The thinking level is applied one way or the other, never both: an agent
+// with a real reasoning-effort flag already had it applied to its launch
+// command (see reasoningEffortFlag), so asking that agent for it again in
+// English would be noise. Branching on reasoningEffortFlag rather than on
+// the agent's name keeps one source for which agent is which.
+func (a *App) FirstPrompt(req session.CreateRequest) string {
+	if req.Prompt == "" {
+		// ponytail: a thinking level with no prompt to carry it is simply
+		// dropped for those agents. The form doesn't warn about the
+		// combination; it just has no effect.
+		return ""
+	}
+	prompt := req.Prompt
+	if reasoningEffortFlag(req.Agent, req.Thinking) == "" && req.Thinking != "" && req.Thinking != "default" {
+		prompt = req.Thinking + ": " + prompt
+	}
+	var extras []string
+	if req.Ticket != "" {
+		extras = append(extras, "Ticket: "+req.Ticket)
+	}
+	if req.PR != "" {
+		extras = append(extras, "PR: "+req.PR)
+	}
+	if len(extras) > 0 {
+		// The agent's first task carries the same context the session list
+		// shows as clickable icons.
+		prompt += "\n\n" + strings.Join(extras, "\n")
+	}
+	return prompt
+}
+
+// joinHint concatenates two degraded-but-succeeded notes, either of which
+// may be empty.
+func joinHint(a, b string) string {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	default:
+		return a + " — " + b
+	}
+}
+
 // CreateSession's hint, when non-empty, is a user-facing instruction
 // (e.g. "run: tmux attach -t ...") to show alongside success — it is
 // not an error. When openTerminal is false, the tmux session is started
@@ -627,13 +787,13 @@ func newBranchBaseBranch(proj config.Project, newBranch bool, baseBranchRef stri
 // is passed to the agent as --model. thinking, when non-empty and not
 // "default", is passed to codex as -c model_reasoning_effort=<value> (see
 // reasoningEffortFlag); it has no effect for claude/opencode, which have no
-// launch-time reasoning-effort flag — the caller is expected to apply their
-// magic-word prompt prefix itself (see thinkingPromptPrefix in internal/tui).
+// launch-time reasoning-effort flag — for those, FirstPrompt applies the
+// magic-word prompt prefix instead.
 // dangerous is a pointer so a caller can leave it unset: nil means "use the
 // project's own Dangerous setting", exactly like every other project-level
 // default here. A caller that wants to force it on or off regardless of the
 // project passes an explicit true/false.
-func (a *App) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
+func (a *App) createSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
 	proj, ok := a.project(project)
 	if !ok {
 		return session.Session{}, "", fmt.Errorf("unknown project %q", project)
@@ -652,6 +812,12 @@ func (a *App) CreateSession(project, name, agent, existingBranch, ticket string,
 	}
 	if agent == "" {
 		agent = proj.AgentName()
+	}
+	if model == "" && agent == proj.AgentName() {
+		// Unspecified: fall through to the project's default model. Gated on
+		// the agent matching, since a model name only means anything for the
+		// agent it was picked for.
+		model = proj.Model
 	}
 	if err := validateAgent(agent); err != nil {
 		return session.Session{}, "", err
@@ -862,10 +1028,23 @@ const (
 // looks exactly as "stable" as an idle agent input box, but typing the task
 // text into it just spams a wrong-passphrase loop until the text runs out,
 // and the agent itself never receives anything.
+//
+// "do you trust the files" covers Claude Code's own workspace-trust dialog.
+// CreateSession pre-approves every new worktree in ~/.claude.json (see
+// claudehook.TrustDirectory) specifically so this dialog never shows — but
+// that file is a shared, unlocked read-modify-write target: back-to-back
+// `moomux spawn` calls, or the long-running `claude` processes they launch
+// each independently reading and writing it, can race and silently drop an
+// entry another writer just added. When that happens the dialog shows up
+// anyway, looks exactly as "stable" as a real idle prompt, and typing text
+// into it does nothing (it's a Yes/No chooser, not a text field) — Enter
+// just dismisses it, discarding the prompt with no error. Treating it as a
+// stuck prompt turns that into a clear, actionable failure instead.
 var stuckPromptMarkers = []string{
 	"enter passphrase",
 	"password:",
 	"verification code",
+	"do you trust the files",
 }
 
 // stuckPromptMarker returns the first stuckPromptMarkers substring found in
@@ -1126,7 +1305,20 @@ func (a *App) SetSessionStatusTitle(id string, st watcher.State) error {
 	}
 	name := a.titleName(s)
 	if current, err := a.Tmux.WindowName(s.TmuxSession); err == nil && current != "" {
-		name = stripStatusGlyph(current)
+		// Only a name that doesn't end in " <session name>" can be a user
+		// rename; anything that does is one we generated, so regenerate it
+		// from scratch rather than feeding tmux's own output back in.
+		// tmux replaces every non-ASCII character in a name with "_" (one
+		// per display cell) whenever it expands a format for a client it
+		// thinks can't handle UTF-8, so a read-back name can come back with
+		// the project emoji as "__" and the status glyph as "_". Writing
+		// that back made the corruption permanent, and left stripStatusGlyph
+		// with no glyph it recognised — so the next update prepended a
+		// second glyph instead of replacing the first, growing names like
+		// "⚠ _ _ _ __ speedly" one status change at a time.
+		if cur := stripStatusGlyph(current); !strings.HasSuffix(cur, " "+s.Name) {
+			name = cur
+		}
 	}
 	return a.Tmux.SetWindowName(s.TmuxSession, titleGlyph(st, name))
 }
@@ -1144,6 +1336,64 @@ func (a *App) SetSessionTags(id, ticket, pr string) (session.Session, error) {
 	return s, nil
 }
 
+// withFolders runs mutate against a copy of project's folder map and
+// persists the result, following the same cfgMu -> reload -> mutate -> save
+// idiom as SetTheme and friends: the lock is what keeps a mutation from
+// racing the ConfigSnapshot reads every front end does, and the reload makes
+// the write land on top of whatever another process saved meanwhile. Mutating
+// a copy is what makes the rollback a single reassignment — the map inside
+// a.Cfg.Projects[project] is shared, so undoing an in-place key write would
+// otherwise mean replaying each individual change in reverse.
+func (a *App) withFolders(project string, mutate func(map[string]config.FolderMeta) error) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
+		return fmt.Errorf("reload config: %w", err)
+	}
+	p, ok := a.Cfg.Projects[project]
+	if !ok {
+		return fmt.Errorf("unknown project %q", project)
+	}
+	prev := p.Folders
+	folders := maps.Clone(p.Folders)
+	if folders == nil {
+		folders = map[string]config.FolderMeta{}
+	}
+	if err := mutate(folders); err != nil {
+		return err
+	}
+	p.Folders = folders
+	a.Cfg.Projects[project] = p
+	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
+		p.Folders = prev
+		a.Cfg.Projects[project] = p
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
+}
+
+// refileSessions points every session in project currently filed under from
+// at to ("" un-parents them back to top-level). Used by RenameFolder and
+// DeleteFolder to bring membership — which lives on each Session, not in the
+// folder map — in step with the config write they just made.
+//
+// ponytail: the config write and these store writes are two separate saves,
+// not one transaction — a crash between them leaves members pointing at a
+// name no longer in Project.Folders. That degrades gracefully (a missing
+// FolderMeta reads as a zero-value one everywhere), so it is left as is;
+// revisit with a combined write if orphaned folders show up in practice.
+func (a *App) refileSessions(project, from, to string) error {
+	for _, s := range a.Store.All() {
+		if s.Project == project && s.Folder == from {
+			s.Folder = to
+			if err := a.Store.Put(s); err != nil {
+				return fmt.Errorf("store: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
 // CreateFolder adds an empty, expanded folder to project so it exists (and
 // can be filed into) before any session has been assigned to it — the
 // Folders overlay's "n" (new) action. It's an error to create one that
@@ -1153,44 +1403,27 @@ func (a *App) CreateFolder(project, name string) error {
 	if name == "" {
 		return fmt.Errorf("folder name required")
 	}
-	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
-		return fmt.Errorf("reload config: %w", err)
-	}
-	p, ok := a.Cfg.Projects[project]
-	if !ok {
-		return fmt.Errorf("unknown project %q", project)
-	}
-	if _, exists := p.Folders[name]; exists {
-		return fmt.Errorf("folder %q already exists", name)
-	}
-	// Land the new folder after everything else currently in this project
-	// (top-level sessions and other folders alike) rather than at Order 0,
-	// which would sort it — misleadingly — to the very top.
-	var maxOrder int64
-	for _, s := range a.Store.ByProject(project) {
-		if s.Order > maxOrder {
-			maxOrder = s.Order
+	return a.withFolders(project, func(folders map[string]config.FolderMeta) error {
+		if _, exists := folders[name]; exists {
+			return fmt.Errorf("folder %q already exists", name)
 		}
-	}
-	for _, meta := range p.Folders {
-		if meta.Order > maxOrder {
-			maxOrder = meta.Order
+		// Land the new folder after everything else currently in this
+		// project (top-level sessions and other folders alike) rather than
+		// at Order 0, which would sort it — misleadingly — to the very top.
+		var maxOrder int64
+		for _, s := range a.Store.ByProject(project) {
+			if s.Order > maxOrder {
+				maxOrder = s.Order
+			}
 		}
-	}
-	if p.Folders == nil {
-		p.Folders = map[string]config.FolderMeta{}
-	}
-	p.Folders[name] = config.FolderMeta{Order: maxOrder + 1}
-	a.Cfg.Projects[project] = p
-	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
-		// p.Folders may be the same map instance now sitting in
-		// a.Cfg.Projects[project] (reload reused it, or it's the one just
-		// created above) — deleting the key we just added is what actually
-		// undoes the mutation, not just leaving the reassignment above alone.
-		delete(p.Folders, name)
-		return fmt.Errorf("save config: %w", err)
-	}
-	return nil
+		for _, meta := range folders {
+			if meta.Order > maxOrder {
+				maxOrder = meta.Order
+			}
+		}
+		folders[name] = config.FolderMeta{Order: maxOrder + 1}
+		return nil
+	})
 }
 
 // SetSessionFolder files id under the named folder within its own project
@@ -1202,26 +1435,17 @@ func (a *App) SetSessionFolder(id, folder string) (session.Session, error) {
 		return session.Session{}, fmt.Errorf("unknown session %q", id)
 	}
 	if folder != "" {
-		if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
-			return session.Session{}, fmt.Errorf("reload config: %w", err)
-		}
-		p, ok := a.Cfg.Projects[s.Project]
-		if !ok {
-			return session.Session{}, fmt.Errorf("unknown project %q", s.Project)
-		}
-		if _, exists := p.Folders[folder]; !exists {
-			if p.Folders == nil {
-				p.Folders = map[string]config.FolderMeta{}
+		err := a.withFolders(s.Project, func(folders map[string]config.FolderMeta) error {
+			if _, exists := folders[folder]; !exists {
+				// Anchor the new folder where s already sits so filing it
+				// away doesn't visibly relocate it; this only matters once
+				// the folder is later collapsed (see FolderMeta.Order).
+				folders[folder] = config.FolderMeta{Order: s.Order}
 			}
-			// Anchor the new folder where s already sits so filing it away
-			// doesn't visibly relocate it; this only matters once the
-			// folder is later collapsed (see FolderMeta.Order's doc).
-			p.Folders[folder] = config.FolderMeta{Order: s.Order}
-			a.Cfg.Projects[s.Project] = p
-			if err := config.Save(a.CfgPath, a.Cfg); err != nil {
-				delete(p.Folders, folder) // undo the map mutation above, not just the struct reassignment
-				return session.Session{}, fmt.Errorf("save config: %w", err)
-			}
+			return nil
+		})
+		if err != nil {
+			return session.Session{}, err
 		}
 	}
 	s.Folder = folder
@@ -1233,103 +1457,57 @@ func (a *App) SetSessionFolder(id, folder string) (session.Session, error) {
 
 // RenameFolder renames a project's folder, updating every member session's
 // Folder field to match in the same pass.
-//
-// ponytail: the config write (folder map) and the store writes (each
-// member's Folder field) are two separate saves, not one transaction — a
-// crash between them leaves member sessions pointing at a name no longer in
-// Project.Folders. Degrades gracefully (renderList/buildDisplayLines treat a
-// missing FolderMeta as a zero-value one) rather than corrupting anything,
-// so it's left as is; revisit with a combined write if orphaned-folder
-// reports show up in practice.
 func (a *App) RenameFolder(project, oldName, newName string) error {
 	if newName == "" {
 		return fmt.Errorf("folder name required")
 	}
-	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
-		return fmt.Errorf("reload config: %w", err)
-	}
-	p, ok := a.Cfg.Projects[project]
-	if !ok {
-		return fmt.Errorf("unknown project %q", project)
-	}
-	meta, ok := p.Folders[oldName]
-	if !ok {
-		return fmt.Errorf("unknown folder %q", oldName)
-	}
 	if oldName == newName {
 		return nil
 	}
-	if _, exists := p.Folders[newName]; exists {
-		return fmt.Errorf("folder %q already exists", newName)
-	}
-	delete(p.Folders, oldName)
-	if p.Folders == nil {
-		p.Folders = map[string]config.FolderMeta{}
-	}
-	p.Folders[newName] = meta
-	a.Cfg.Projects[project] = p
-	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
-		delete(p.Folders, newName)
-		p.Folders[oldName] = meta
-		return fmt.Errorf("save config: %w", err)
-	}
-	for _, s := range a.Store.All() {
-		if s.Project == project && s.Folder == oldName {
-			s.Folder = newName
-			if err := a.Store.Put(s); err != nil {
-				return fmt.Errorf("store: %w", err)
-			}
+	err := a.withFolders(project, func(folders map[string]config.FolderMeta) error {
+		meta, ok := folders[oldName]
+		if !ok {
+			return fmt.Errorf("unknown folder %q", oldName)
 		}
+		if _, exists := folders[newName]; exists {
+			return fmt.Errorf("folder %q already exists", newName)
+		}
+		delete(folders, oldName)
+		folders[newName] = meta
+		return nil
+	})
+	if err != nil {
+		return err
 	}
-	return nil
+	return a.refileSessions(project, oldName, newName)
 }
 
 // SetFolderCollapsed persists a folder's collapsed/expanded display state.
 func (a *App) SetFolderCollapsed(project, name string, collapsed bool) error {
-	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
-		return fmt.Errorf("reload config: %w", err)
-	}
-	p, ok := a.Cfg.Projects[project]
-	if !ok {
-		return fmt.Errorf("unknown project %q", project)
-	}
-	meta := p.Folders[name]
-	meta.Collapsed = collapsed
-	if p.Folders == nil {
-		p.Folders = map[string]config.FolderMeta{}
-	}
-	p.Folders[name] = meta
-	a.Cfg.Projects[project] = p
-	return config.Save(a.CfgPath, a.Cfg)
+	return a.withFolders(project, func(folders map[string]config.FolderMeta) error {
+		meta, ok := folders[name]
+		if !ok {
+			// Writing a zero-value meta here would conjure the folder into
+			// existence at Order 0, i.e. pinned to the top of the list.
+			return fmt.Errorf("unknown folder %q", name)
+		}
+		meta.Collapsed = collapsed
+		folders[name] = meta
+		return nil
+	})
 }
 
 // DeleteFolder removes a folder definition and un-parents its member
 // sessions back to top-level (Session.Folder = "").
-//
-// ponytail: same non-atomicity as RenameFolder (config save, then per-member
-// store saves) — see its doc.
 func (a *App) DeleteFolder(project, name string) error {
-	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
-		return fmt.Errorf("reload config: %w", err)
+	err := a.withFolders(project, func(folders map[string]config.FolderMeta) error {
+		delete(folders, name)
+		return nil
+	})
+	if err != nil {
+		return err
 	}
-	p, ok := a.Cfg.Projects[project]
-	if !ok {
-		return fmt.Errorf("unknown project %q", project)
-	}
-	delete(p.Folders, name)
-	a.Cfg.Projects[project] = p
-	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
-		return fmt.Errorf("save config: %w", err)
-	}
-	for _, s := range a.Store.All() {
-		if s.Project == project && s.Folder == name {
-			s.Folder = ""
-			if err := a.Store.Put(s); err != nil {
-				return fmt.Errorf("store: %w", err)
-			}
-		}
-	}
-	return nil
+	return a.refileSessions(project, name, "")
 }
 
 // SessionForTmuxName finds the session running as tmux session tmuxName.
@@ -1501,14 +1679,22 @@ func samePath(a, b string) bool {
 	return ra == rb
 }
 
-func (a *App) OpenSession(id string) (string, error) {
+// EnsureTmux revives a session's tmux (and its agent) without touching a
+// terminal: store lookup, agent-support repair, cwd-mismatch recreate, the
+// lazy tmux-name migration, and the LastOpened stamp. Returns the hooks
+// hint, which may be empty.
+//
+// It exists split out from OpenSession because a front end that attaches
+// tmux itself (the macOS app's Attach button) must be able to wake a parked
+// session without the core opening an iTerm tab.
+func (a *App) EnsureTmux(id string) (string, error) {
 	s, ok := a.Store.Get(id)
 	if !ok {
 		return "", fmt.Errorf("unknown session %q", id)
 	}
 	hooksHint := a.repairAgentSupport(s)
 	has, err := a.Tmux.HasSession(s.TmuxSession)
-	slog.Info("open session", "id", id, "tmux_session", s.TmuxSession, "worktree", s.WorktreePath, "tmux_has_session", has)
+	slog.Info("ensure tmux", "id", id, "tmux_session", s.TmuxSession, "worktree", s.WorktreePath, "tmux_has_session", has)
 	if err != nil {
 		slog.Error("HasSession error", "id", id, "err", err)
 		return "", err
@@ -1554,6 +1740,25 @@ func (a *App) OpenSession(id string) (string, error) {
 		}
 	}
 	a.Tmux.ConfigureTitleTracking(s.TmuxSession, a.titleName(s))
+	s.LastOpened = time.Now()
+	if err := a.Store.Put(s); err != nil {
+		slog.Error("store last-opened failed", "id", id, "err", err)
+	}
+	return hooksHint, nil
+}
+
+func (a *App) OpenSession(id string) (string, error) {
+	hooksHint, err := a.EnsureTmux(id)
+	if err != nil {
+		return "", err
+	}
+	// Re-read: EnsureTmux may have stamped LastOpened and migrated
+	// TmuxSession/AgentPort, and Store.Put writes the whole struct — so the
+	// TermTabID write below has to build on its version, not a stale one.
+	s, ok := a.Store.Get(id)
+	if !ok {
+		return "", fmt.Errorf("unknown session %q", id)
+	}
 	var tabID, hint string
 	if browser.Remote() {
 		// Over SSH, the desktop terminal (iTerm/kitty/etc.) lives on a
@@ -1573,9 +1778,8 @@ func (a *App) OpenSession(id string) (string, error) {
 		hint = joinHints(hooksHint, hint)
 	}
 	s.TermTabID = tabID
-	s.LastOpened = time.Now()
 	if err := a.Store.Put(s); err != nil {
-		slog.Error("store last-opened failed", "id", id, "err", err)
+		slog.Error("store term tab failed", "id", id, "err", err)
 	}
 	slog.Info("session opened", "id", id)
 	return hint, nil
@@ -1591,6 +1795,23 @@ func (a *App) openTerminal(tabID, tmuxSession, name string) (newTabID, hint stri
 	}
 	hint, err = a.Terminal.OpenSession(tmuxSession, name)
 	return "", hint, err
+}
+
+// SuggestedProject is the add-project form's prefill: the working directory
+// moomux's core is running in, and its base name. The common case is running
+// moomux from inside the repo you want to add, and nobody wants to retype an
+// absolute path.
+//
+// It's served rather than computed by the front end because the path has to
+// exist on the machine that will clone, branch and run agents in it — over
+// the socket that's this one, and a client offering its own cwd would prefill
+// a path the core can't use (for a native app, its bundle or "/").
+func (a *App) SuggestedProject() (name, repo string) {
+	cwd, err := os.Getwd()
+	if err != nil || cwd == "/" {
+		return "", ""
+	}
+	return filepath.Base(cwd), cwd
 }
 
 // TmuxAliveAll returns id→alive for every stored session using a single
@@ -1693,17 +1914,22 @@ func (a *App) saveProjectLocked(name string, p config.Project) error {
 	return nil
 }
 
-func (a *App) AddProject(name string, p config.Project) error {
+// AddProject's warning, when non-empty, accompanies a gitwt.ErrNotGitRepo
+// failure: it's what the front end's "init it here / add as plain" dialog
+// shows about the path it's being asked about. Computed here rather than by
+// the client because it's a fact about the machine the path is on, which
+// over the socket is this one, not the client's.
+func (a *App) AddProject(name string, p config.Project) (warning string, err error) {
 	a.cfgMu.Lock()
 	defer a.cfgMu.Unlock()
 	if err := a.validateProjectLocked(name, &p); err != nil {
-		return err
+		return "", err
 	}
 	if err := gitwt.IsRepo(p.Repo); err != nil {
-		return err
+		return a.PathWarning(p.Repo), err
 	}
 	p.Kind = "git"
-	return a.saveProjectLocked(name, p)
+	return "", a.saveProjectLocked(name, p)
 }
 
 // InitProjectAndAdd creates the directory (if missing), runs `git init` with the
@@ -1967,14 +2193,36 @@ func (a *App) ChangeSummary(id string) (filesChanged, unpushedCommits int, ok bo
 // authenticated, or the PR can't be resolved).
 func (a *App) PRStatus(id string) (prstatus.Info, bool) {
 	s, exists := a.Store.Get(id)
-	if !exists || s.PR == "" {
+	if !exists || a.PR == nil {
 		return prstatus.Info{}, false
 	}
-	info, err := a.PR.Fetch(s.PR)
+	// An untagged session resolves its PR from the branch in its own
+	// worktree (dir only matters for that form), so `moomux tag -pr` is an
+	// override rather than the only way one ever gets attached: a PR opened
+	// from another machine, or from the GitHub web UI, is picked up just the
+	// same. A ticket link in the PR's title or body is picked up alongside
+	// it — including for a session that already had its PR tagged but no
+	// ticket, since the lookup returns both either way.
+	dir := ""
+	if s.PR == "" {
+		dir = s.WorktreePath
+	}
+	pr, err := a.PR.Fetch(dir, s.PR)
 	if err != nil {
 		return prstatus.Info{}, false
 	}
-	return info, true
+	// Only ever fill a blank field: a value someone set by hand (or a
+	// ticket deliberately re-pointed) outranks anything inferred here.
+	ticket := s.Ticket
+	if ticket == "" {
+		ticket = pr.Ticket
+	}
+	if s.PR != pr.URL || s.Ticket != ticket {
+		if _, err := a.SetSessionTags(s.ID, ticket, pr.URL); err != nil {
+			return prstatus.Info{}, false
+		}
+	}
+	return pr.Info, true
 }
 
 // DeleteSession removes the session's worktree, branch, and store entry. The

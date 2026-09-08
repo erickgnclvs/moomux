@@ -1,4 +1,4 @@
-package tui
+package app
 
 import (
 	"fmt"
@@ -15,11 +15,15 @@ import (
 // look fine.
 var macTCCFolders = []string{"Desktop", "Documents", "Downloads"}
 
-// tccWarning returns a warning line if path lives inside a macOS
+// PathWarning returns a warning line if path lives inside a macOS
 // TCC-protected user folder, or "" otherwise. This matters most for plain
 // (non-git) projects: every session for a plain project runs directly in
 // path with no worktree isolation, so a blocked folder breaks every session.
-func tccWarning(path string) string {
+//
+// It lives here, not in a front end, because it is a fact about the machine
+// the path is on — over the socket that is the core's machine, and a client
+// checking its own $HOME and GOOS would answer for the wrong one.
+func (a *App) PathWarning(path string) string {
 	if runtime.GOOS != "darwin" || path == "" {
 		return ""
 	}

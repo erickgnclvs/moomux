@@ -11,36 +11,36 @@ import (
 	"time"
 
 	"github.com/erickgnclvs/moomux/internal/config"
-	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/tui"
-	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
 // Client speaks to a Server over a unix socket. It implements tui.Backend,
 // so the TUI runs against a remote core with no other changes, and
-// watcher.Watcher, so status updates stream from the same place.
+// sessionview.Source, so the derived per-session state streams from the same
+// place — already joined, labelled and status-checked by the core.
 type Client struct {
 	Socket string
 
-	// mu guards the last-good cache below. tui.Backend's Sessions/Projects/
-	// TmuxAliveAll have no error return — they're called from rendering
-	// paths, which have nowhere to put one — so a failed call would
-	// otherwise return nil and read as "everything was deleted". That is
-	// actively destructive: update.go prunes m.states against the live
-	// session set, so one empty Sessions() wipes every agent state badge.
-	// Returning the last known-good answer keeps the UI stale-but-true; Run
-	// is what tells the user the connection is down.
+	nudgeOnce sync.Once
+	nudgeCh   chan struct{}
+
+	// mu guards the last-good cache below. tui.Backend's Sessions has no
+	// error return — it's called from rendering paths, which have nowhere
+	// to put one — so a failed call would
+	// otherwise return nil and read as "everything was deleted" — the list
+	// would empty out mid-render on one failed call. Returning the last
+	// known-good answer keeps the UI stale-but-true; Run is what tells the
+	// user the connection is down.
 	mu           sync.Mutex
 	lastSessions []session.Session
-	lastProjects []string
-	lastAlive    map[string]bool
 	lastCfg      config.Config
 }
 
 var (
-	_ tui.Backend     = (*Client)(nil)
-	_ watcher.Watcher = (*Client)(nil)
+	_ tui.Backend        = (*Client)(nil)
+	_ sessionview.Source = (*Client)(nil)
 )
 
 // call dials, sends one request, reads one response, closes. No pooling and
@@ -75,16 +75,20 @@ func (c *Client) call(method string, a Args) (Result, error) {
 // goroutine (see tui.Backend.ConfigSnapshot's doc comment), so this must
 // never refresh a shared *config.Config pointer in place itself.
 func (c *Client) mut(method string, a Args) error {
+	_, err := c.mutResult(method, a)
+	return err
+}
+
+// mutResult is mut, keeping the response so a caller that needs more than
+// "did it work" (AddProject's path warning) can read it.
+func (c *Client) mutResult(method string, a Args) (Result, error) {
 	r, err := c.call(method, a)
-	if err != nil {
-		return err
-	}
 	if r.Cfg != nil {
 		c.mu.Lock()
 		c.lastCfg = *r.Cfg
 		c.mu.Unlock()
 	}
-	return nil
+	return r, err
 }
 
 // err0 is for the many methods whose only return is an error.
@@ -148,6 +152,17 @@ func (c *Client) AgentOptions() ([]config.AgentOption, error) {
 	return r.Agents, nil
 }
 
+// Themes fetches the server's color palettes — the agent-state colors a
+// front end renders, and the list a theme picker offers. Like AgentOptions,
+// it isn't part of tui.Backend: fetched once at startup, not per render.
+func (c *Client) Themes() ([]config.Theme, error) {
+	r, err := c.call("Themes", Args{})
+	if err != nil {
+		return nil, err
+	}
+	return r.Themes, nil
+}
+
 func (c *Client) Sessions() []session.Session {
 	r, err := c.call("Sessions", Args{})
 	c.mu.Lock()
@@ -159,46 +174,31 @@ func (c *Client) Sessions() []session.Session {
 	return r.Sessions
 }
 
-func (c *Client) Projects() []string {
-	r, err := c.call("Projects", Args{})
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// SuggestedProject asks the core, not this process: over the socket the repo
+// path has to exist on the server's machine.
+func (c *Client) SuggestedProject() (string, string) {
+	r, err := c.call("SuggestedProject", Args{})
 	if err != nil {
-		return c.lastProjects
+		return "", ""
 	}
-	c.lastProjects = r.Strings
-	return r.Strings
+	return r.Name, r.Hint
 }
 
-func (c *Client) TmuxAliveAll() map[string]bool {
-	r, err := c.call("TmuxAliveAll", Args{})
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err != nil {
-		return c.lastAlive
-	}
-	c.lastAlive = r.Alive
-	return r.Alive
-}
-
-func (c *Client) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
-	r, err := c.call("CreateSession", Args{
-		Project: project, Name: name, Agent: agent, Branch: existingBranch, Ticket: ticket,
-		OpenTerminal: openTerminal, Dangerous: dangerous, BaseBranch: baseBranch,
-		Model: model, Thinking: thinking,
-	})
+func (c *Client) CreateSession(req session.CreateRequest) (session.Session, string, error) {
+	r, err := c.call("CreateSession", Args{Req: &req})
 	if r.Session == nil {
 		return session.Session{}, r.Hint, err
 	}
 	return *r.Session, r.Hint, err
 }
 
-func (c *Client) StartFirstPrompt(tmuxSession, prompt string, autoSubmit bool) error {
-	return c.err0("StartFirstPrompt", Args{TmuxSession: tmuxSession, Prompt: prompt, AutoSubmit: autoSubmit})
-}
-
 func (c *Client) OpenSession(id string) (string, error) {
 	r, err := c.call("OpenSession", Args{ID: id})
+	return r.Hint, err
+}
+
+func (c *Client) EnsureTmux(id string) (string, error) {
+	r, err := c.call("EnsureTmux", Args{ID: id})
 	return r.Hint, err
 }
 
@@ -223,18 +223,6 @@ func (c *Client) ChangeSummary(id string) (filesChanged, unpushedCommits int, ok
 		return 0, 0, false
 	}
 	return r.Files, r.Commits, r.OK
-}
-
-func (c *Client) PRStatus(id string) (prstatus.Info, bool) {
-	r, err := c.call("PRStatus", Args{ID: id})
-	if err != nil || r.PR == nil {
-		return prstatus.Info{}, false
-	}
-	return *r.PR, r.OK
-}
-
-func (c *Client) SetSessionStatusTitle(id string, st watcher.State) error {
-	return c.err0("SetSessionStatusTitle", Args{ID: id, State: st})
 }
 
 func (c *Client) SetSessionTags(id, ticket, pr string) (session.Session, error) {
@@ -299,8 +287,9 @@ func (c *Client) DeleteFolder(project, name string) error {
 	return c.mut("DeleteFolder", Args{Project: project, Name: name})
 }
 
-func (c *Client) AddProject(name string, p config.Project) error {
-	return c.mut("AddProject", Args{Name: name, Proj: p})
+func (c *Client) AddProject(name string, p config.Project) (string, error) {
+	r, err := c.mutResult("AddProject", Args{Name: name, Proj: p})
+	return r.Hint, err
 }
 
 func (c *Client) InitProjectAndAdd(name string, p config.Project) error {
@@ -339,12 +328,30 @@ func (c *Client) SetCompactDetail(compact bool) error {
 	return c.mut("SetCompactDetail", Args{On: compact})
 }
 
-// Run implements watcher.Watcher, forwarding the server's snapshot stream
+// Nudge implements sessionview.Source, asking the server for a snapshot now
+// instead of at its next tick. Handed to the live stream goroutine rather
+// than written to the connection here, so it can't race that goroutine's
+// own writes; dropped on the floor when no stream is connected, since a
+// reconnect re-emits everything anyway.
+func (c *Client) Nudge() {
+	c.nudgeOnce.Do(func() { c.nudgeCh = make(chan struct{}, 1) })
+	select {
+	case c.nudgeCh <- struct{}{}:
+	default:
+	}
+}
+
+func (c *Client) nudges() chan struct{} {
+	c.nudgeOnce.Do(func() { c.nudgeCh = make(chan struct{}, 1) })
+	return c.nudgeCh
+}
+
+// Run implements sessionview.Source, forwarding the server's snapshot stream
 // and reconnecting until ctx is done. Each disconnect emits a snapshot
 // carrying only an error, which update.go flashes once — without it the TUI
-// keeps rendering the last states forever, which reads as live rather than
+// keeps rendering the last views forever, which reads as live rather than
 // frozen.
-func (c *Client) Run(ctx context.Context, out chan<- watcher.Snapshot) {
+func (c *Client) Run(ctx context.Context, out chan<- sessionview.Snapshot) {
 	const maxBackoff = 5 * time.Second
 	backoff := 200 * time.Millisecond
 	for ctx.Err() == nil {
@@ -356,7 +363,7 @@ func (c *Client) Run(ctx context.Context, out chan<- watcher.Snapshot) {
 			backoff = 200 * time.Millisecond // a working connection earns a fast retry
 		}
 		select {
-		case out <- watcher.Snapshot{PollTime: time.Now(), Err: fmt.Errorf("status stream lost (%v); reconnecting", err)}:
+		case out <- sessionview.Snapshot{PollTime: time.Now(), Err: fmt.Sprintf("status stream lost (%v); reconnecting", err)}:
 		case <-ctx.Done():
 			return
 		}
@@ -374,7 +381,7 @@ func (c *Client) Run(ctx context.Context, out chan<- watcher.Snapshot) {
 // stream holds one connection open, forwarding snapshots. got reports
 // whether any snapshot arrived, so Run can tell a healthy connection that
 // dropped from one that never worked.
-func (c *Client) stream(ctx context.Context, out chan<- watcher.Snapshot) (got bool, err error) {
+func (c *Client) stream(ctx context.Context, out chan<- sessionview.Snapshot) (got bool, err error) {
 	conn, err := net.Dial("unix", c.Socket)
 	if err != nil {
 		return false, err
@@ -389,22 +396,36 @@ func (c *Client) stream(ctx context.Context, out chan<- watcher.Snapshot) (got b
 		case <-done:
 		}
 	}()
-	if err := json.NewEncoder(conn).Encode(request{Method: "Watch"}); err != nil {
+	enc := json.NewEncoder(conn)
+	if err := enc.Encode(request{Method: "Watch"}); err != nil {
 		return false, err
 	}
+	// Forward nudges on this connection. Only this goroutine ever writes to
+	// conn after the request above, so Nudge itself never touches it.
+	go func() {
+		nudges := c.nudges()
+		for {
+			select {
+			case <-nudges:
+				if err := enc.Encode(nudgeRequest{Nudge: true}); err != nil {
+					return
+				}
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 	dec := json.NewDecoder(bufio.NewReader(conn))
 	for {
-		var w snapshotWire
-		if err := dec.Decode(&w); err != nil {
+		var snap sessionview.Snapshot
+		if err := dec.Decode(&snap); err != nil {
 			return got, err
 		}
 		got = true
-		snap := watcher.Snapshot{States: w.States, PollTime: w.PollTime}
 		if snap.PollTime.IsZero() {
 			snap.PollTime = time.Now()
-		}
-		if w.Err != "" {
-			snap.Err = wireErr{msg: w.Err}
 		}
 		select {
 		case out <- snap:

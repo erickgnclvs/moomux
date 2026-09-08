@@ -38,6 +38,40 @@ type Session struct {
 	Folder       string    `json:"folder,omitempty"`      // name of a collapsible group (config.Project.Folders) this session is filed under within its project; "" = top-level
 }
 
+// CreateRequest is everything one "new session" action carries.
+//
+// It's a struct rather than a parameter list because creating a session is a
+// transaction, not a single call: the worktree and tmux pane come up, the PR
+// tag is attached, the first prompt is composed and stored, and finally the
+// prompt is typed into the agent's pane. That sequence — and the rule that a
+// failure after the pane exists degrades to a hint rather than a failed
+// create — used to live in the TUI, which meant every front end had to
+// replay it exactly. It had already drifted: `moomux spawn` composed the
+// prompt differently and skipped two of the steps.
+type CreateRequest struct {
+	Project string
+	Name    string
+	Agent   string
+	// Branch is an existing branch to check out; empty means cut a new one.
+	Branch     string
+	BaseBranch string
+	Ticket     string
+	PR         string
+	Model      string
+	Thinking   string
+	// Prompt is the first task to hand the agent. Empty means don't type
+	// anything into the pane.
+	Prompt string
+	// AutoSubmit presses Enter after typing Prompt.
+	AutoSubmit bool
+	// OpenTerminal opens a terminal tab attached to the new session.
+	OpenTerminal bool
+	// Dangerous runs the agent with its permission-skipping flag. nil means
+	// "use the project's own default" — a plain bool can't express that,
+	// since an explicit false and an unset field would be identical.
+	Dangerous *bool
+}
+
 // AgentName returns the effective agent name, defaulting to "claude" for legacy sessions.
 func (s Session) AgentName() string {
 	if s.Agent == "" {
@@ -158,7 +192,10 @@ func (s *Store) Get(id string) (Session, bool) {
 // All returns every session ordered by manual Order ascending (0 = unset,
 // so unordered sessions sort first — matching where a freshly created
 // session should land), falling back to CreatedAt descending among
-// sessions with equal Order.
+// sessions with equal Order, and finally to ID so the order is total: the
+// input is a map, so any pair that ties on every other field would come
+// back in a different order on every call, and clients (the Mac app's
+// sidebar) re-diff their whole list when it changes.
 func (s *Store) All() []Session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -170,21 +207,28 @@ func (s *Store) All() []Session {
 		if out[i].Order != out[j].Order {
 			return out[i].Order < out[j].Order
 		}
-		return out[i].CreatedAt.After(out[j].CreatedAt)
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
 	})
 	return out
 }
 
 // SortByRecent reorders sessions most-recently-opened first, falling back to
 // CreatedAt descending for sessions that share a LastOpened (including the
-// zero value shared by every never-opened session). Used in place of the
-// manual Order sort when Config.SortRecentFirst is on.
+// zero value shared by every never-opened session), then ID so the order is
+// total. Used in place of the manual Order sort when Config.SortRecentFirst
+// is on.
 func SortByRecent(sessions []Session) {
 	sort.SliceStable(sessions, func(i, j int) bool {
 		if !sessions[i].LastOpened.Equal(sessions[j].LastOpened) {
 			return sessions[i].LastOpened.After(sessions[j].LastOpened)
 		}
-		return sessions[i].CreatedAt.After(sessions[j].CreatedAt)
+		if !sessions[i].CreatedAt.Equal(sessions[j].CreatedAt) {
+			return sessions[i].CreatedAt.After(sessions[j].CreatedAt)
+		}
+		return sessions[i].ID < sessions[j].ID
 	})
 }
 

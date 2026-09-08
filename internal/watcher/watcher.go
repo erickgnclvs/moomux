@@ -4,6 +4,7 @@ package watcher
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -20,6 +21,30 @@ const (
 	// stale "busy" write from the agent's own status file never hides it.
 	NeedsInput
 )
+
+// MarshalJSON writes the name, not the iota.
+//
+// State crosses the socket on every snapshot (see internal/sessionview), and
+// these values are deliberately *ranked* — see NeedsInput above — so the
+// numbers exist to be reordered. As bare ints, one re-rank for a reason that
+// has nothing to do with the wire would silently reassign every state a
+// second front end shows, with no compile error on either side. The names
+// are also what config.Themes keys its per-state colors by, so a client gets
+// one vocabulary instead of two.
+func (s State) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + s.String() + `"`), nil
+}
+
+func (s *State) UnmarshalJSON(b []byte) error {
+	name := strings.Trim(string(b), `"`)
+	for _, st := range []State{Unknown, Parked, Done, Working, NeedsInput} {
+		if st.String() == name {
+			*s = st
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown session state %q", name)
+}
 
 func (s State) String() string {
 	switch s {

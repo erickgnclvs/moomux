@@ -181,7 +181,14 @@ func jsonlFilesByMtime(dir string) ([]string, error) {
 		}
 		out = append(out, fi{filepath.Join(dir, e.Name()), info.ModTime().UnixNano()})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].mod < out[j].mod })
+	// Path breaks mtime ties: two logs written in the same clock tick would
+	// otherwise come back in either order, and the last one wins below.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].mod != out[j].mod {
+			return out[i].mod < out[j].mod
+		}
+		return out[i].path < out[j].path
+	})
 	paths := make([]string, len(out))
 	for i, f := range out {
 		paths[i] = f.path

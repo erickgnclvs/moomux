@@ -9,6 +9,7 @@ import (
 
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
@@ -31,6 +32,14 @@ type displayLine struct {
 // against the Order of the surrounding lines (an expanded folder's own
 // position in that comparison is its anchor member's Order, matching how
 // Session.Order already places it in m.sessions).
+//
+// ponytail: that splice assumes the surrounding lines run in ascending
+// Order, which holds for the manual sort but not once the core's live-first
+// partition has moved a parked session below a live one — a collapsed
+// folder then lands near, not exactly at, its anchor. Placing it exactly
+// would mean deciding whether a collapsed folder counts as live, which
+// depends on member states that aren't in m.sessions while it's collapsed;
+// revisit as a whole if that placement turns out to matter.
 func (m *Model) buildDisplayLines() []displayLine {
 	seen := map[string]bool{}
 	var lines []displayLine
@@ -129,22 +138,24 @@ func (m *Model) renderFolderHeaderLine(name string, collapsed bool, count int, w
 	return muteStyle.Render(truncate(text, width))
 }
 
-// folderMemberCount returns how many of the active project's sessions
-// (matching the current archived view) are filed under folder — used for a
-// collapsed folder's header count, since its members are excluded from
-// m.sessions entirely while collapsed.
-func (m *Model) folderMemberCount(folder string) int {
+// folderMemberCounts returns folder name -> how many of the active
+// project's sessions (matching the current archived view) are filed under
+// it. It counts from allSessions, not m.sessions, because a collapsed
+// folder's members are excluded from the latter entirely — the header count
+// is the only place they show up. Shared by the list's folder headers and
+// the Folders overlay so the two can't drift.
+func (m *Model) folderMemberCounts() map[string]int {
 	if len(m.projects) == 0 {
-		return 0
+		return nil
 	}
 	proj := m.projects[m.activeProj]
-	n := 0
+	counts := map[string]int{}
 	for _, s := range m.allSessions() {
-		if s.Project == proj && s.Folder == folder && s.Archived == m.showArchived {
-			n++
+		if s.Project == proj && s.Folder != "" && s.Archived == m.showArchived {
+			counts[s.Folder]++
 		}
 	}
-	return n
+	return counts
 }
 
 // linkHit records where a clickable ticket/PR icon landed within the
@@ -212,6 +223,7 @@ func (m *Model) renderList(width, height int) (string, []linkHit, []rowHit) {
 	}
 	var hits []linkHit
 	var rows []rowHit
+	counts := m.folderMemberCounts()
 	for li := start; li < end; li++ {
 		dl := lines[li]
 		// titleRows lines for the "SESSIONS" title and blank line above (0 on
@@ -220,8 +232,7 @@ func (m *Model) renderList(width, height int) (string, []linkHit, []rowHit) {
 		line := titleRows + rowOffset + (li - start)
 		if dl.folder != "" {
 			collapsed := m.cfg.Projects[m.projects[m.activeProj]].Folders[dl.folder].Collapsed
-			count := m.folderMemberCount(dl.folder)
-			b.WriteString(m.renderFolderHeaderLine(dl.folder, collapsed, count, width))
+			b.WriteString(m.renderFolderHeaderLine(dl.folder, collapsed, counts[dl.folder], width))
 			b.WriteString("\n")
 			continue
 		}
@@ -234,7 +245,7 @@ func (m *Model) renderList(width, height int) (string, []linkHit, []rowHit) {
 			rowWidth -= 2
 		}
 		rows = append(rows, rowHit{sessionID: s.ID, line: line})
-		row, iconHits := renderRow(s, m.effectiveState(s), rowWidth, selected, "", m.gitStatus[s.ID])
+		row, iconHits := renderRow(s, m.viewFor(s.ID), rowWidth, selected, "")
 		colOffset := 1 + len(indent) // +1 for the row style's own left padding
 		for _, h := range iconHits {
 			h.sessionID = s.ID
@@ -325,9 +336,9 @@ func scrollHintLine(glyph string, width int) string {
 	return lipgloss.NewStyle().Width(width).Align(lipgloss.Center).Render(muteStyle.Render(glyph))
 }
 
-func renderRow(s session.Session, st watcher.State, width int, selected bool, projectLabel string, git gitStatusInfo) (string, []linkHit) {
+func renderRow(s session.Session, v sessionview.View, width int, selected bool, projectLabel string) (string, []linkHit) {
 	dotStyle := dotParkedStyle
-	switch st {
+	switch v.State {
 	case watcher.Working:
 		dotStyle = dotWorkingStyle
 	case watcher.Done:
@@ -360,12 +371,12 @@ func renderRow(s session.Session, st watcher.State, width int, selected bool, pr
 		candidates = append(candidates, iconCandidate{iconTicketStyle, "🎫", s.Ticket})
 	}
 	if s.PR != "" {
-		candidates = append(candidates, iconCandidate{iconPRStyle, "🔀", s.PR})
+		candidates = append(candidates, iconCandidate{iconPRStyle, prGlyph(v.PR), s.PR})
 	}
-	if git.ok && git.dirty {
+	if v.GitOK && v.Dirty {
 		candidates = append(candidates, iconCandidate{gitWarnStyle, "±", ""})
 	}
-	if git.ok && git.unpushed {
+	if v.GitOK && v.Unpushed {
 		candidates = append(candidates, iconCandidate{gitWarnStyle, "↑", ""})
 	}
 	const minNameWidth = 4
@@ -375,7 +386,7 @@ func renderRow(s session.Session, st watcher.State, width int, selected bool, pr
 		for _, c := range candidates {
 			iconsWidth += lipgloss.Width(c.glyph) + 1
 		}
-		if width-1-iconsWidth-dotWidth >= minNameWidth {
+		if width-2-iconsWidth-dotWidth >= minNameWidth {
 			break
 		}
 		candidates = candidates[:len(candidates)-1]
@@ -386,15 +397,14 @@ func renderRow(s session.Session, st watcher.State, width int, selected bool, pr
 	col := 0
 	addIcon := func(style lipgloss.Style, glyph, url string) {
 		w := lipgloss.Width(glyph)
-		hits = append(hits, linkHit{url: url, col0: col, col1: col + w})
-		icons += style.Render(glyph) + style.Render(" ")
+		hits = append(hits, linkHit{url: url, col0: col + 1, col1: col + 1 + w})
+		icons += style.Render(" ") + style.Render(glyph)
 		col += w + 1
 	}
 	for _, c := range candidates {
 		addIcon(c.style, c.glyph, c.url)
 	}
-	suffix := icons + dot
-	nameWidth := width - 1 - lipgloss.Width(suffix)
+	nameWidth := width - 2 - lipgloss.Width(icons) - dotWidth
 	if nameWidth < minNameWidth {
 		nameWidth = minNameWidth
 	}
@@ -442,12 +452,12 @@ func renderRow(s session.Session, st watcher.State, width int, selected bool, pr
 		sepStyle = sepStyle.Background(colSelBg)
 	}
 	name := prefix + nameStyle.Render(fmt.Sprintf("%-*s", nameWidth, truncate(s.Name, nameWidth)))
-	offset := nameWidth + lipgloss.Width(prefix) + 1
+	offset := dotWidth + 2 + lipgloss.Width(prefix) + nameWidth
 	for i := range hits {
 		hits[i].col0 += offset
 		hits[i].col1 += offset
 	}
-	return name + sepStyle.Render(" ") + suffix, hits
+	return dot + sepStyle.Render("  ") + name + icons, hits
 }
 
 // projectEmojiPalette is the fallback set for projects that haven't chosen

@@ -17,7 +17,9 @@ import (
 	"github.com/erickgnclvs/moomux/internal/gitwt"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/watcher"
+	"sync/atomic"
 )
 
 // boolPtr is CreateSession's dangerous argument: non-nil forces the value
@@ -28,16 +30,19 @@ func boolPtr(b bool) *bool { return &b }
 // a round trip can assert both directions of the wire.
 type fakeBackend struct {
 	sessions  []session.Session
-	created   Args
+	created   session.CreateRequest
 	createErr error
 	renamed   session.Session
 
-	addProjectErr error
-	onAddProject  func(string, config.Project)
-	cfg           *config.Config
-	agentOptions  []config.AgentOption
-	mu            sync.Mutex
+	addProjectWarning string
+	addProjectErr     error
+	onAddProject      func(string, config.Project)
+	cfg               *config.Config
+	agentOptions      []config.AgentOption
+	mu                sync.Mutex
 }
+
+func (f *fakeBackend) SuggestedProject() (string, string) { return "", "" }
 
 func (f *fakeBackend) Sessions() []session.Session { return f.sessions }
 func (f *fakeBackend) Projects() []string {
@@ -52,20 +57,15 @@ func (f *fakeBackend) TmuxAliveAll() map[string]bool {
 	return map[string]bool{"moomux:a": true, "moomux:b": false}
 }
 
-func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
-	f.created = Args{
-		Project: project, Name: name, Agent: agent, Branch: existingBranch, Ticket: ticket,
-		OpenTerminal: openTerminal, Dangerous: dangerous, BaseBranch: baseBranch,
-		Model: model, Thinking: thinking,
-	}
+func (f *fakeBackend) CreateSession(req session.CreateRequest) (session.Session, string, error) {
+	f.created = req
 	if f.createErr != nil {
 		return session.Session{}, "", f.createErr
 	}
-	return session.Session{ID: "moomux:new", Name: name}, "run: tmux attach -t x", nil
+	return session.Session{ID: "moomux:new", Name: req.Name}, "run: tmux attach -t x", nil
 }
-
-func (f *fakeBackend) StartFirstPrompt(string, string, bool) error { return nil }
-func (f *fakeBackend) OpenSession(id string) (string, error)       { return "opened " + id, nil }
+func (f *fakeBackend) OpenSession(id string) (string, error) { return "opened " + id, nil }
+func (f *fakeBackend) EnsureTmux(id string) (string, error)  { return "ensured " + id, nil }
 func (f *fakeBackend) DeleteSession(id string) (string, error) {
 	return "", errors.New("worktree dirty")
 }
@@ -103,13 +103,13 @@ func (f *fakeBackend) SetFolderCollapsed(project, name string, collapsed bool) e
 	return nil
 }
 func (f *fakeBackend) DeleteFolder(project, name string) error { return nil }
-func (f *fakeBackend) AddProject(name string, p config.Project) error {
+func (f *fakeBackend) AddProject(name string, p config.Project) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.onAddProject != nil {
 		f.onAddProject(name, p)
 	}
-	return f.addProjectErr
+	return f.addProjectWarning, f.addProjectErr
 }
 func (f *fakeBackend) InitProjectAndAdd(string, config.Project) error { return nil }
 func (f *fakeBackend) AddPlainProject(string, config.Project) error   { return nil }
@@ -133,9 +133,14 @@ func (f *fakeBackend) SetCompactDetail(bool) error     { return nil }
 // the wire protocol (Client/Server), not tui.Update()'s Msg.Cfg handling.
 func (f *fakeBackend) ConfigSnapshot() config.Config { return config.Config{} }
 
-type fakeWatcher struct{ snaps []watcher.Snapshot }
+type fakeWatcher struct {
+	snaps  []sessionview.Snapshot
+	nudges atomic.Int64
+}
 
-func (w *fakeWatcher) Run(ctx context.Context, out chan<- watcher.Snapshot) {
+func (w *fakeWatcher) Nudge() { w.nudges.Add(1) }
+
+func (w *fakeWatcher) Run(ctx context.Context, out chan<- sessionview.Snapshot) {
 	for _, s := range w.snaps {
 		select {
 		case out <- s:
@@ -146,7 +151,7 @@ func (w *fakeWatcher) Run(ctx context.Context, out chan<- watcher.Snapshot) {
 }
 
 // start brings up a server on a temp socket and returns a connected client.
-func start(t *testing.T, b *fakeBackend, cfg *config.Config, w watcher.Watcher) (*Client, *trackingListener) {
+func start(t *testing.T, b *fakeBackend, cfg *config.Config, src sessionview.Source) (*Client, *trackingListener) {
 	t.Helper()
 	// Short path on purpose: unix socket paths are capped near 104 bytes on
 	// macOS, and t.TempDir() under /var/folders is long enough to matter.
@@ -159,7 +164,7 @@ func start(t *testing.T, b *fakeBackend, cfg *config.Config, w watcher.Watcher) 
 	ln := &trackingListener{Listener: raw}
 	t.Cleanup(func() { ln.kill(); os.RemoveAll(dir) })
 	b.cfg = cfg
-	srv := &Server{Backend: b, Config: snapshotter(b, cfg), AgentOptions: func() []config.AgentOption { return b.agentOptions }, Watcher: w}
+	srv := &Server{Backend: b, Config: snapshotter(b, cfg), AgentOptions: func() []config.AgentOption { return b.agentOptions }, Source: src}
 	go srv.Serve(ln)
 	return &Client{Socket: sock}, ln
 }
@@ -217,7 +222,7 @@ func (l *trackingListener) kill() {
 }
 
 // serveOn starts another server on an existing path, for restart tests.
-func serveOn(t *testing.T, sock string, b *fakeBackend, cfg *config.Config, w watcher.Watcher) *trackingListener {
+func serveOn(t *testing.T, sock string, b *fakeBackend, cfg *config.Config, src sessionview.Source) *trackingListener {
 	t.Helper()
 	raw, err := Listen(sock)
 	if err != nil {
@@ -226,7 +231,7 @@ func serveOn(t *testing.T, sock string, b *fakeBackend, cfg *config.Config, w wa
 	ln := &trackingListener{Listener: raw}
 	t.Cleanup(ln.kill)
 	b.cfg = cfg
-	go (&Server{Backend: b, Config: snapshotter(b, cfg), Watcher: w}).Serve(ln)
+	go (&Server{Backend: b, Config: snapshotter(b, cfg), Source: src}).Serve(ln)
 	return ln
 }
 
@@ -253,6 +258,16 @@ func TestRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("themes survive the wire", func(t *testing.T) {
+		got, err := c.Themes()
+		if err != nil {
+			t.Fatalf("Themes: %v", err)
+		}
+		if !reflect.DeepEqual(got, config.Themes()) {
+			t.Fatalf("Themes() = %+v, want %+v", got, config.Themes())
+		}
+	})
+
 	t.Run("sessions survive the wire", func(t *testing.T) {
 		got := c.Sessions()
 		if len(got) != 1 || got[0] != b.sessions[0] {
@@ -261,19 +276,24 @@ func TestRoundTrip(t *testing.T) {
 	})
 
 	t.Run("args reach the backend", func(t *testing.T) {
-		s, hint, err := c.CreateSession("moomux", "feat", "claude", "", "T-1", true, boolPtr(true), "main", "opus", "high")
+		req := session.CreateRequest{
+			Project: "moomux", Name: "feat", Agent: "claude", Ticket: "T-1", PR: "https://x/y/pull/1",
+			BaseBranch: "main", Model: "opus", Thinking: "high", Prompt: "do it",
+			AutoSubmit: true, OpenTerminal: true, Dangerous: boolPtr(true),
+		}
+		s, hint, err := c.CreateSession(req)
 		if err != nil {
 			t.Fatalf("CreateSession: %v", err)
 		}
 		if s.ID != "moomux:new" || hint != "run: tmux attach -t x" {
 			t.Fatalf("got (%+v, %q)", s, hint)
 		}
-		want := Args{Project: "moomux", Name: "feat", Agent: "claude", Ticket: "T-1",
-			OpenTerminal: true, Dangerous: boolPtr(true), BaseBranch: "main", Model: "opus", Thinking: "high"}
-		// Args now carries a *bool (Dangerous), so a plain != would compare
-		// pointer identity instead of the pointed-to value.
-		if !reflect.DeepEqual(b.created, want) {
-			t.Fatalf("backend saw %+v, want %+v", b.created, want)
+		// Every field of the request must survive the round trip: the core
+		// runs the whole create transaction off it, so a field dropped on
+		// the wire is a step silently skipped. DeepEqual because Dangerous
+		// is a *bool, where != would compare pointer identity.
+		if !reflect.DeepEqual(b.created, req) {
+			t.Fatalf("backend saw %+v, want %+v", b.created, req)
 		}
 	})
 
@@ -305,9 +325,6 @@ func TestRoundTrip(t *testing.T) {
 		}
 		if files, commits, ok := c.ChangeSummary("moomux:a"); files != 7 || commits != 3 || !ok {
 			t.Fatalf("ChangeSummary = %d %d %v, want 7 3 true", files, commits, ok)
-		}
-		if info, ok := c.PRStatus("moomux:a"); !ok || info.CI != "PASSING" {
-			t.Fatalf("PRStatus = %+v %v", info, ok)
 		}
 	})
 
@@ -352,26 +369,36 @@ func TestMutMakesOneRoundTripNotTwo(t *testing.T) {
 	}
 }
 
+// view builds a one-entry Views map, the way the core would.
+func view(id string, st watcher.State) map[string]sessionview.View {
+	return map[string]sessionview.View{id: {
+		ID: id, State: st, Label: sessionview.Label(st), Quip: sessionview.Quip(id, st),
+	}}
+}
+
+// TestWatchStreams is the whole point of the stream: a snapshot arrives on
+// the client side byte-identical to what the core built, labels and quips
+// included, so a front end renders it rather than re-deriving it.
 func TestWatchStreams(t *testing.T) {
-	snaps := []watcher.Snapshot{
-		{States: map[string]watcher.State{"/wt/a": watcher.Working}, PollTime: time.Now()},
-		{States: map[string]watcher.State{"/wt/a": watcher.NeedsInput}, PollTime: time.Now(), Err: errors.New("sqlite locked")},
+	snaps := []sessionview.Snapshot{
+		{Views: view("moomux:a", watcher.Working), PollTime: time.Now()},
+		{Views: view("moomux:a", watcher.NeedsInput), PollTime: time.Now(), Err: "sqlite locked"},
 	}
 	c, _ := start(t, &fakeBackend{}, &config.Config{}, &fakeWatcher{snaps: snaps})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out := make(chan watcher.Snapshot, 4)
+	out := make(chan sessionview.Snapshot, 4)
 	go c.Run(ctx, out)
 
 	for i, want := range snaps {
 		select {
 		case got := <-out:
-			if got.States["/wt/a"] != want.States["/wt/a"] {
-				t.Fatalf("snapshot %d state = %v, want %v", i, got.States["/wt/a"], want.States["/wt/a"])
+			if got.Views["moomux:a"] != want.Views["moomux:a"] {
+				t.Fatalf("snapshot %d view = %+v, want %+v", i, got.Views["moomux:a"], want.Views["moomux:a"])
 			}
-			if (got.Err == nil) != (want.Err == nil) {
-				t.Fatalf("snapshot %d err = %v, want %v", i, got.Err, want.Err)
+			if got.Err != want.Err {
+				t.Fatalf("snapshot %d err = %q, want %q", i, got.Err, want.Err)
 			}
 		case <-ctx.Done():
 			t.Fatalf("timed out waiting for snapshot %d", i)
@@ -398,12 +425,21 @@ func TestUnknownMethod(t *testing.T) {
 // to offer "git init it / add as plain". A plain string error would make
 // that dialog unreachable over the socket.
 func TestSentinelErrorSurvivesWire(t *testing.T) {
-	b := &fakeBackend{addProjectErr: fmt.Errorf("%w: /tmp/nope", gitwt.ErrNotGitRepo)}
+	b := &fakeBackend{
+		addProjectErr:     fmt.Errorf("%w: /tmp/nope", gitwt.ErrNotGitRepo),
+		addProjectWarning: "⚠ inside ~/Desktop",
+	}
 	c, _ := start(t, b, &config.Config{}, nil)
 
-	err := c.AddProject("p", config.Project{})
+	warning, err := c.AddProject("p", config.Project{})
 	if err == nil {
 		t.Fatal("AddProject returned no error")
+	}
+	// The warning rides the same failed response: it's what the init/plain
+	// dialog shows about the path, and it's a fact about the server's
+	// machine, so a client must not be left to work it out itself.
+	if warning != "⚠ inside ~/Desktop" {
+		t.Errorf("warning = %q, want the core's note to survive alongside the error", warning)
 	}
 	if !errors.Is(err, gitwt.ErrNotGitRepo) {
 		t.Errorf("errors.Is(err, ErrNotGitRepo) = false for %[1]T %[1]q; the init/plain dialog is unreachable", err)
@@ -426,7 +462,7 @@ func TestConfigSnapshotReflectsMutation(t *testing.T) {
 	}}
 	c, _ := start(t, b, served, nil)
 
-	if err := c.AddProject("new", config.Project{Kind: "plain"}); err != nil {
+	if _, err := c.AddProject("new", config.Project{Kind: "plain"}); err != nil {
 		t.Fatal(err)
 	}
 	if snap := c.ConfigSnapshot(); snap.Projects["new"].Kind == "" {
@@ -459,13 +495,13 @@ func TestListenRefusesNonSocket(t *testing.T) {
 }
 
 // TestWatchEndsWhenWatcherStops guards against stream parking forever on a
-// channel no one closes — the shape every real watcher.Run has.
+// channel no one closes — the shape every real Source.Run has.
 func TestWatchEndsWhenWatcherStops(t *testing.T) {
 	c, _ := start(t, &fakeBackend{}, &config.Config{}, &fakeWatcher{snaps: nil})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	out := make(chan watcher.Snapshot, 1)
+	out := make(chan sessionview.Snapshot, 1)
 	done := make(chan struct{})
 	go func() { c.Run(ctx, out); close(done) }()
 
@@ -502,20 +538,19 @@ func TestConcurrentConfigAccessIsRaceFree(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_ = c.AddProject(fmt.Sprintf("p%d", i), config.Project{Kind: "plain"})
+			_, _ = c.AddProject(fmt.Sprintf("p%d", i), config.Project{Kind: "plain"})
 		}()
 		wg.Add(2)
-		go func() { defer wg.Done(); c.Projects() }()
+		go func() { defer wg.Done(); c.Sessions() }()
 		go func() { defer wg.Done(); c.Config() }()
 	}
 	wg.Wait()
 }
 
 // TestSessionsSurviveTransportFailure covers the destructive shape of a
-// failed call: tui.Backend's Sessions() can't return an error, and
-// update.go prunes m.states against whatever it returns — so a nil on a
-// dropped connection deletes every agent state badge the TUI is showing.
-// Last-good beats empty.
+// failed call: tui.Backend's Sessions() can't return an error — it's called
+// from the render path — so a nil on a dropped connection empties the whole
+// list mid-render. Last-good beats empty.
 func TestSessionsSurviveTransportFailure(t *testing.T) {
 	want := []session.Session{{ID: "moomux:a", Name: "a"}, {ID: "moomux:b", Name: "b"}}
 	b := &fakeBackend{sessions: want}
@@ -524,20 +559,11 @@ func TestSessionsSurviveTransportFailure(t *testing.T) {
 	if got := c.Sessions(); len(got) != 2 {
 		t.Fatalf("warm-up Sessions() = %d, want 2", len(got))
 	}
-	projects := c.Projects()
-	alive := c.TmuxAliveAll()
-
 	// Kill the server out from under the client.
 	ln.kill()
 
 	if got := c.Sessions(); len(got) != len(want) {
 		t.Errorf("Sessions() after disconnect = %d entries, want %d cached; an empty list wipes m.states", len(got), len(want))
-	}
-	if got := c.Projects(); len(got) != len(projects) {
-		t.Errorf("Projects() after disconnect = %v, want %v", got, projects)
-	}
-	if got := c.TmuxAliveAll(); len(got) != len(alive) {
-		t.Errorf("TmuxAliveAll() after disconnect = %v, want %v", got, alive)
 	}
 }
 
@@ -545,7 +571,7 @@ func TestSessionsSurviveTransportFailure(t *testing.T) {
 // its own, and must report the gap rather than leaving stale states on
 // screen looking live.
 func TestWatchReconnects(t *testing.T) {
-	snap := watcher.Snapshot{States: map[string]watcher.State{"/wt/a": watcher.Working}, PollTime: time.Now()}
+	snap := sessionview.Snapshot{Views: map[string]sessionview.View{"moomux:a": {ID: "moomux:a", State: watcher.Working}}, PollTime: time.Now()}
 	b := &fakeBackend{}
 	// blockingWatcher keeps the stream open after its snapshot, the way a
 	// real watcher does, so the connection only ends when the server stops.
@@ -553,29 +579,31 @@ func TestWatchReconnects(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	out := make(chan watcher.Snapshot, 16)
+	out := make(chan sessionview.Snapshot, 16)
 	go c.Run(ctx, out)
 
-	if s := recvSnap(t, ctx, out, func(s watcher.Snapshot) bool { return s.States != nil }); s.States["/wt/a"] != watcher.Working {
-		t.Fatalf("first snapshot = %v", s.States)
+	if s := recvSnap(t, ctx, out, func(s sessionview.Snapshot) bool { return s.Views != nil }); s.Views["moomux:a"].State != watcher.Working {
+		t.Fatalf("first snapshot = %v", s.Views)
 	}
 
 	// Drop the server the way a dying process would: listener and every
 	// live connection.
 	ln.kill()
-	if s := recvSnap(t, ctx, out, func(s watcher.Snapshot) bool { return s.Err != nil }); s.Err == nil {
+	if s := recvSnap(t, ctx, out, func(s sessionview.Snapshot) bool { return s.Err != "" }); s.Err == "" {
 		t.Fatal("no error snapshot after the server went away; the TUI would show stale states as live")
 	}
 
 	serveOn(t, c.Socket, b, &config.Config{}, &blockingWatcher{snap: snap})
-	if s := recvSnap(t, ctx, out, func(s watcher.Snapshot) bool { return s.States != nil }); s.States["/wt/a"] != watcher.Working {
-		t.Fatalf("did not reconnect; snapshot = %v", s.States)
+	if s := recvSnap(t, ctx, out, func(s sessionview.Snapshot) bool { return s.Views != nil }); s.Views["moomux:a"].State != watcher.Working {
+		t.Fatalf("did not reconnect; snapshot = %v", s.Views)
 	}
 }
 
-type blockingWatcher struct{ snap watcher.Snapshot }
+type blockingWatcher struct{ snap sessionview.Snapshot }
 
-func (w *blockingWatcher) Run(ctx context.Context, out chan<- watcher.Snapshot) {
+func (w *blockingWatcher) Nudge() {}
+
+func (w *blockingWatcher) Run(ctx context.Context, out chan<- sessionview.Snapshot) {
 	select {
 	case out <- w.snap:
 	case <-ctx.Done():
@@ -584,7 +612,7 @@ func (w *blockingWatcher) Run(ctx context.Context, out chan<- watcher.Snapshot) 
 	<-ctx.Done()
 }
 
-func recvSnap(t *testing.T, ctx context.Context, out <-chan watcher.Snapshot, match func(watcher.Snapshot) bool) watcher.Snapshot {
+func recvSnap(t *testing.T, ctx context.Context, out <-chan sessionview.Snapshot, match func(sessionview.Snapshot) bool) sessionview.Snapshot {
 	t.Helper()
 	for {
 		select {
@@ -603,10 +631,10 @@ func recvSnap(t *testing.T, ctx context.Context, out <-chan watcher.Snapshot, ma
 type countingWatcher struct {
 	mu   sync.Mutex
 	runs int
-	snap watcher.Snapshot
+	snap sessionview.Snapshot
 }
 
-func (w *countingWatcher) Run(ctx context.Context, out chan<- watcher.Snapshot) {
+func (w *countingWatcher) Run(ctx context.Context, out chan<- sessionview.Snapshot) {
 	w.mu.Lock()
 	w.runs++
 	w.mu.Unlock()
@@ -626,20 +654,22 @@ func (w *countingWatcher) Run(ctx context.Context, out chan<- watcher.Snapshot) 
 	}
 }
 
+func (w *countingWatcher) Nudge() {}
+
 func (w *countingWatcher) runCount() int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.runs
 }
 
-// TestWatchSharesOneWatcher is the CPU fix: a watcher run per connection
+// TestWatchSharesOneWatcher is the CPU fix: a source run per connection
 // meant every attached front end paid for its own directory rescans, its own
 // sqlite3 subprocess per database per tick, and (on macOS, where fsnotify's
 // kqueue backend opens a descriptor per watched file) its own several
 // hundred file descriptors — all producing identical snapshots.
 func TestWatchSharesOneWatcher(t *testing.T) {
-	w := &countingWatcher{snap: watcher.Snapshot{
-		States:   map[string]watcher.State{"/wt/a": watcher.Working},
+	w := &countingWatcher{snap: sessionview.Snapshot{
+		Views:    view("moomux:a", watcher.Working),
 		PollTime: time.Now(),
 	}}
 	c, _ := start(t, &fakeBackend{}, &config.Config{}, w)
@@ -649,12 +679,12 @@ func TestWatchSharesOneWatcher(t *testing.T) {
 
 	// Two independent clients, both streaming at once.
 	for i := 0; i < 2; i++ {
-		out := make(chan watcher.Snapshot, 4)
+		out := make(chan sessionview.Snapshot, 4)
 		go c.Run(ctx, out)
 		select {
 		case snap := <-out:
-			if snap.States["/wt/a"] != watcher.Working {
-				t.Fatalf("client %d: got %v", i, snap.States)
+			if snap.Views["moomux:a"].State != watcher.Working {
+				t.Fatalf("client %d: got %v", i, snap.Views)
 			}
 		case <-time.After(3 * time.Second):
 			t.Fatalf("client %d: no snapshot", i)
@@ -662,6 +692,34 @@ func TestWatchSharesOneWatcher(t *testing.T) {
 	}
 
 	if n := w.runCount(); n != 1 {
-		t.Errorf("Watcher.Run called %d times for 2 clients, want 1", n)
+		t.Errorf("Source.Run called %d times for 2 clients, want 1", n)
 	}
+}
+
+// TestWatchNudgeReachesSource covers the client's half of the stream: a
+// nudge travels back up the live connection so a front end can ask for a
+// snapshot now — after parking a session, say — instead of waiting out the
+// core's tick.
+func TestWatchNudgeReachesSource(t *testing.T) {
+	w := &fakeWatcher{snaps: []sessionview.Snapshot{{Views: view("moomux:a", watcher.Working), PollTime: time.Now()}}}
+	c, _ := start(t, &fakeBackend{}, &config.Config{}, w)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out := make(chan sessionview.Snapshot, 4)
+	go c.Run(ctx, out)
+	select {
+	case <-out: // connected
+	case <-ctx.Done():
+		t.Fatal("no first snapshot; never connected")
+	}
+
+	c.Nudge()
+	for ctx.Err() == nil {
+		if w.nudges.Load() > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("nudge never reached the source")
 }

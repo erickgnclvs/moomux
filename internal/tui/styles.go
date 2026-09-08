@@ -12,6 +12,7 @@ var (
 	colDone       lipgloss.AdaptiveColor
 	colNeedsInput lipgloss.AdaptiveColor
 	colParked     lipgloss.AdaptiveColor
+	colWarn       lipgloss.AdaptiveColor
 	colDanger     lipgloss.AdaptiveColor
 	colBorder     lipgloss.AdaptiveColor
 	colSelBg      lipgloss.AdaptiveColor
@@ -52,7 +53,8 @@ var (
 	overlayBox lipgloss.Style
 
 	dangerStyle lipgloss.Style
-	warnStyle   lipgloss.Style
+	// warnStyle is built from colWarn, not colDone — see config.Theme.Warn.
+	warnStyle lipgloss.Style
 
 	// hintStyle is the contextual, per-field explainer shown in forms —
 	// italic to read as a transient tip rather than a persistent label.
@@ -113,7 +115,7 @@ func buildStyles() {
 		Padding(1, 2)
 
 	dangerStyle = lipgloss.NewStyle().Foreground(colDanger).Bold(true)
-	warnStyle = lipgloss.NewStyle().Foreground(colDone).Bold(true)
+	warnStyle = lipgloss.NewStyle().Foreground(colWarn).Bold(true)
 
 	hintStyle = lipgloss.NewStyle().Foreground(colMute).Italic(true)
 

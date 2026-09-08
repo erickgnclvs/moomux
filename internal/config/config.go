@@ -40,6 +40,10 @@ type Project struct {
 	BranchPrefix string `toml:"branch_prefix,omitempty" json:"branch_prefix,omitempty"`
 	BaseBranch   string `toml:"base_branch,omitempty" json:"base_branch,omitempty"`
 	Agent        string `toml:"agent,omitempty" json:"agent,omitempty"` // "claude" (default), "codex", "opencode"
+	// Model is the default model for new sessions of this project, named as
+	// Agent's AgentOption.Models lists it. Empty means "not specified" —
+	// nothing is passed and the agent falls back to the user's own default.
+	Model string `toml:"model,omitempty" json:"model,omitempty"`
 	// Dangerous, when true, runs Agent with its permission-skipping flag
 	// (claude: --dangerously-skip-permissions, codex: --yolo); no-op for
 	// opencode. Applies as the default for new sessions of this project.
@@ -185,8 +189,17 @@ type Config struct {
 
 // Clone returns a copy of c safe to use independently of the original —
 // Projects and Order are copied so mutating one doesn't affect the other.
+// Clone copies c deeply enough that the copy shares no mutable state with
+// the original — ConfigSnapshot hands the result to other goroutines, so a
+// map left aliased here is a data race there. Project is a value type, but
+// its Folders map is not: cloning only c.Projects would leave every copy
+// sharing one folder map with App.Cfg's.
 func (c Config) Clone() Config {
 	c.Projects = maps.Clone(c.Projects)
+	for name, p := range c.Projects {
+		p.Folders = maps.Clone(p.Folders)
+		c.Projects[name] = p
+	}
 	c.Order = slices.Clone(c.Order)
 	return c
 }

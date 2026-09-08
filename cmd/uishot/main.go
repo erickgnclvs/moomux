@@ -23,6 +23,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/gitwt"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/tui"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
@@ -124,11 +125,18 @@ var screens = map[string][]string{
 	"help":                   {"?"},
 	"help-bottom":            {"?"},
 	// needs-input has no keys of its own; renderScreen feeds it a
-	// StatusTickMsg marking the first sample session watcher.NeedsInput.
+	// StatusTickMsg marking the first sample session watcher.NeedsInput
+	// (see screenStates).
 	"needs-input": {},
+	// states puts all four agent-state dots on screen at once — the only
+	// place the served palette (internal/config) is fully visible — with
+	// the ± / ↑ git badges on the done row, so the amber warn color shows
+	// right beside the now-green done dot. No keys: the states arrive as a
+	// StatusTickMsg, see screenStates.
+	"states": {},
 	// Submits the new-project form with a path under ~/Documents that isn't
 	// a git repo, landing on the "skip git" choice screen with its macOS
-	// Files-and-Folders warning (see internal/tui/tcc.go). "$HOME" is
+	// Files-and-Folders warning (see App.PathWarning in internal/app). "$HOME" is
 	// expanded to the real home dir at runtime so the warning actually
 	// triggers regardless of machine. "ctrl+u" clears each field's cwd
 	// prefill (see newProjectForm) before typing over it.
@@ -155,6 +163,11 @@ var screens = map[string][]string{
 	// a PR attached, so its detail panel shows the PR status row (see
 	// renderScreen's prStatus wiring below).
 	"pr-status": {"down"},
+	// Same cursor move, with the PR merged instead of blocked — covers the
+	// list row's merged glyph alongside the detail panel's "merged" row.
+	"pr-merged": {"down"},
+	// Same cursor move again, with CI still running — the pending glyph.
+	"pr-pending": {"down"},
 	// ModeMultiView is the default now (see tui.New), so "list" above already
 	// captures it; these confirm normal session key bindings (delete/tag/
 	// archived) still work and render their dialog correctly on top of it.
@@ -240,13 +253,11 @@ type fakeBackend struct {
 	createErr error
 }
 
-func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
+func (f *fakeBackend) CreateSession(req session.CreateRequest) (session.Session, string, error) {
 	return session.Session{}, "", f.createErr
 }
-func (f *fakeBackend) StartFirstPrompt(tmuxSession, prompt string, autoSubmit bool) error {
-	return nil
-}
 func (f *fakeBackend) OpenSession(id string) (string, error)   { return "", nil }
+func (f *fakeBackend) EnsureTmux(id string) (string, error)    { return "", nil }
 func (f *fakeBackend) DeleteSession(id string) (string, error) { return "", nil }
 func (f *fakeBackend) WorktreeStatus(id string) (dirty, unpushed, ok bool) {
 	st, present := f.worktreeStatus[id]
@@ -320,9 +331,9 @@ func (f *fakeBackend) SetSessionArchived(id string, archived bool) (session.Sess
 	return session.Session{}, nil
 }
 
-// TmuxAliveAll reports every sample session as alive so effectiveState
-// doesn't force them all to "parked" — that would hide whatever State a
-// scenario sets via a StatusTickMsg (see the "needs-input" scenario).
+// TmuxAliveAll reports every sample session as alive so the core's
+// state join doesn't force them all to "parked" — that would hide whatever
+// State a scenario sets via screenStates (see the "needs-input" scenario).
 func (f *fakeBackend) TmuxAliveAll() map[string]bool {
 	alive := make(map[string]bool, len(f.sessions))
 	for _, s := range f.sessions {
@@ -330,9 +341,20 @@ func (f *fakeBackend) TmuxAliveAll() map[string]bool {
 	}
 	return alive
 }
-func (f *fakeBackend) Sessions() []session.Session                           { return f.sessions }
-func (f *fakeBackend) Projects() []string                                    { return nil }
-func (f *fakeBackend) AddProject(name string, p config.Project) error        { return gitwt.ErrNotGitRepo }
+
+// SuggestedProject mirrors the real core's cwd prefill. TestScreens pins the
+// working directory to "/", which app.SuggestedProject reports as unusable —
+// so the add-project screens render with empty fields, deterministically.
+func (f *fakeBackend) SuggestedProject() (string, string) { return (&app.App{}).SuggestedProject() }
+
+func (f *fakeBackend) Sessions() []session.Session { return f.sessions }
+func (f *fakeBackend) Projects() []string          { return nil }
+func (f *fakeBackend) AddProject(name string, p config.Project) (string, error) {
+	// The path warning is the core's now, so ask the real one rather than
+	// canning a string here — that's what the project-init-choice scenario
+	// exists to show.
+	return (&app.App{}).PathWarning(p.Repo), gitwt.ErrNotGitRepo
+}
 func (f *fakeBackend) InitProjectAndAdd(name string, p config.Project) error { return nil }
 func (f *fakeBackend) AddPlainProject(name string, p config.Project) error   { return nil }
 func (f *fakeBackend) UpdateProject(name string, p config.Project) error     { return nil }
@@ -425,6 +447,14 @@ func sampleSessions() []session.Session {
 	}
 }
 
+// screenStates is the agent state each scenario forces on the sample
+// sessions, by index — fed in as a StatusTickMsg, the same message the real
+// watcher delivers.
+var screenStates = map[string][]watcher.State{
+	"needs-input": {watcher.NeedsInput},
+	"states":      {watcher.Working, watcher.Done, watcher.NeedsInput},
+}
+
 // renderScreen drives a freshly created Model through the key sequence
 // registered for screenName against canned sample data, returning its final
 // rendered view. It's the piece scripts/screenshot.sh's pty/HTML/Chromium
@@ -462,6 +492,16 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 				Agent:        "claude",
 			})
 		}
+	case "states":
+		// Four rows for four dots: the two sample sessions carry working and
+		// done, and these two carry needs-input and (by having no entry in
+		// screenStates at all) parked. Every agent-state color the core
+		// serves is on screen at once, which is the point of the scenario.
+		now := time.Now().UTC()
+		sessions = append(sessions[:2:2],
+			session.Session{ID: "demo:review-copy", Project: "demo", Name: "review-copy", Branch: "chore/copy", WorktreePath: "/tmp/demo/review-copy", TmuxSession: "moomux-review-copy", CreatedAt: now, Agent: "claude"},
+			session.Session{ID: "demo:stale-idea", Project: "demo", Name: "stale-idea", Branch: "spike/stale", WorktreePath: "/tmp/demo/stale-idea", TmuxSession: "moomux-stale-idea", CreatedAt: now, Agent: "codex"},
+		)
 	case "no-projects-startup", "no-projects":
 		cfg = &config.Config{Projects: map[string]config.Project{}}
 		sessions = nil
@@ -549,12 +589,27 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 			sessions[0].ID: {filesChanged: 3, unpushedCommits: 2},
 		}
 	}
+	if screenName == "states" && len(sessions) > 1 {
+		be.worktreeStatus = map[string]struct{ dirty, unpushed bool }{
+			sessions[1].ID: {dirty: true, unpushed: true},
+		}
+	}
 	if screenName == "pr-status" && len(sessions) > 1 {
 		// Must be set before drive() below, for the same reason as
 		// confirm-delete's worktreeStatus above: PR status is swept for
 		// every PR-attached session up front.
 		be.prStatus = map[string]prstatus.Info{
 			sessions[1].ID: {State: "OPEN", Mergeable: "CONFLICTING", CI: "FAILING"},
+		}
+	}
+	if screenName == "pr-merged" && len(sessions) > 1 {
+		be.prStatus = map[string]prstatus.Info{
+			sessions[1].ID: {State: "MERGED", Mergeable: "UNKNOWN", CI: "PASSING"},
+		}
+	}
+	if screenName == "pr-pending" && len(sessions) > 1 {
+		be.prStatus = map[string]prstatus.Info{
+			sessions[1].ID: {State: "OPEN", Mergeable: "MERGEABLE", CI: "PENDING"},
 		}
 	}
 	if screenName == "detail-ticket-and-pr" || screenName == "compact-detail" {
@@ -568,10 +623,10 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 		}
 	}
 	// Closed immediately: nothing in this synthetic harness ever sends on it,
-	// and closing lets drive() safely run a StatusTickMsg's/StatusRefreshedMsg's
-	// returned batch (which re-arms listenStatus(statusCh)) without blocking
-	// forever on an open, empty channel.
-	statusCh := make(chan watcher.Snapshot)
+	// and closing lets drive() safely run a StatusTickMsg's returned batch
+	// (which re-arms listenStatus(statusCh)) without blocking forever on an
+	// open, empty channel.
+	statusCh := make(chan sessionview.Snapshot)
 	close(statusCh)
 	tui.ApplySettings(cfg)
 	m := tui.New(cfg, be, (&app.App{}).AgentOptions(), statusCh, func() {})
@@ -580,24 +635,21 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 		m.Version = "0.5.3"
 		m.UpdateVersion = "0.5.4"
 	}
-	// tui.New() no longer calls TmuxAliveAll() synchronously (that now
-	// happens async, via Init(), so a slow tmux server can't block the real
-	// app's first render) — this harness never calls Init() at all, so
-	// without this every sample session would default to "not alive" and
-	// read as Parked regardless of the State a scenario sets below. This
-	// same StatusRefreshedMsg also triggers the startup git-status sweep
-	// (see model.go's tmuxCheckedOnce), fetching every session up front from
-	// whatever be.worktreeStatus already holds.
-	drive(m, tui.StatusRefreshedMsg{TmuxAlive: be.TmuxAliveAll()})
-
 	home, _ := os.UserHomeDir()
 
 	m.Update(tea.WindowSizeMsg{Width: width, Height: height})
-	if screenName == "needs-input" {
-		m.Update(tui.StatusTickMsg{Snap: watcher.Snapshot{
-			States: map[string]watcher.State{sessions[0].WorktreePath: watcher.NeedsInput},
-		}})
+	// The model holds no derived state of its own any more — it renders
+	// whatever snapshot the core last sent (see internal/sessionview). This
+	// harness never runs Init(), so nothing would ever arrive on statusCh;
+	// sessionview.Once builds the one snapshot a real run's first tick
+	// would have, from the same code path, against the fake backend.
+	states := map[string]watcher.State{}
+	for i, st := range screenStates[screenName] {
+		if i < len(sessions) {
+			states[sessions[i].WorktreePath] = st
+		}
 	}
+	m.Update(tui.StatusTickMsg{Snap: sessionview.Once(be, "", states)})
 	for _, k := range keys {
 		msg := keyMsgFor(strings.ReplaceAll(k, "$HOME", home))
 		if screenName == "confirm-delete-checking" {

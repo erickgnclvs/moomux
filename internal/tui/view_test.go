@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
@@ -66,8 +67,7 @@ func TestHeaderEyesShowNeedsInputForSelectedSession(t *testing.T) {
 	m := layoutTestModel(1)
 	m.cursor = 0
 	s := m.sessions[0]
-	m.tmuxAlive = map[string]bool{s.ID: true}
-	m.states = map[string]watcher.State{s.WorktreePath: watcher.NeedsInput}
+	putView(m, s.ID, sessionview.View{State: watcher.NeedsInput})
 
 	header := m.renderHeader()
 
@@ -305,7 +305,7 @@ func TestOverlaysStayWithinKeyboardSizedViewport(t *testing.T) {
 			name: "new project",
 			setup: func(m *Model) {
 				m.mode = ModeNewProject
-				m.projForm = newProjectForm()
+				m.projForm = m.newProjectForm()
 			},
 		},
 		{
@@ -447,8 +447,8 @@ func TestShortProjectFormKeepsBottomControlVisible(t *testing.T) {
 	m := layoutTestModel(1)
 	m.width, m.height = 50, 12
 	m.mode = ModeNewProject
-	m.projForm = newProjectForm()
-	m.projForm.focus = projFormInputCount + 1
+	m.projForm = m.newProjectForm()
+	m.projForm.focus = projFormInputCount + 4 // the worktree toggle, the last control
 	m.resizeFormInputs()
 
 	view := m.View()

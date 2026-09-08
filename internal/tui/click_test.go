@@ -13,6 +13,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
@@ -55,12 +56,9 @@ type fakeBackend struct {
 	deleteFolderCalls []deleteFolderCall
 	deleteFolderErr   error
 
-	createCalls []createCall
+	createCalls []session.CreateRequest
 	createErr   error
 	createHint  string
-
-	firstPromptCalls []sendPromptCall
-	firstPromptErr   error
 
 	deleteCalls []string
 	deleteErr   error
@@ -83,12 +81,13 @@ type fakeBackend struct {
 	archiveCalls []archiveCall
 	archiveErr   error
 
-	addProjectCalls  []projectCall
-	addProjectErr    error
-	initProjectCalls []projectCall
-	initProjectErr   error
-	plainCalls       []projectCall
-	plainErr         error
+	addProjectCalls   []projectCall
+	addProjectErr     error
+	addProjectWarning string
+	initProjectCalls  []projectCall
+	initProjectErr    error
+	plainCalls        []projectCall
+	plainErr          error
 
 	updateProjectCalls []projectCall
 	updateProjectErr   error
@@ -111,9 +110,9 @@ type fakeBackend struct {
 	setCompactDetailCalls []bool
 	setCompactDetailErr   error
 
-	// statusMu guards worktreeStatusCalls/prStatusCalls: fetchGitStatusCmd
-	// and fetchPRStatusCmd fan their per-id backend calls out concurrently,
-	// so appends to these from WorktreeStatus/PRStatus need a lock.
+	// statusMu guards worktreeStatusCalls/prStatusCalls: the core fans its
+	// per-id status calls out concurrently, so appends to these from
+	// WorktreeStatus/PRStatus need a lock.
 	statusMu sync.Mutex
 
 	// worktreeStatus, keyed by session id, backs WorktreeStatus. A missing
@@ -131,7 +130,7 @@ type fakeBackend struct {
 
 	// prStatus, keyed by session id, backs PRStatus. A missing entry means
 	// "unknown" (ok=false), mirroring worktreeStatus.
-	prStatus      map[string]prStatusInfo
+	prStatus      map[string]prstatus.Info
 	prStatusCalls []string
 	// prStatusDelay mirrors worktreeStatusDelay, for PRStatus.
 	prStatusDelay time.Duration
@@ -151,16 +150,6 @@ type fakeBackend struct {
 
 type setThemeCall struct{ theme, appearance string }
 
-type createCall struct {
-	project, name, agent, branch, ticket string
-	openTerminal                         bool
-	dangerous                            *bool
-	baseBranch, model, thinking          string
-}
-type sendPromptCall struct {
-	tmuxSession, prompt string
-	autoSubmit          bool
-}
 type tagCall struct{ id, ticket, pr string }
 type sessionAgentCall struct {
 	id, agent string
@@ -206,27 +195,30 @@ type deleteFolderCall struct {
 	project, name string
 }
 
-func (f *fakeBackend) CreateSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
-	f.createCalls = append(f.createCalls, createCall{project, name, agent, existingBranch, ticket, openTerminal, dangerous, baseBranch, model, thinking})
+func (f *fakeBackend) SuggestedProject() (string, string) { return "", "" }
+
+func (f *fakeBackend) CreateSession(req session.CreateRequest) (session.Session, string, error) {
+	f.createCalls = append(f.createCalls, req)
 	if f.createErr != nil {
 		return session.Session{}, "", f.createErr
 	}
-	label := name
+	label := req.Name
 	if label == "" {
-		label = existingBranch
+		label = req.Branch
 	}
-	s := session.Session{ID: session.MakeID(project, label), Project: project, Name: label, Agent: agent, Dangerous: dangerous != nil && *dangerous, Ticket: ticket}
+	s := session.Session{
+		ID: session.MakeID(req.Project, label), Project: req.Project, Name: label,
+		Agent: req.Agent, Dangerous: req.Dangerous != nil && *req.Dangerous,
+		Ticket: req.Ticket, PR: req.PR, Prompt: req.Prompt,
+	}
 	f.sessions = append(f.sessions, s)
 	return s, f.createHint, nil
-}
-func (f *fakeBackend) StartFirstPrompt(tmuxSession, prompt string, autoSubmit bool) error {
-	f.firstPromptCalls = append(f.firstPromptCalls, sendPromptCall{tmuxSession, prompt, autoSubmit})
-	return f.firstPromptErr
 }
 func (f *fakeBackend) OpenSession(id string) (string, error) {
 	f.openCalls = append(f.openCalls, id)
 	return f.openHint, f.openErr
 }
+func (f *fakeBackend) EnsureTmux(id string) (string, error) { return "", nil }
 func (f *fakeBackend) DeleteSession(id string) (string, error) {
 	f.deleteCalls = append(f.deleteCalls, id)
 	if f.deleteErr == nil {
@@ -268,16 +260,40 @@ func (f *fakeBackend) PRStatus(id string) (prstatus.Info, bool) {
 	f.prStatusCalls = append(f.prStatusCalls, id)
 	f.statusMu.Unlock()
 	st, present := f.prStatus[id]
-	if !present {
-		return prstatus.Info{}, false
-	}
-	return st.info, st.ok
+	return st, present
 }
 func (f *fakeBackend) KillTmux(id string) error {
 	f.killCalls = append(f.killCalls, id)
 	return nil
 }
+
+// SetSessionStatusTitle is no longer part of tui.Backend — the core keeps
+// tmux window titles in step now — but it is part of sessionview.Core, and
+// seedViews drives the real derivation through this fake.
 func (f *fakeBackend) SetSessionStatusTitle(id string, st watcher.State) error { return nil }
+
+// seedViews drives one snapshot into m exactly as the core would, by
+// running the real derivation (sessionview.Once) against this fake backend.
+// states is keyed by worktree path, like the raw watcher output it stands
+// in for; tmux liveness, git/PR status and the rest come from the fake.
+// putView seeds one session's derived state directly, for tests that care
+// how a state renders rather than how it was derived. Sessions with no view
+// read as parked, matching the real model before its first snapshot.
+func putView(m *Model, id string, v sessionview.View) {
+	v.ID = id
+	if v.Label == "" {
+		v.Label = sessionview.Label(v.State)
+	}
+	if v.Quip == "" {
+		v.Quip = sessionview.Quip(id, v.State)
+	}
+	m.views[id] = v
+	m.refreshSessions()
+}
+
+func seedViews(m *Model, be sessionview.Core, states map[string]watcher.State) {
+	m.Update(StatusTickMsg{Snap: sessionview.Once(be, "", states)})
+}
 func (f *fakeBackend) SetSessionTags(id, ticket, pr string) (session.Session, error) {
 	f.tagCalls = append(f.tagCalls, tagCall{id, ticket, pr})
 	if f.tagErr != nil {
@@ -371,12 +387,42 @@ func (f *fakeBackend) Sessions() []session.Session {
 	f.sessionsCalls.Add(1)
 	return f.sessions
 }
+
+// The folder fakes mutate f.cfg the way AddProject does, so ConfigSnapshot
+// answers with the mutation applied — the real backend's folder state lives
+// in config, and a fake that only records the call can't catch a Model that
+// forgets to apply the returned snapshot.
 func (f *fakeBackend) CreateFolder(project, name string) error {
 	f.createFolderCalls = append(f.createFolderCalls, createFolderCall{project: project, name: name})
-	return f.createFolderErr
+	if f.createFolderErr != nil {
+		return f.createFolderErr
+	}
+	f.setFolderMeta(project, name, config.FolderMeta{})
+	return nil
+}
+
+// setFolderMeta writes one folder's metadata into f.cfg, allocating the
+// project's folder map on first use.
+func (f *fakeBackend) setFolderMeta(project, name string, meta config.FolderMeta) {
+	p := f.cfg.Projects[project]
+	if p.Folders == nil {
+		p.Folders = map[string]config.FolderMeta{}
+	}
+	p.Folders[name] = meta
+	f.cfg.Projects[project] = p
 }
 func (f *fakeBackend) SetSessionFolder(id, folder string) (session.Session, error) {
 	f.setSessionFolderCalls = append(f.setSessionFolderCalls, setSessionFolderCall{id: id, folder: folder})
+	if f.setSessionFolderErr == nil && folder != "" {
+		for _, s := range f.sessions {
+			if s.ID == id {
+				if _, exists := f.cfg.Projects[s.Project].Folders[folder]; !exists {
+					f.setFolderMeta(s.Project, folder, config.FolderMeta{Order: s.Order})
+				}
+				break
+			}
+		}
+	}
 	for i := range f.sessions {
 		if f.sessions[i].ID == id {
 			f.sessions[i].Folder = folder
@@ -387,19 +433,36 @@ func (f *fakeBackend) SetSessionFolder(id, folder string) (session.Session, erro
 }
 func (f *fakeBackend) RenameFolder(project, oldName, newName string) error {
 	f.renameFolderCalls = append(f.renameFolderCalls, renameFolderCall{project: project, oldName: oldName, newName: newName})
+	if f.renameFolderErr != nil {
+		return f.renameFolderErr
+	}
+	if meta, ok := f.cfg.Projects[project].Folders[oldName]; ok {
+		delete(f.cfg.Projects[project].Folders, oldName)
+		f.setFolderMeta(project, newName, meta)
+	}
 	for i := range f.sessions {
 		if f.sessions[i].Project == project && f.sessions[i].Folder == oldName {
 			f.sessions[i].Folder = newName
 		}
 	}
-	return f.renameFolderErr
+	return nil
 }
 func (f *fakeBackend) SetFolderCollapsed(project, name string, collapsed bool) error {
 	f.setFolderCollapsedCalls = append(f.setFolderCollapsedCalls, setFolderCollapsedCall{project: project, name: name, collapsed: collapsed})
-	return f.setFolderCollapsedErr
+	if f.setFolderCollapsedErr != nil {
+		return f.setFolderCollapsedErr
+	}
+	meta := f.cfg.Projects[project].Folders[name]
+	meta.Collapsed = collapsed
+	f.setFolderMeta(project, name, meta)
+	return nil
 }
 func (f *fakeBackend) DeleteFolder(project, name string) error {
 	f.deleteFolderCalls = append(f.deleteFolderCalls, deleteFolderCall{project: project, name: name})
+	if f.deleteFolderErr != nil {
+		return f.deleteFolderErr
+	}
+	delete(f.cfg.Projects[project].Folders, name)
 	for i := range f.sessions {
 		if f.sessions[i].Project == project && f.sessions[i].Folder == name {
 			f.sessions[i].Folder = ""
@@ -409,16 +472,16 @@ func (f *fakeBackend) DeleteFolder(project, name string) error {
 }
 func (f *fakeBackend) Projects() []string            { return nil }
 func (f *fakeBackend) ConfigSnapshot() config.Config { return f.cfg.Clone() }
-func (f *fakeBackend) AddProject(name string, p config.Project) error {
+func (f *fakeBackend) AddProject(name string, p config.Project) (string, error) {
 	f.addProjectCalls = append(f.addProjectCalls, projectCall{name, p})
 	if f.addProjectErr != nil {
-		return f.addProjectErr
+		return f.addProjectWarning, f.addProjectErr
 	}
 	if f.cfg.Projects == nil {
 		f.cfg.Projects = map[string]config.Project{}
 	}
 	f.cfg.Projects[name] = p
-	return nil
+	return "", nil
 }
 func (f *fakeBackend) InitProjectAndAdd(name string, p config.Project) error {
 	f.initProjectCalls = append(f.initProjectCalls, projectCall{name, p})
@@ -504,7 +567,7 @@ func TestLinkHitsResolveClicks(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{
 		{ID: "demo:one", Project: "demo", Name: "one", Ticket: "https://ticket.example/1", PR: "https://pr.example/1"},
 	}}
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 
@@ -548,7 +611,7 @@ func TestTruncatedDetailURLsRemainClickable(t *testing.T) {
 			PR:      prURL,
 		},
 	}}
-	m := New(cfg, be, testAgentOptions, make(chan watcher.Snapshot), func() {})
+	m := New(cfg, be, testAgentOptions, make(chan sessionview.Snapshot), func() {})
 	m.width, m.height = 80, 24
 
 	frame := m.View()
@@ -615,7 +678,7 @@ func TestLinkClickOverSSHCopiesInsteadOfOpening(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{
 		{ID: "demo:one", Project: "demo", Name: "one", Ticket: "https://ticket.example/1"},
 	}}
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.View() // populate m.linkHits
@@ -651,7 +714,7 @@ func TestSessionRowClickSelectsWithoutOpening(t *testing.T) {
 		},
 		openHint: "run: tmux attach -t moomux-two",
 	}
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.mode = ModeList // exercising the plain-list click path, not multi-view's
@@ -685,7 +748,7 @@ func TestSessionRowClickOutsideListDoesNotSelect(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{
 		{ID: "demo:one", Project: "demo", Name: "one"},
 	}}
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.View()
@@ -735,7 +798,7 @@ func TestRemoteLinksToggleOverridesAutoDetection(t *testing.T) {
 	t.Setenv("MOSHI_CLIENT", "")
 	cfg := &config.Config{Projects: map[string]config.Project{"demo": {Repo: "/tmp/demo"}}}
 	be := &fakeBackend{}
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 
 	// No SSH env set and not forced: isRemote() says false.
@@ -771,7 +834,7 @@ func TestTmuxRowClickAlwaysCopies(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{
 		{ID: "demo:one", Project: "demo", Name: "one", TmuxSession: "moomux-one"},
 	}}
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 	m.View() // populate m.linkHits

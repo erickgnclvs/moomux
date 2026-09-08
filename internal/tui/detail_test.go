@@ -11,7 +11,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
-	"github.com/erickgnclvs/moomux/internal/watcher"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 )
 
 // TestDetailTruncatesLongTicketURLButKeepsItClickable asserts a ticket/PR
@@ -24,7 +24,7 @@ func TestDetailTruncatesLongTicketURLButKeepsItClickable(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{
 		{ID: "demo:one", Project: "demo", Name: "one", Ticket: longURL},
 	}}
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 
@@ -108,7 +108,7 @@ func TestPRStatusLabel(t *testing.T) {
 
 // TestDetailShowsPRStatusRowOnlyWhenCached guards the detail panel's wiring:
 // the "pr status" row only appears once a status has actually resolved into
-// m.prStatus, not merely because the session has a PR attached — otherwise
+// a resolved PR status on the view, not merely because a PR is attached — otherwise
 // a session that just gained a PR (before its first gh pr view resolves)
 // would show a misleading or empty status.
 func TestDetailShowsPRStatusRowOnlyWhenCached(t *testing.T) {
@@ -116,7 +116,7 @@ func TestDetailShowsPRStatusRowOnlyWhenCached(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{
 		{ID: "demo:one", Project: "demo", Name: "one", PR: "https://github.com/example/repo/pull/1"},
 	}}
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 
@@ -125,7 +125,7 @@ func TestDetailShowsPRStatusRowOnlyWhenCached(t *testing.T) {
 		t.Fatalf("expected no pr status row before a status resolves:\n%s", frame)
 	}
 
-	m.prStatus["demo:one"] = prStatusInfo{ok: true, info: prstatus.Info{State: "OPEN", Mergeable: "CONFLICTING", CI: "FAILING"}}
+	putView(m, "demo:one", sessionview.View{PR: &prstatus.Info{State: "OPEN", Mergeable: "CONFLICTING", CI: "FAILING"}})
 	frame, _ = m.renderDetail(80-2, 24-2)
 	if !strings.Contains(frame, "conflicts") || !strings.Contains(frame, "CI failing") {
 		t.Fatalf("expected the cached pr status to render:\n%s", frame)
@@ -152,7 +152,7 @@ func TestCompactDetailTrimsFieldsAndShortensPR(t *testing.T) {
 			WorktreePath: "/tmp/demo/one",
 		},
 	}}
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 	m.width, m.height = 80, 24
 
@@ -169,7 +169,7 @@ func TestCompactDetailTrimsFieldsAndShortensPR(t *testing.T) {
 	// pr status only ever shows once cached (TestDetailShowsPRStatusRowOnlyWhenCached
 	// guards that generally); set it here so this test can confirm compact
 	// mode keeps that row instead of accidentally guarding it on !compact.
-	m.prStatus["demo:one"] = prStatusInfo{ok: true, info: prstatus.Info{State: "MERGED"}}
+	putView(m, "demo:one", sessionview.View{PR: &prstatus.Info{State: "MERGED"}})
 
 	m.cfg.CompactDetail = true
 	frame, hits := m.renderDetail(80-2, 24-2)
@@ -211,7 +211,7 @@ func TestCompactDetailHidesCowOnNarrowLayout(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{
 		{ID: "demo:one", Project: "demo", Name: "one"},
 	}}
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 
 	m.width, m.height = narrowWidthBreak, 24
@@ -263,6 +263,61 @@ func TestFrameLinesKeepWidthUnderStyling(t *testing.T) {
 		styled, plain := ansi.StringWidth(line), ansi.StringWidth(ansi.Strip(line))
 		if styled != plain || plain > m.width {
 			t.Errorf("line %d: styled width %d, stripped width %d, terminal %d: %q", i+1, styled, plain, m.width, ansi.Strip(line))
+		}
+	}
+}
+
+func TestPRGlyph(t *testing.T) {
+	cases := []struct {
+		name string
+		info *prstatus.Info
+		want string
+	}{
+		{"unknown", nil, "🔀"},
+		{"merged", &prstatus.Info{State: "MERGED", CI: "PASSING"}, "✅"},
+		{"closed", &prstatus.Info{State: "CLOSED"}, "🚫"},
+		{"conflicts beat CI", &prstatus.Info{State: "OPEN", Mergeable: "CONFLICTING", CI: "FAILING"}, "⚠️"},
+		{"ci failing", &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "FAILING"}, "❌"},
+		{"ci pending", &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "PENDING"}, "⏳"},
+		// A repo with no checks configured at all is not "pending".
+		{"no checks configured", &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "NONE"}, "🔀"},
+		{"ready", &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "PASSING"}, "🔀"},
+		{"conflicts beat pending", &prstatus.Info{State: "OPEN", Mergeable: "CONFLICTING", CI: "PENDING"}, "⚠️"},
+		{"merged with pending checks", &prstatus.Info{State: "MERGED", CI: "PENDING"}, "✅"},
+		// A merged PR's mergeable/CI stop meaning anything — state wins.
+		{"merged with stale conflicts", &prstatus.Info{State: "MERGED", Mergeable: "CONFLICTING"}, "✅"},
+	}
+	for _, c := range cases {
+		if got := prGlyph(c.info); got != c.want {
+			t.Errorf("%s: prGlyph = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestNewlyMergedFlash(t *testing.T) {
+	open := &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "PASSING"}
+	merged := &prstatus.Info{State: "MERGED"}
+	sessions := []session.Session{{ID: "a", Name: "alpha"}, {ID: "b", Name: "beta"}}
+	views := func(a, b *prstatus.Info) map[string]sessionview.View {
+		return map[string]sessionview.View{"a": {ID: "a", PR: a}, "b": {ID: "b", PR: b}}
+	}
+	cases := []struct {
+		name       string
+		prev, next map[string]sessionview.View
+		want       string
+	}{
+		{"one merged", views(open, open), views(merged, open), "PR merged: alpha"},
+		{"both merged", views(open, open), views(merged, merged), "2 PRs merged: alpha, beta"},
+		{"nothing changed", views(open, open), views(open, open), ""},
+		{"already merged doesn't re-flash", views(merged, open), views(merged, open), ""},
+		// First snapshot this client sees: no previous entry to compare
+		// against, so an already-merged PR is old news, not news.
+		{"first snapshot stays quiet", nil, views(merged, merged), ""},
+		{"no status yet", views(nil, nil), views(merged, nil), ""},
+	}
+	for _, c := range cases {
+		if got := newlyMergedFlash(c.prev, c.next, sessions); got != c.want {
+			t.Errorf("%s: newlyMergedFlash = %q, want %q", c.name, got, c.want)
 		}
 	}
 }

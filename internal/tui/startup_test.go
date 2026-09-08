@@ -5,7 +5,7 @@ import (
 
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/session"
-	"github.com/erickgnclvs/moomux/internal/watcher"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 )
 
 // TestNewSelectsFirstProjectWithActiveSessions is the regression test for the
@@ -24,7 +24,7 @@ func TestNewSelectsFirstProjectWithActiveSessions(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{
 		{ID: "other:work", Project: "other", Name: "work"},
 	}}
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 
 	if got := m.projects[m.activeProj]; got != "other" {
@@ -44,7 +44,7 @@ func TestNewFallsBackToFirstProjectWhenNoneHaveActiveSessions(t *testing.T) {
 		},
 	}
 	be := &fakeBackend{}
-	statusCh := make(chan watcher.Snapshot)
+	statusCh := make(chan sessionview.Snapshot)
 	m := New(cfg, be, testAgentOptions, statusCh, func() {})
 
 	if got := m.projects[m.activeProj]; got != "moomux" {

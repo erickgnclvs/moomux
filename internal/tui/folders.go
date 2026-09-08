@@ -47,7 +47,7 @@ func (m *Model) updateFolderForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if err != nil {
 					return ErrorMsg{Err: err}
 				}
-				return SessionFolderSetMsg{Session: s}
+				return SessionFolderSetMsg{Session: s, Cfg: m.cfgSnapshotOnSuccess(err)}
 			}
 		case "rename":
 			if name == "" || len(m.projects) == 0 {
@@ -58,7 +58,7 @@ func (m *Model) updateFolderForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = ModeFolders
 			return m, func() tea.Msg {
 				err := m.backend.RenameFolder(proj, old, name)
-				return FolderRenamedMsg{OldName: old, NewName: name, Err: err}
+				return FolderRenamedMsg{OldName: old, NewName: name, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
 			}
 		case "create":
 			if name == "" || len(m.projects) == 0 {
@@ -68,7 +68,7 @@ func (m *Model) updateFolderForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = ModeFolders
 			return m, func() tea.Msg {
 				err := m.backend.CreateFolder(proj, name)
-				return FolderCreatedMsg{Project: proj, Name: name, Err: err}
+				return FolderCreatedMsg{Project: proj, Name: name, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
 			}
 		}
 		return m, nil
@@ -137,7 +137,7 @@ func (m *Model) updateFolders(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			collapsed := !m.cfg.Projects[proj].Folders[name].Collapsed
 			return m, func() tea.Msg {
 				err := m.backend.SetFolderCollapsed(proj, name, collapsed)
-				return FolderCollapsedSetMsg{Project: proj, Name: name, Collapsed: collapsed, Err: err}
+				return FolderCollapsedSetMsg{Project: proj, Name: name, Collapsed: collapsed, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
 			}
 		}
 	case key.Matches(msg, m.keys.EditSession):
@@ -157,7 +157,7 @@ func (m *Model) updateFolders(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			name := names[m.folderCursor]
 			return m, func() tea.Msg {
 				err := m.backend.DeleteFolder(proj, name)
-				return FolderDeletedMsg{Project: proj, Name: name, Err: err}
+				return FolderDeletedMsg{Project: proj, Name: name, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
 			}
 		}
 	}
@@ -176,12 +176,7 @@ func (m *Model) renderFolders() string {
 		return b.String()
 	}
 	proj := m.projects[m.activeProj]
-	counts := map[string]int{}
-	for _, s := range m.allSessions() {
-		if s.Project == proj && s.Folder != "" && s.Archived == m.showArchived {
-			counts[s.Folder]++
-		}
-	}
+	counts := m.folderMemberCounts()
 	rowWidth := m.overlayWidth(formHintWidth) - 2
 	for i, name := range names {
 		selected := i == m.folderCursor

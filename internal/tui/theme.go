@@ -15,70 +15,25 @@ func ApplySettings(cfg *config.Config) {
 	applyTheme(cfg.Theme)
 }
 
-// palette is the full set of colors a theme swaps in. Every field mirrors one
-// of the package-level colXxx vars in styles.go.
-type palette struct {
-	fg, mute, accent, working, done, needsInput, parked, danger, border, selBg lipgloss.AdaptiveColor
-}
+// themeNames is the display/cycle order for the theme picker, derived from
+// the core's table (config.Themes) rather than restated here — that table is
+// also what internal/ipc serves a second front end, so there is one list of
+// theme names in the process, not one per front end.
+var themeNames = func() []string {
+	all := config.Themes()
+	names := make([]string, len(all))
+	for i, t := range all {
+		names[i] = t.Name
+	}
+	return names
+}()
 
-// themes are the built-in palettes. "default" is moomux's original look;
-// "terminal" delegates to the user's own terminal colorscheme via ANSI
-// indices, which is why its Light/Dark halves match — the terminal itself
-// already resolves those per its own appearance.
-var themes = map[string]palette{
-	"default": {
-		fg:         lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#e6e6e6"},
-		mute:       lipgloss.AdaptiveColor{Light: "#5b5b66", Dark: "#7a7a85"},
-		accent:     lipgloss.AdaptiveColor{Light: "#2952cc", Dark: "#7aa2f7"},
-		working:    lipgloss.AdaptiveColor{Light: "#4b7a1f", Dark: "#9ece6a"},
-		done:       lipgloss.AdaptiveColor{Light: "#946f1a", Dark: "#e0af68"},
-		needsInput: lipgloss.AdaptiveColor{Light: "#9c3ba1", Dark: "#bb70d2"},
-		parked:     lipgloss.AdaptiveColor{Light: "#7d7d85", Dark: "#565a6e"},
-		danger:     lipgloss.AdaptiveColor{Light: "#c0293f", Dark: "#f7768e"},
-		border:     lipgloss.AdaptiveColor{Light: "#9a9aa5", Dark: "#2d2f3a"},
-		selBg:      lipgloss.AdaptiveColor{Light: "#a9bdf0", Dark: "#2f395e"},
-	},
-	"terminal": {
-		fg:         lipgloss.AdaptiveColor{Light: "15", Dark: "15"},
-		mute:       lipgloss.AdaptiveColor{Light: "8", Dark: "8"},
-		accent:     lipgloss.AdaptiveColor{Light: "12", Dark: "12"},
-		working:    lipgloss.AdaptiveColor{Light: "10", Dark: "10"},
-		done:       lipgloss.AdaptiveColor{Light: "11", Dark: "11"},
-		needsInput: lipgloss.AdaptiveColor{Light: "13", Dark: "13"},
-		parked:     lipgloss.AdaptiveColor{Light: "7", Dark: "7"},
-		danger:     lipgloss.AdaptiveColor{Light: "9", Dark: "9"},
-		border:     lipgloss.AdaptiveColor{Light: "8", Dark: "8"},
-		selBg:      lipgloss.AdaptiveColor{Light: "4", Dark: "4"},
-	},
-	"gruvbox": {
-		fg:         lipgloss.AdaptiveColor{Light: "#3c3836", Dark: "#ebdbb2"},
-		mute:       lipgloss.AdaptiveColor{Light: "#665c54", Dark: "#a89984"},
-		accent:     lipgloss.AdaptiveColor{Light: "#076678", Dark: "#83a598"},
-		working:    lipgloss.AdaptiveColor{Light: "#79740e", Dark: "#b8bb26"},
-		done:       lipgloss.AdaptiveColor{Light: "#b57614", Dark: "#fabd2f"},
-		needsInput: lipgloss.AdaptiveColor{Light: "#8f3f71", Dark: "#d3869b"},
-		parked:     lipgloss.AdaptiveColor{Light: "#a89984", Dark: "#665c54"},
-		danger:     lipgloss.AdaptiveColor{Light: "#9d0006", Dark: "#fb4934"},
-		border:     lipgloss.AdaptiveColor{Light: "#d5c4a1", Dark: "#3c3836"},
-		selBg:      lipgloss.AdaptiveColor{Light: "#d5c4a1", Dark: "#504945"},
-	},
-	"catppuccin": {
-		fg:         lipgloss.AdaptiveColor{Light: "#4c4f69", Dark: "#cdd6f4"},
-		mute:       lipgloss.AdaptiveColor{Light: "#6c6f85", Dark: "#a6adc8"},
-		accent:     lipgloss.AdaptiveColor{Light: "#1e66f5", Dark: "#89b4fa"},
-		working:    lipgloss.AdaptiveColor{Light: "#40a02b", Dark: "#a6e3a1"},
-		done:       lipgloss.AdaptiveColor{Light: "#df8e1d", Dark: "#f9e2af"},
-		needsInput: lipgloss.AdaptiveColor{Light: "#8839ef", Dark: "#cba6f7"},
-		parked:     lipgloss.AdaptiveColor{Light: "#9ca0b0", Dark: "#6c7086"},
-		danger:     lipgloss.AdaptiveColor{Light: "#d20f39", Dark: "#f38ba8"},
-		border:     lipgloss.AdaptiveColor{Light: "#acb0be", Dark: "#585b70"},
-		selBg:      lipgloss.AdaptiveColor{Light: "#ccd0da", Dark: "#313244"},
-	},
+// adaptive converts a served config.Color to the lipgloss pair the styles are
+// built from. Color.System is ignored on purpose: a terminal has no system
+// accent to follow, and Light/Dark always carry a usable fallback.
+func adaptive(c config.Color) lipgloss.AdaptiveColor {
+	return lipgloss.AdaptiveColor{Light: c.Light, Dark: c.Dark}
 }
-
-// themeNames is the stable display/cycle order for the theme picker — map
-// iteration order isn't stable, and "default" belongs first regardless.
-var themeNames = []string{"default", "terminal", "gruvbox", "catppuccin"}
 
 // themeIndex returns name's position in themeNames, or 0 ("default") if name
 // is empty or unrecognized (e.g. an unset or hand-edited config field).
@@ -96,20 +51,18 @@ func themeIndex(name string) int {
 // rather than erroring, since this also runs against whatever a hand-edited
 // config.toml contains.
 func applyTheme(name string) {
-	p, ok := themes[name]
-	if !ok {
-		p = themes["default"]
-	}
-	colFg = p.fg
-	colMute = p.mute
-	colAccent = p.accent
-	colWorking = p.working
-	colDone = p.done
-	colNeedsInput = p.needsInput
-	colParked = p.parked
-	colDanger = p.danger
-	colBorder = p.border
-	colSelBg = p.selBg
+	p := config.ThemeByName(name)
+	colFg = adaptive(p.Fg)
+	colMute = adaptive(p.Mute)
+	colAccent = adaptive(p.Accent)
+	colWorking = adaptive(p.Working)
+	colDone = adaptive(p.Done)
+	colNeedsInput = adaptive(p.NeedsInput)
+	colParked = adaptive(p.Parked)
+	colWarn = adaptive(p.Warn)
+	colDanger = adaptive(p.Danger)
+	colBorder = adaptive(p.Border)
+	colSelBg = adaptive(p.SelBg)
 	buildStyles()
 }
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
@@ -20,7 +21,7 @@ import (
 func TestRenderRowProjectLabelFitsWidthBudget(t *testing.T) {
 	s := session.Session{Name: "feature-auth", Ticket: "https://x/1", PR: "https://x/2"}
 	for _, width := range []int{20, 30, 40, 60} {
-		row, _ := renderRow(s, watcher.Working, width, false, "🚀", gitStatusInfo{})
+		row, _ := renderRow(s, sessionview.View{State: watcher.Working}, width, false, "🚀")
 		if got := lipgloss.Width(row); got > width {
 			t.Fatalf("width %d: rendered row width = %d, want <= %d (row=%q)", width, got, width, row)
 		}
@@ -36,9 +37,9 @@ func TestRenderRowProjectLabelFitsWidthBudget(t *testing.T) {
 // guards for ticket/PR alone.
 func TestRenderRowGitStatusIconsFitWidthBudget(t *testing.T) {
 	s := session.Session{Name: "feature-auth", Ticket: "https://x/1", PR: "https://x/2"}
-	git := gitStatusInfo{ok: true, dirty: true, unpushed: true}
+	v := sessionview.View{State: watcher.Working, GitOK: true, Dirty: true, Unpushed: true}
 	for width := 8; width <= 40; width++ {
-		row, _ := renderRow(s, watcher.Working, width, false, "🚀", git)
+		row, _ := renderRow(s, v, width, false, "🚀")
 		if got := lipgloss.Width(row); got > width {
 			t.Fatalf("width %d: rendered row width = %d, want <= %d (row=%q)", width, got, width, row)
 		}
@@ -52,8 +53,8 @@ func TestRenderRowGitStatusIconsFitWidthBudget(t *testing.T) {
 // and the hit must always land inside the row's own rendered width.
 func TestRenderRowLinkHitOffsetsAccountForProjectLabel(t *testing.T) {
 	s := session.Session{Name: "feature-auth", Ticket: "https://x/1"}
-	withLabel, hitsWithLabel := renderRow(s, watcher.Parked, 40, false, "🚀", gitStatusInfo{})
-	_, hitsNoLabel := renderRow(s, watcher.Parked, 40, false, "", gitStatusInfo{})
+	withLabel, hitsWithLabel := renderRow(s, sessionview.View{State: watcher.Parked}, 40, false, "🚀")
+	_, hitsNoLabel := renderRow(s, sessionview.View{State: watcher.Parked}, 40, false, "")
 
 	if len(hitsWithLabel) != 1 || len(hitsNoLabel) != 1 {
 		t.Fatalf("expected exactly one ticket link hit each, got %d and %d", len(hitsWithLabel), len(hitsNoLabel))
@@ -81,7 +82,7 @@ func TestRenderRowSelectedBackgroundCoversWholeRow(t *testing.T) {
 	lipgloss.SetColorProfile(2)
 	defer lipgloss.SetColorProfile(orig)
 	s := session.Session{Name: "feature-auth"}
-	row, _ := renderRow(s, watcher.Parked, 40, true, "🚀", gitStatusInfo{})
+	row, _ := renderRow(s, sessionview.View{State: watcher.Parked}, 40, true, "🚀")
 	rendered := listRowSelected.Render(row)
 
 	idx := strings.Index(rendered, "feature-auth")

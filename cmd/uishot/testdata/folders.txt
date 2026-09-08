@@ -3,12 +3,12 @@
  _/(--)  out to pasture                 
   \(__)                                 
 ┌──────────────────────────────────────┐
-│  feature-auth                  🎫 ⬤  │
+│  ⬤  feature-auth                 🎫  │
 │ ▸ legacy (1)                         │
-│  bugfix-timeout                🔀 ⬤  │
+│  ⬤  bugfix-timeout               🔀  │
 │ ▾ auth (2)                           │
-│    auth-refresh                   ⬤  │
-│    auth-logout                    ⬤  │
+│    ⬤  auth-refresh                   │
+│    ⬤  auth-logout                    │
 │                                      │
 │                                      │
 │                                      │
@@ -26,12 +26,12 @@
 ┌──────────────────────────────────────────┐┌──────────────────────────────────────────────────────┐
 │ SESSIONS¹                                ││                                                      │
 │                                          ││                                                      │
-│  feature-auth                      🎫 ⬤  ││ project:   demo                                      │
+│  ⬤  feature-auth                     🎫  ││ project:   demo                                      │
 │ ▸ legacy (1)                             ││ status:    ⬤  in the barn                            │
-│  bugfix-timeout                    🔀 ⬤  ││ name:      feature-auth                              │
+│  ⬤  bugfix-timeout                   🔀  ││ name:      feature-auth                              │
 │ ▾ auth (2)                               ││ agent:     claude                                    │
-│    auth-refresh                       ⬤  ││ ticket:    https://tracker.example/TICK-123          │
-│    auth-logout                        ⬤  ││ tmux:      moomux-feature-auth                       │
+│    ⬤  auth-refresh                       ││ ticket:    https://tracker.example/TICK-123          │
+│    ⬤  auth-logout                        ││ tmux:      moomux-feature-auth                       │
 │                                          ││ worktree:  /tmp/demo/feature-auth                    │
 │                                          ││ created:   just now                                  │
 │                                          ││ prompt:    add JWT-based auth to the login flow,     │

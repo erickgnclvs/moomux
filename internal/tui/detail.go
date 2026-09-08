@@ -9,6 +9,7 @@ import (
 
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
@@ -33,7 +34,7 @@ func (m *Model) renderDetail(width, height int) (string, []linkHit) {
 // spacing is still reserved (see renderDetail) — ModeMultiView's panels
 // never need it, having no side-by-side sibling column to line up with.
 func (m *Model) renderDetailFor(s session.Session, hasSelection bool, width, height int, titleGap bool) (string, []linkHit) {
-	content, allHits, preCowLines := m.renderDetailContent(s, hasSelection, width, titleGap)
+	content, allHits, preCowLines := m.renderDetailContent(s, m.viewFor(s.ID), hasSelection, width, titleGap)
 	// Anchor the closing cowsay block to the bottom of height instead of
 	// leaving it wherever the (variable-length) fields above it happen to
 	// end: renderMultiPanel/renderListView now size height off the detail
@@ -70,17 +71,6 @@ func (m *Model) renderDetailFor(s session.Session, hasSelection bool, width, hei
 	return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(content), hits
 }
 
-// detailContentHeight reports how many rows renderDetailContent's output for
-// s actually takes at width — its content (fields, wrapped prompt, closing
-// cowsay art) varies per session, so renderMultiPanel measures it rather than
-// guessing, sizing each panel's detail section around what it truly needs
-// instead of a flat fraction of the panel that starves the cow whenever the
-// session list next to it is long.
-func (m *Model) detailContentHeight(s session.Session, hasSelection bool, width int) int {
-	content, _, _ := m.renderDetailContent(s, hasSelection, width, false)
-	return lipgloss.Height(lipgloss.NewStyle().Width(width).Render(content))
-}
-
 // maxDetailContentHeight reports the tallest the detail panel can ever be at
 // width: every optional field present, the prompt wrapped to its 3-line cap,
 // and full cowsay art. renderListView and renderMultiPanel size their
@@ -88,6 +78,14 @@ func (m *Model) detailContentHeight(s session.Session, hasSelection bool, width 
 // so switching the selected session never changes how many rows the list
 // gets — the split only moves when width (or compact mode) does.
 func (m *Model) maxDetailContentHeight(width int) int {
+	// Memoized per pass: this measures by rendering a whole synthetic detail
+	// body — cowsay art and a 60-word wrapped prompt — and renderMultiPanel
+	// calls it once per visible project, every frame. The answer depends
+	// only on the inputs keyed here.
+	key := detailHeightKey{width: width, screenWidth: m.width, compact: m.cfg.CompactDetail}
+	if h, ok := m.detailHeights[key]; ok {
+		return h
+	}
 	worst := session.Session{
 		Project:      "x",
 		Name:         "x",
@@ -95,13 +93,23 @@ func (m *Model) maxDetailContentHeight(width int) int {
 		PR:           "https://x",
 		WorktreePath: "x",
 		CreatedAt:    time.Now(),
-		Prompt:       strings.Repeat("word ", 60),
 	}
-	// +2 for the "git" and "pr status" rows: both are keyed off
-	// m.gitStatus/m.prStatus by session id, which this unattached probe
-	// session can never populate, but both are always exactly one
-	// unwrapped line when present.
-	return m.detailContentHeight(worst, true, width) + 2
+	// The probe carries its own worst-case view rather than borrowing one
+	// from m.views: the fields that vary in height (the prompt, and the
+	// "git"/"pr status" rows) all live on the View now, and this session id
+	// exists in no snapshot.
+	worstView := sessionview.View{
+		State:  watcher.Done,
+		Label:  sessionview.Label(watcher.Done),
+		Quip:   sessionview.Quip("x", watcher.Done),
+		Prompt: strings.Repeat("word ", 60),
+		GitOK:  true,
+		PR:     &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "PASSING"},
+	}
+	content, _, _ := m.renderDetailContent(worst, worstView, true, width, false)
+	h := lipgloss.Height(lipgloss.NewStyle().Width(width).Render(content))
+	m.detailHeights[key] = h
+	return h
 }
 
 // renderDetailContent builds renderDetailFor's content and link hits without
@@ -113,7 +121,7 @@ func (m *Model) maxDetailContentHeight(width int) int {
 // the line count of everything before the blank+quip+cow block, or -1 when
 // there's no such block to anchor (nothing selected, or compact narrow mode
 // already shows a cow in the header).
-func (m *Model) renderDetailContent(s session.Session, hasSelection bool, width int, titleGap bool) (string, []linkHit, int) {
+func (m *Model) renderDetailContent(s session.Session, view sessionview.View, hasSelection bool, width int, titleGap bool) (string, []linkHit, int) {
 	var b strings.Builder
 	if titleGap {
 		b.WriteString("\n\n")
@@ -122,16 +130,15 @@ func (m *Model) renderDetailContent(s session.Session, hasSelection bool, width 
 		b.WriteString(muteStyle.Render("nothing selected"))
 		return b.String(), nil, -1
 	}
-	st := m.effectiveState(s)
+	st := view.State
 	dot := dotParked
-	label := "in the barn"
 	switch st {
 	case watcher.Working:
-		dot, label = dotWorking, "grazing"
+		dot = dotWorking
 	case watcher.Done:
-		dot, label = dotDone, "chewing cud"
+		dot = dotDone
 	case watcher.NeedsInput:
-		dot, label = dotNeedsInput, "mooing for you"
+		dot = dotNeedsInput
 	}
 	var hits []linkHit
 	rowLink := func(k, v, url string, copyOnly bool) {
@@ -169,13 +176,13 @@ func (m *Model) renderDetailContent(s session.Session, hasSelection bool, width 
 	if !compact {
 		row("project", truncate(s.Project, valueWidth), "")
 	}
-	row("status", dot+"  "+label, "")
+	row("status", dot+"  "+view.Label, "")
 	row("name", truncate(s.Name, valueWidth), "")
 	if !compact {
 		row("agent", s.AgentName(), "")
 	}
-	if git := m.gitStatus[s.ID]; git.ok {
-		row("git", gitStatusLabel(git), "")
+	if view.GitOK {
+		row("git", gitStatusLabel(gitStatusInfo{dirty: view.Dirty, unpushed: view.Unpushed, ok: true}), "")
 	}
 	if s.Ticket != "" && !compact {
 		row("ticket", truncateLeft(s.Ticket, valueWidth), s.Ticket)
@@ -186,8 +193,8 @@ func (m *Model) renderDetailContent(s session.Session, hasSelection bool, width 
 			prValue = prNumberLabel(s.PR)
 		}
 		row("pr", prValue, s.PR)
-		if pr := m.prStatus[s.ID]; pr.ok {
-			row("pr status", prStatusLabel(pr.info), "")
+		if view.PR != nil {
+			row("pr status", prStatusLabel(*view.PR), "")
 		}
 	}
 	rowLink("tmux", truncate(s.TmuxSession, valueWidth), "tmux attach -t "+s.TmuxSession, true)
@@ -198,11 +205,7 @@ func (m *Model) renderDetailContent(s session.Session, hasSelection bool, width 
 		row("worktree", truncateLeft(s.WorktreePath, valueWidth), "")
 		row("created", humanizeAge(time.Since(s.CreatedAt)), "")
 	}
-	prompt := m.prompts[s.ID]
-	if prompt == "" {
-		prompt = s.Prompt
-	}
-	if prompt != "" {
+	if prompt := view.Prompt; prompt != "" {
 		oneline := strings.ReplaceAll(strings.ReplaceAll(prompt, "\r\n", " "), "\n", " ")
 		const maxPromptLines = 3
 		lines := wrapLines(oneline, valueWidth)
@@ -237,7 +240,7 @@ func (m *Model) renderDetailContent(s session.Session, hasSelection bool, width 
 	if !compact || m.width >= narrowWidthBreak {
 		preCowLines = lipgloss.Height(lipgloss.NewStyle().Width(width).Render(b.String()))
 		b.WriteString("\n")
-		quip := pickQuip(s.ID, quipPool(st))
+		quip := view.Quip
 		if compact {
 			b.WriteString(cowStyle.Render(cowsaySmall(quip, valueWidth+10, st)))
 		} else {
@@ -425,4 +428,64 @@ func humanizeAge(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%d days ago", int(d.Hours()/24))
 	}
+}
+
+// prGlyph is the list row's PR icon. The merge/CI status already rides the
+// view stream (only the detail panel used to show it), and "merged" or
+// "blocked" is exactly what you want to spot without opening a session.
+// nil means no status yet, or the lookup failed — same icon as a plain
+// open PR, since "unknown" isn't worth its own glyph.
+func prGlyph(info *prstatus.Info) string {
+	if info == nil {
+		return "🔀"
+	}
+	switch info.State {
+	case "MERGED":
+		return "✅"
+	case "CLOSED":
+		return "🚫"
+	}
+	if info.Mergeable == "CONFLICTING" {
+		return "⚠️"
+	}
+	if info.CI == "FAILING" {
+		return "❌"
+	}
+	// Checks still running isn't a problem, so it gets its own neutral glyph
+	// rather than the warn colours — an amber icon on every PR for the
+	// minutes CI takes would cry wolf. CI == "NONE" (a repo with no checks
+	// configured) is not pending: it falls through to the plain open glyph.
+	if info.CI == "PENDING" {
+		return "⏳"
+	}
+	return "🔀"
+}
+
+// newlyMergedFlash reports the flash text for PRs that flipped to MERGED
+// between two snapshots, or "" when none did.
+//
+// The transition is spotted by diffing the stream rather than served by the
+// core: "merged" itself is derived state the core owns (View.PR), but
+// *"merged since you last looked"* is per-client by nature — two front ends
+// have seen different amounts. Comparing against the views being replaced
+// means each transition flashes exactly once, and a session that was already
+// merged the first time this client saw it (prev has no entry) says nothing.
+func newlyMergedFlash(prev, next map[string]sessionview.View, sessions []session.Session) string {
+	var names []string
+	for _, s := range sessions {
+		old, had := prev[s.ID]
+		if !had || old.PR == nil || old.PR.State == "MERGED" {
+			continue
+		}
+		if v, ok := next[s.ID]; ok && v.PR != nil && v.PR.State == "MERGED" {
+			names = append(names, s.Name)
+		}
+	}
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return "PR merged: " + names[0]
+	}
+	return fmt.Sprintf("%d PRs merged: %s", len(names), strings.Join(names, ", "))
 }

@@ -1,12 +1,12 @@
 === 40x20 ===
    ^__^                                 
- _/(--)  out to pasture                 
+ _/(**)  no time to graze               
   \(__)                                 
 ┌──────────────────────────────────────┐
 │  ⬤  feature-auth                 🎫  │
-│  ⬤  bugfix-timeout               🔀  │
-│                                      │
-│                                      │
+│  ⬤  bugfix-timeout           🔀 ± ↑  │
+│  ⬤  review-copy                      │
+│  ⬤  stale-idea                       │
 │                                      │
 │                                      │
 │                                      │
@@ -21,15 +21,15 @@
  ? help                            vdev 
 === 100x32 ===
    ^__^                                                                                             
-   (--)\_                                                                                           
+   (**)\_                                                                                           
    (__)\ )                                                                                          
 ┌──────────────────────────────────────────┐┌──────────────────────────────────────────────────────┐
-│ SESSIONS¹                                ││                                                      │
+│ SESSIONS                                 ││                                                      │
 │                                          ││                                                      │
 │  ⬤  feature-auth                     🎫  ││ project:   demo                                      │
-│  ⬤  bugfix-timeout                   🔀  ││ status:    ⬤  in the barn                            │
-│                                          ││ name:      feature-auth                              │
-│                                          ││ agent:     claude                                    │
+│  ⬤  bugfix-timeout               🔀 ± ↑  ││ status:    ⬤  grazing                                │
+│  ⬤  review-copy                          ││ name:      feature-auth                              │
+│  ⬤  stale-idea                           ││ agent:     claude                                    │
 │                                          ││ ticket:    https://tracker.example/TICK-123          │
 │                                          ││ tmux:      moomux-feature-auth                       │
 │                                          ││ worktree:  /tmp/demo/feature-auth                    │
@@ -42,10 +42,10 @@
 │                                          ││                                                      │
 │                                          ││                                                      │
 │                                          ││  ________________________________________            │
-│                                          ││ < out to pasture                         >           │
+│                                          ││ < no time to graze                       >           │
 │                                          ││  ----------------------------------------            │
 │                                          ││         \   ^__^                                     │
-│                                          ││          \  (--)\_______                             │
+│                                          ││          \  (**)\_______                             │
 │                                          ││             (__)\       )\/\                         │
 │                                          ││                 ||----w |                            │
 │                                          ││                 ||     ||                            │
