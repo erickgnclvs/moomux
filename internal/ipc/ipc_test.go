@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -30,6 +31,7 @@ func boolPtr(b bool) *bool { return &b }
 // a round trip can assert both directions of the wire.
 type fakeBackend struct {
 	sessions  []session.Session
+	reordered []string
 	created   session.CreateRequest
 	createErr error
 	renamed   session.Session
@@ -92,7 +94,10 @@ func (f *fakeBackend) RenameSession(id, name string) (session.Session, error) {
 func (f *fakeBackend) SetSessionArchived(id string, on bool) (session.Session, error) {
 	return session.Session{ID: id, Archived: on}, nil
 }
-func (f *fakeBackend) ReorderSessions([]string) error          { return nil }
+func (f *fakeBackend) ReorderSessions(ids []string) error {
+	f.reordered = ids
+	return nil
+}
 func (f *fakeBackend) MoveProject(string, int) error           { return nil }
 func (f *fakeBackend) CreateFolder(project, name string) error { return nil }
 func (f *fakeBackend) SetSessionFolder(id, folder string) (session.Session, error) {
@@ -722,4 +727,40 @@ func TestWatchNudgeReachesSource(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("nudge never reached the source")
+}
+
+// TestMoveSessionCompatShim: the macOS app lives in another repo with no CI
+// link back here and still sends MoveSession, so removing the method in
+// favour of ReorderSessions would break its reordering silently at runtime
+// rather than at build time. Driven through call() rather than a Client
+// method because no Go client sends it — the wire method is the contract.
+func TestMoveSessionCompatShim(t *testing.T) {
+	b := &fakeBackend{sessions: []session.Session{
+		{ID: "demo:a", Project: "demo"},
+		{ID: "demo:b", Project: "demo"},
+		{ID: "other:c", Project: "other"},
+	}}
+	c, _ := start(t, b, &config.Config{}, nil)
+
+	if _, err := c.call("MoveSession", Args{ID: "demo:b", Delta: -1}); err != nil {
+		t.Fatalf("MoveSession: %v", err)
+	}
+	// Only the moved session's own project peers are reordered, swapped —
+	// "other:c" must not be dragged into the write.
+	if got := b.reordered; !slices.Equal(got, []string{"demo:b", "demo:a"}) {
+		t.Fatalf("ReorderSessions got %v, want [demo:b demo:a]", got)
+	}
+
+	// Out of bounds is a no-op, not an error — the behaviour MoveSession has
+	// always had, and which its remaining caller relies on.
+	b.reordered = nil
+	if _, err := c.call("MoveSession", Args{ID: "demo:a", Delta: -1}); err != nil {
+		t.Fatalf("MoveSession out of bounds: %v", err)
+	}
+	if b.reordered != nil {
+		t.Fatalf("expected no reorder for an out-of-bounds move, got %v", b.reordered)
+	}
+	if _, err := c.call("MoveSession", Args{ID: "nope", Delta: -1}); err == nil {
+		t.Fatal("expected an error for an unknown session id")
+	}
 }

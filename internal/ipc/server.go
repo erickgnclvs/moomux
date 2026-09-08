@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 
 	"github.com/erickgnclvs/moomux/internal/config"
@@ -278,6 +279,17 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		return sessionResult(b.SetSessionArchived(a.ID, a.On))
 	case "ReorderSessions":
 		return Result{}, b.ReorderSessions(a.IDs)
+	case "MoveSession":
+		// Deprecated: ReorderSessions replaced this, taking the caller's
+		// fully-resolved order rather than a delta the core has to resolve
+		// against a session list the client may be displaying differently.
+		// Kept because the macOS app still calls it and lives in another
+		// repo with no CI link back here, so dropping the method would break
+		// its reordering silently at runtime. It resolves the delta against
+		// the core's own order, which is exactly the imprecision that
+		// motivated the new method — remove this once moomux-mac sends an
+		// order instead of a delta.
+		return Result{}, moveSession(b, a.ID, a.Delta)
 	case "MoveProject":
 		return s.mutResult(b.MoveProject(a.Name, a.Delta))
 
@@ -331,6 +343,36 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 // (session.Session, error).
 func sessionResult(sess session.Session, err error) (Result, error) {
 	return Result{Session: &sess}, err
+}
+
+// moveSession shifts one session by delta within its project's slice of the
+// core's session order and persists the result — the delta-based reorder the
+// deprecated MoveSession method still exposes. Out-of-bounds is a no-op, not
+// an error, matching the behaviour that method has always had.
+func moveSession(b tui.Backend, id string, delta int) error {
+	var peers []string
+	var project string
+	for _, s := range b.Sessions() {
+		if s.ID == id {
+			project = s.Project
+			break
+		}
+	}
+	if project == "" {
+		return fmt.Errorf("unknown session %q", id)
+	}
+	for _, s := range b.Sessions() {
+		if s.Project == project {
+			peers = append(peers, s.ID)
+		}
+	}
+	idx := slices.Index(peers, id)
+	j := idx + delta
+	if idx < 0 || j < 0 || j >= len(peers) {
+		return nil
+	}
+	peers[idx], peers[j] = peers[j], peers[idx]
+	return b.ReorderSessions(peers)
 }
 
 // mutResult adapts the config-mutating Backend methods (all bare error
