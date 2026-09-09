@@ -972,18 +972,10 @@ func (m *Model) editProjectForm(name string, p config.Project) projectForm {
 	return pf
 }
 
-// projectSessionCount returns how many sessions the active project has,
-// archived or not — a project can only be removed once it has none.
-func (m *Model) projectSessionCount() int {
-	if len(m.projects) == 0 {
-		return 0
-	}
-	return m.projectSessionCountFor(m.projects[m.activeProj])
-}
-
-// projectSessionCountFor is projectSessionCount for an arbitrary project
-// name, used by the project picker to check a highlighted project that may
-// not be the active one.
+// projectSessionCountFor returns how many sessions a project has, archived
+// or not — a project can only be removed once it has none. Takes a name
+// rather than using the active project: removing one is a project-picker
+// action, checked against the highlighted entry.
 func (m *Model) projectSessionCountFor(proj string) int {
 	n := 0
 	for _, s := range m.allSessions() {
