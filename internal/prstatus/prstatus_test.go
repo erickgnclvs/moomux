@@ -7,16 +7,28 @@ import (
 )
 
 type fakeRunner struct {
-	out  string
-	err  error
+	out string
+	err error
+	// graphql, when set, answers the `gh api graphql` review-thread call;
+	// out answers `gh pr view`.
+	graphql string
+	// dir/args record the first call only — Fetch may follow up with the
+	// review-thread lookup, and the assertions are all about `gh pr view`.
 	dir  string
 	args []string
+	n    int
 }
 
 func (f *fakeRunner) Run(dir string, args ...string) (string, error) {
-	f.dir, f.args = dir, args
+	f.n++
+	if f.n == 1 {
+		f.dir, f.args = dir, args
+	}
 	if f.err != nil {
 		return "", f.err
+	}
+	if len(args) > 1 && args[0] == "api" {
+		return f.graphql, nil
 	}
 	return f.out, nil
 }
@@ -145,5 +157,54 @@ func TestAggregateCI(t *testing.T) {
 				t.Fatalf("aggregateCI(%+v) = %q, want %q", tc.checks, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestFetchCountsUnresolvedThreads: an open PR's unresolved review threads
+// are counted, resolved ones ignored, and the lookup runs against the PR URL
+// rather than a directory.
+func TestFetchCountsUnresolvedThreads(t *testing.T) {
+	r := &fakeRunner{
+		out:     `{"url":"https://github.com/example/repo/pull/7","state":"OPEN","statusCheckRollup":[]}`,
+		graphql: `{"data":{"resource":{"reviewThreads":{"nodes":[{"isResolved":false},{"isResolved":true},{"isResolved":false}]}}}}`,
+	}
+	pr, err := (&Client{Runner: r}).Fetch("/wt/a", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr.Unresolved != 2 {
+		t.Errorf("Unresolved = %d, want 2", pr.Unresolved)
+	}
+	if r.n != 2 {
+		t.Errorf("gh called %d times, want a follow-up review-thread lookup", r.n)
+	}
+}
+
+// TestFetchSkipsThreadsWhenMerged: a merged PR's comments are nobody's
+// problem, so the second gh call isn't made at all.
+func TestFetchSkipsThreadsWhenMerged(t *testing.T) {
+	r := &fakeRunner{out: `{"url":"https://github.com/example/repo/pull/7","state":"MERGED","statusCheckRollup":[]}`}
+	pr, err := (&Client{Runner: r}).Fetch("", "https://github.com/example/repo/pull/7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr.Unresolved != 0 || r.n != 1 {
+		t.Errorf("Unresolved = %d after %d gh calls, want 0 after 1", pr.Unresolved, r.n)
+	}
+}
+
+// TestFetchSurvivesThreadLookupFailure: a broken review-thread lookup
+// degrades to a zero count instead of failing the whole status fetch.
+func TestFetchSurvivesThreadLookupFailure(t *testing.T) {
+	r := &fakeRunner{
+		out:     `{"url":"https://github.com/example/repo/pull/7","state":"OPEN","statusCheckRollup":[]}`,
+		graphql: `not json`,
+	}
+	pr, err := (&Client{Runner: r}).Fetch("", "https://github.com/example/repo/pull/7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr.Unresolved != 0 {
+		t.Errorf("Unresolved = %d, want 0", pr.Unresolved)
 	}
 }
