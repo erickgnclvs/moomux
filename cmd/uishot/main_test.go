@@ -82,6 +82,11 @@ func TestScreens(t *testing.T) {
 	// Same reason: the project-init-choice scenario types a $HOME-relative
 	// path, and the form expands it for display.
 	t.Setenv("HOME", "/home/moo")
+	// tui.New reads the front end's own config.Client file (the diff tool)
+	// at startup, so pin where it looks too — otherwise the settings screen
+	// renders whatever the developer happens to have configured, and the
+	// golden passes locally and fails in CI.
+	t.Setenv("XDG_CONFIG_HOME", "/home/moo/.config")
 
 	for name := range screens {
 		t.Run(name, func(t *testing.T) {

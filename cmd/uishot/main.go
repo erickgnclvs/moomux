@@ -107,11 +107,12 @@ var screens = map[string][]string{
 	// left undrained by renderScreen, so this captures the "checking git
 	// status…" loading note before it resolves.
 	"confirm-delete-checking": {"d"},
-	// "demo" has sample sessions, so D there flashes the blocked error; the
-	// confirm screen is only reachable on the sessionless "spare" project
-	// (tab switches to it).
-	"confirm-delete-project": {"tab", "D"},
-	"delete-project-blocked": {"D"},
+	// Removing a project is a picker action ("/" then "d"). "demo" has
+	// sample sessions, so "d" on it flashes the blocked error; the confirm
+	// screen is only reachable on the sessionless "spare" project (one
+	// "down" in the picker).
+	"confirm-delete-project": {"/", "down", "d"},
+	"delete-project-blocked": {"/", "d"},
 	"archived":               {"A"},
 	"help":                   {"?"},
 	"help-bottom":            {"?"},
@@ -147,6 +148,9 @@ var screens = map[string][]string{
 	// guard), hence the dedicated single-project config below.
 	"project-picker-emptied": {"/", "d", "y"},
 	"settings":               {"s"},
+	// Diff tool is the settings screen's last row (index 5): five "down"s
+	// from sort mode, then enter opens its inline text editor.
+	"settings-difftool": {"s", "down", "down", "down", "down", "down", "enter"},
 	// Theme is the settings screen's second row (index 1): one "down" from
 	// sort mode, then enter drills into the existing theme picker.
 	"theme-picker": {"s", "down", "enter"},

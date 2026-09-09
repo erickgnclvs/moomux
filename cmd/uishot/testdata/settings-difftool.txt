@@ -2,20 +2,20 @@
                                         
                                         
                                         
-                                        
 ╭──────────────────────────────────────╮
 │                                      │
-│  Remove project?                     │
+│  SETTINGS                            │
 │                                      │
-│  name: spare                         │
+│     sort mode    manual (shift+↑↓)   │
+│     theme & appear… default / auto   │
+│     auto-tmux                [off]   │
+│     auto-submit default      [off]   │
+│     compact detail view      [off]   │
+│   ▸ diff tool       > diffier        │
 │                                      │
-│  This only removes the entry from c  │
-│  Worktrees and the repo itself are   │
-│                                      │
-│  y to confirm   n/esc to cancel      │
+│  enter save  esc cancel              │
 │                                      │
 ╰──────────────────────────────────────╯
-                                        
                                         
                                         
                                         
@@ -29,20 +29,20 @@
                                                                                                     
                                                                                                     
                                                                                                     
-                                                                                                    
-                         ╭────────────────────────────────────────────────╮                         
-                         │                                                │                         
-                         │  Remove project?                               │                         
-                         │                                                │                         
-                         │  name: spare                                   │                         
-                         │                                                │                         
-                         │  This only removes the entry from config.      │                         
-                         │  Worktrees and the repo itself are untouched.  │                         
-                         │                                                │                         
-                         │  y to confirm   n/esc to cancel                │                         
-                         │                                                │                         
-                         ╰────────────────────────────────────────────────╯                         
-                                                                                                    
+           ╭────────────────────────────────────────────────────────────────────────────╮           
+           │                                                                            │           
+           │  SETTINGS                                                                  │           
+           │                                                                            │           
+           │     sort mode                                          manual (shift+↑↓)   │           
+           │     theme & appearance                                    default / auto   │           
+           │     auto-tmux                                                      [off]   │           
+           │     auto-submit default                                            [off]   │           
+           │     compact detail view                                            [off]   │           
+           │   ▸ diff tool           > diffier                                          │           
+           │                                                                            │           
+           │  enter save  esc cancel                                                    │           
+           │                                                                            │           
+           ╰────────────────────────────────────────────────────────────────────────────╯           
                                                                                                     
                                                                                                     
                                                                                                     
