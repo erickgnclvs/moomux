@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -107,9 +108,11 @@ func TestDetectReturnsFallbackForUnknown(t *testing.T) {
 	t.Setenv("VTE_VERSION", "")
 	t.Setenv("GHOSTTY_RESOURCES_DIR", "")
 	t.Setenv("TMUX", "")
-	got := Detect()
-	if _, ok := got.(*fallbackOpener); !ok {
-		t.Fatalf("expected *fallbackOpener, got %T", got)
+	// macOS has a fallback that can still open something (see
+	// commandFileOpener); everywhere else there is nothing to open.
+	want := fmt.Sprintf("%T", platformFallback())
+	if got := fmt.Sprintf("%T", Detect()); got != want {
+		t.Fatalf("expected %s, got %s", want, got)
 	}
 }
 
@@ -201,9 +204,10 @@ func TestDetectVTEWithoutGnomeTerminalFallsBack(t *testing.T) {
 	clearLinuxTerminalEnv(t)
 	t.Setenv("VTE_VERSION", "7800")
 	t.Setenv("PATH", t.TempDir()) // no gnome-terminal on PATH
-	got := Detect()
-	if _, ok := got.(*fallbackOpener); !ok {
-		t.Fatalf("expected *fallbackOpener, got %T", got)
+	// Either platform fallback will do; what matters is that Detect didn't
+	// hand back a windowOpener doomed to exec a gnome-terminal that isn't there.
+	if got, want := fmt.Sprintf("%T", Detect()), fmt.Sprintf("%T", platformFallback()); got != want {
+		t.Fatalf("expected %s, got %s", want, got)
 	}
 }
 
