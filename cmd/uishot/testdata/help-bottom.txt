@@ -1,12 +1,12 @@
 === 40x20 ===
 ╭──────────────────────────────────────╮
 │                                      │
-│  General                             │
 │    ?  toggle this help               │
 │    q  quit                           │
 │    r  refresh                        │
 │    s  settings (theme, sort mode,    │
-│       auto-tmux, auto-submit)        │
+│       auto-tmux, auto-submit, diff   │
+│       tool)                          │
 │    u  update & relaunch (when a new  │
 │       version is available)          │
 │                                      │
@@ -22,7 +22,6 @@
 === 100x32 ===
            ╭────────────────────────────────────────────────────────────────────────────╮           
            │                                                                            │           
-           │  Sessions                            Navigation                            │           
            │    n          new session              ↑ / k              move up          │           
            │    f          find session (all        ↓ / j              move down        │           
            │               projects)                shift+↑↓ / KJ      reorder session  │           
@@ -33,15 +32,16 @@
            │    A          show archived            shift+←→ / HL      reorder project  │           
            │    t          tag ticket / PR          R                  force-copy       │           
            │    e          edit session                                ticket/PR        │           
-           │                                                           links: off       │           
+           │    D          diff tool                                   links: off       │           
            │                                                                            │           
            │                                                                            │           
            │  Projects                            General                               │           
            │    /      pick project                 ?  toggle this help                 │           
-           │    D      remove project               q  quit                             │           
-           │    n/e/d  add/edit/remove (picker)     r  refresh                          │           
+           │    n/e/d  add/edit/remove (picker)     q  quit                             │           
+           │                                        r  refresh                          │           
            │                                        s  settings (theme, sort mode,      │           
-           │                                           auto-tmux, auto-submit)          │           
+           │                                           auto-tmux, auto-submit, diff     │           
+           │                                           tool)                            │           
            │                                        u  update & relaunch (when a new    │           
            │                                           version is available)            │           
            │                                                                            │           

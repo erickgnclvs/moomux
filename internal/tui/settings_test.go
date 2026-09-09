@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"path/filepath"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/erickgnclvs/moomux/internal/config"
 )
 
 func TestSettingsScreenTogglesAutoTmux(t *testing.T) {
@@ -92,5 +95,51 @@ func TestSettingsFooterFitsNarrowWidths(t *testing.T) {
 		if w := lipgloss.Width(footer); w > avail {
 			t.Errorf("width=%d: footer %q is %d cells wide, want <= %d", width, footer, w, avail)
 		}
+	}
+}
+
+func TestSettingsDiffToolEdit(t *testing.T) {
+	be := &fakeBackend{}
+	m := newTestModel(be)
+	// The diff tool is front-end-local config, not the core's — point the
+	// model at a scratch file instead of this machine's real one.
+	m.clientPath = filepath.Join(t.TempDir(), "client.toml")
+
+	m.Update(keyRune("s"))
+	for i := 0; i < 5; i++ {
+		press(m, tea.KeyDown)
+	}
+	if settingsRows[m.settingsCursor].kind != settingsRowText {
+		t.Fatalf("cursor row = %q, want the text row", settingsRows[m.settingsCursor].label)
+	}
+	press(m, tea.KeyEnter)
+	if !m.settingsEditing {
+		t.Fatal("enter must open the inline editor")
+	}
+	typeText(m, "diffier")
+	press(m, tea.KeyEnter)
+	if m.settingsEditing {
+		t.Fatal("enter must close the editor")
+	}
+	if m.client.DiffTool != "diffier" {
+		t.Fatalf("in-memory value = %q", m.client.DiffTool)
+	}
+	saved, err := config.LoadClient(m.clientPath)
+	if err != nil || saved.DiffTool != "diffier" {
+		t.Fatalf("saved = %+v, err = %v", saved, err)
+	}
+	// Esc abandons an edit without saving it.
+	press(m, tea.KeyEnter)
+	typeText(m, "x")
+	press(m, tea.KeyEsc)
+	if m.settingsEditing || m.client.DiffTool != "diffier" {
+		t.Fatalf("esc should not save: editing=%v value=%q", m.settingsEditing, m.client.DiffTool)
+	}
+	saved, _ = config.LoadClient(m.clientPath)
+	if saved.DiffTool != "diffier" {
+		t.Fatalf("file changed on cancel: %q", saved.DiffTool)
+	}
+	if m.mode != ModeSettings {
+		t.Fatalf("mode = %v", m.mode)
 	}
 }

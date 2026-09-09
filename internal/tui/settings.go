@@ -18,12 +18,15 @@ type settingsRowKind int
 const (
 	settingsRowToggle settingsRowKind = iota
 	settingsRowDrill
+	settingsRowText
 )
 
 // settingsRow describes one row of the settings screen. Toggle rows flip a
 // boolean in place; the theme row (settingsRowDrill) instead opens the
 // existing ModeThemePicker, since a theme is a choice among several, not a
-// binary.
+// binary; a settingsRowText row (diff tool) edits its value inline in the
+// row itself, which is cheaper than a whole overlay for one free-text
+// field.
 type settingsRow struct {
 	label           string
 	kind            settingsRowKind
@@ -105,6 +108,32 @@ var settingsRows = []settingsRow{
 		},
 		renderValue: func(m *Model) string { return renderToggle(m.cfg.CompactDetail, false) },
 	},
+	{
+		label: "diff tool",
+		kind:  settingsRowText,
+		renderValue: func(m *Model) string {
+			if m.settingsEditing {
+				return m.settingsInput.View()
+			}
+			if m.client.DiffTool == "" {
+				return "not set"
+			}
+			return m.client.DiffTool
+		},
+	},
+}
+
+// settingsInputWidth sizes the inline editor so the row still fits its
+// label on a narrow terminal — the overlay clips rather than wraps.
+func settingsInputWidth(overlay int) int {
+	w := overlay - 20
+	if w < 10 {
+		w = 10
+	}
+	if w > 48 {
+		w = 48
+	}
+	return w
 }
 
 // renderSettings renders the cursor-navigable settings list opened by 's'.
@@ -133,9 +162,16 @@ func (m *Model) renderSettings() string {
 			labelWidth = 4
 		}
 		line := prefix + fmt.Sprintf("%-*s", labelWidth, truncate(row.label, labelWidth)) + " " + value
-		if selected {
+		switch {
+		// The inline editor brings its own styling (prompt, cursor,
+		// placeholder), and wrapping that in the selected-row background
+		// leaves the bar ending mid-row where the input's first reset code
+		// lands. Its cursor marks the focused row well enough on its own.
+		case selected && m.settingsEditing && row.kind == settingsRowText:
+			line = listRow.Render(line)
+		case selected:
 			line = listRowSelected.Render(line)
-		} else {
+		default:
 			line = listRow.Render(line)
 		}
 		b.WriteString(line)
@@ -148,6 +184,10 @@ func (m *Model) renderSettings() string {
 func (m *Model) settingsFooter() string {
 	full := "↑↓ select  enter/←→ change  esc close"
 	short := "esc close  enter change"
+	if m.settingsEditing {
+		full = "enter save  esc cancel"
+		short = full
+	}
 	controls := full
 	if lipgloss.Width(controls) > m.overlayWidth(formHintWidth) {
 		controls = short

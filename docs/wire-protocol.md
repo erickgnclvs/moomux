@@ -194,6 +194,9 @@ in terminal" action spawns a tab.
 **Settings** — `SetTheme`, `SetAutoSubmitDefault`, `SetSortRecentFirst`,
 `SetAutoTmux`, `SetCompactDetail`.
 
+Front-end-owned settings deliberately have no method here — see "act on the
+right one" below.
+
 Every config-mutating method returns the **post-mutation config snapshot** in
 its own response, so a settings change costs one round trip rather than two.
 Session mutators do the same with the updated session.
@@ -251,6 +254,25 @@ different hosts, and anything derived from `$HOME`, `os.Getwd()`,
 `runtime.GOOS` or the filesystem must be answered by the core.
 `SuggestedProject` (the add-project prefill) and `AddProject`'s path warning
 both exist because the front end was answering for itself.
+
+**...and act on the right one.** The mirror image: a few things happen on the
+*viewer's* machine, not the orchestrator's — opening a window on their
+screen, reading their clipboard, launching a GUI app they can see. Those are
+the front end's to run, and their settings are the front end's to store, in
+`config.Client` (`client.toml`) rather than `Config`. The test is whether the
+value describes the machine someone is sitting at or the sessions being
+orchestrated. Get this backwards and you get a setting that configures one
+host and executes on another: the TUI's diff tool (`diff_tool`, the `D`
+shortcut — see `internal/tui/difftool.go`) is the worked example, and the
+core has no method for it on purpose. Nothing in `internal/app` or
+`internal/ipc` should ever mention `config.Client`.
+
+The terminal opener is the apparent counter-example and is worth
+understanding before citing it: `App.Terminal` shells out to iTerm from the
+core because the tab is *session state* — `CreateSession` opens it mid
+transaction and `TermTabID` is stored on the session — and it handles the
+split-host case with a guard instead (`OpenSession` skips it when
+`browser.Remote()`). Lifecycle state, not viewer preference.
 
 **`omitempty` on a meaningful `false`/`0`/`""` erases it.** A client decoding
 into optionals can't tell "absent" from "the answer is no". Keep it off

@@ -22,7 +22,9 @@ Two of those checks are automated now, over *every* scenario in the `screens` ma
 go test ./cmd/uishot -update
 ```
 
-`TestScreens` pins the working directory to `/` and `HOME` to `/home/moo` so the forms that prefill or expand a path render the same on every machine — a new scenario that shows some other host-specific value (a hostname, a real timestamp) needs the same treatment, or it will pass locally and fail in CI.
+`TestScreens` pins the working directory to `/`, `HOME` to `/home/moo`, and `XDG_CONFIG_HOME` to `/home/moo/.config` so the forms that prefill or expand a path — and the settings screen, which renders the front end's own `client.toml` values — look the same on every machine. A new scenario that shows some other host-specific value (a hostname, a real timestamp) needs the same treatment, or it will pass locally and fail in CI.
+
+The same trap applies outside the goldens: `tui.New` reads `config.Client` at construction, so `internal/tui`'s `TestMain` points `XDG_CONFIG_HOME` at an empty scratch dir. Without it the suite passes or fails depending on what the developer has configured, and a test that saves would overwrite their real settings. Anything else the TUI reads from the user's home needs to be pinned there too.
 
 Read the resulting testdata diff as part of your own review — it is the cheapest full-surface look at what a change did. The screenshots are still required: golden files strip styling, so colour, theming and emoji only show up in a PNG.
 
@@ -76,6 +78,17 @@ enum is deliberately ranked (NeedsInput above Working), so the numbers exist to 
 bare ints a re-rank would silently reassign every state the Swift side shows, with no compile
 error on either side. The names match `config.Themes`'s per-state colour keys, so a client gets
 one vocabulary.
+
+The exception is not derived state at all: settings that describe *the machine someone is
+sitting at* rather than the sessions being orchestrated. Those live in `config.Client`
+(`client.toml`), loaded and saved by the front end, and the core has no method for them —
+`internal/app` and `internal/ipc` should never mention the type. Today that's the TUI's
+diff tool (`diff_tool`, the `D` shortcut; `internal/tui/difftool.go`), which launches a GUI
+window on the viewer's own screen. Anything else that opens a window there, reads their
+clipboard, or shells out to something only they can see belongs on the same side. Adding it
+to `config.Config` with a `Set*` method instead gives you a setting that configures one host
+and runs on another. `docs/wire-protocol.md` has the longer version, including why the
+terminal opener lives in the core and isn't the precedent it looks like.
 
 What stays a pull: `Sessions`, `ChangeSummary`, and the on-demand `WorktreeStatus` the delete
 dialog uses (it wants a freshly checked answer before a destructive action, and unlike
