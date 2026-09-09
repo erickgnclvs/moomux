@@ -71,7 +71,7 @@ the joined state, so a parked session's cow told the Mac app it was working).
       "prompt":   "fix the thing",
       "git_ok":   true,
       "dirty":    true,
-      "pr":       {"state": "OPEN", "mergeable": "MERGEABLE", "ci": "PASSING"}
+      "pr":       {"state": "OPEN", "mergeable": "MERGEABLE", "ci": "PASSING", "unresolved": 0}
     },
     "moomux:b": {
       "id": "moomux:b", "state": "parked",

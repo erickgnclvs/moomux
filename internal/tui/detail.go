@@ -332,6 +332,9 @@ func prStatusLabel(info prstatus.Info) string {
 	case "PASSING":
 		parts = append(parts, "CI passing")
 	}
+	if info.Unresolved > 0 {
+		parts = append(parts, pluralCount(info.Unresolved, "open comment", "open comments"))
+	}
 	if len(parts) == 0 {
 		return "open"
 	}
@@ -450,6 +453,11 @@ func prGlyph(info *prstatus.Info) string {
 	}
 	if info.CI == "FAILING" {
 		return "❌"
+	}
+	// An unresolved review thread blocks a merge as surely as a red check,
+	// and unlike CI nothing will clear it on its own.
+	if info.Unresolved > 0 {
+		return "💬"
 	}
 	// Checks still running isn't a problem, so it gets its own neutral glyph
 	// rather than the warn colours — an amber icon on every PR for the
