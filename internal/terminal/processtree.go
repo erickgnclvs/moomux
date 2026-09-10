@@ -61,7 +61,7 @@ var terminalMatches = []terminalMatch{
 	{[]string{"iTerm2"}, func() TerminalOpener { return newITermClient() }},
 	{[]string{"Terminal"}, func() TerminalOpener { return &windowOpener{binary: "open", args: terminalAppArgs, manualAttach: true} }},
 	{[]string{"kitty"}, func() TerminalOpener { return &windowOpener{binary: "kitty", args: kittyArgs} }},
-	{[]string{"ghostty"}, func() TerminalOpener { return &windowOpener{binary: "ghostty", args: ghosttyArgs} }},
+	{[]string{"ghostty"}, ghosttyOpener},
 	{[]string{"wezterm-gui", "wezterm"}, func() TerminalOpener { return &windowOpener{binary: "wezterm", args: weztermStartArgs} }},
 	{[]string{"alacritty"}, func() TerminalOpener { return &windowOpener{binary: "alacritty", args: alacrittyArgs} }},
 	{[]string{"konsole"}, func() TerminalOpener { return &windowOpener{binary: "konsole", args: konsoleArgs} }},
