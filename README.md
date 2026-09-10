@@ -172,7 +172,7 @@ install again.
 moomux
 ```
 
-Keys: `?` help (full command list) · `n` new · `enter` open · `x` park · `d` delete · `a` archive/restore · `A` toggle archived view · `t` tag · `e` edit session · `E` edit project · `shift+↑`/`shift+↓` reorder · `tab` switch project · `q` quit
+Keys: `?` help (full command list) · `n` new · `enter` open · `x` park · `d` delete · `a` archive/restore · `A` toggle archived view · `t` tag · `e` edit session · `D` diff tool · `shift+↑`/`shift+↓` reorder · `tab` switch project · `q` quit
 
 Press `?` at any time on the list screen to open a command palette with every keybinding grouped by category, so you don't have to memorize the footer.
 
@@ -185,6 +185,20 @@ Moomux installs commands for parking the current session, tagging it, spawning d
 For compatibility, moomux also keeps installing legacy Codex custom prompts under `~/.codex/prompts/`. Older Codex CLI versions may expose those as `/prompts:kill`, `/prompts:tag`, `/prompts:spawn`, and `/prompts:reseed`. Codex skills and prompts instruct the agent to run the corresponding `moomux` CLI command; Claude Code commands can execute it directly. opencode sessions have no equivalent yet — use the moomux list.
 
 The chorded keys have plain-letter alternates for keyboards that can't send modifier+special-key chords (mobile terminal clients, terminals without `extended-keys`): `K`/`J` reorder session, `H`/`L` reorder project, `[`/`]` switch project.
+
+## External diff tool
+
+Press `D` on a session to review its changes in your own diff tool instead of attaching to it. There's no default — until one is set, `D` just says so.
+
+Set the command on the settings screen (`s`, then the "diff tool" row), or in `~/.config/moomux/client.toml`:
+
+```toml
+diff_tool = "diffier"
+```
+
+The session's worktree path is appended as the last argument, and the command is started detached — so it should be a GUI app (or anything that opens its own window), not a terminal program.
+
+`client.toml` is separate from `config.toml` on purpose: it holds the settings belonging to the machine you're sitting at rather than to the sessions being orchestrated. A TUI attached to a remote `moomux serve` reads and writes its own copy, so it never configures the server's diff tool.
 
 ## Spawning a session from the CLI
 

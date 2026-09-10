@@ -3469,8 +3469,10 @@ func TestPRStatusDiscoversUntaggedSession(t *testing.T) {
 	if got.Ticket != "https://linear.app/acme/issue/ENG-412" {
 		t.Errorf("session ticket = %q, want the link from the PR body", got.Ticket)
 	}
-	if len(gh.dirs) != 1 || gh.dirs[0] != s.WorktreePath {
-		t.Errorf("gh ran in %v, want one call in %q", gh.dirs, s.WorktreePath)
+	// The review-thread lookup that follows is URL-scoped, so only the
+	// first call — `gh pr view` — has to land in the worktree.
+	if len(gh.dirs) == 0 || gh.dirs[0] != s.WorktreePath {
+		t.Errorf("gh ran in %v, want the first call in %q", gh.dirs, s.WorktreePath)
 	}
 }
 
@@ -3495,8 +3497,8 @@ func TestPRStatusFillsTicketOnTaggedSession(t *testing.T) {
 	}
 	// A tagged session looks its PR up by URL, so the call needs no dir —
 	// and must not depend on a worktree that may since have gone away.
-	if len(gh.dirs) != 1 || gh.dirs[0] != "" {
-		t.Errorf("gh ran in %v, want one call with no working directory", gh.dirs)
+	if len(gh.dirs) == 0 || gh.dirs[0] != "" {
+		t.Errorf("gh ran in %v, want the lookup to use no working directory", gh.dirs)
 	}
 }
 

@@ -2,6 +2,8 @@ package tui
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -1148,11 +1150,15 @@ func TestNewProjectPlainAddError(t *testing.T) {
 	}
 }
 
+// Removing a project is a project-picker action ("/" then "d") — the main
+// list's old "D" shortcut is gone, "D" is the diff tool now.
+func openPickerDelete(m *Model) { m.Update(keyRune("/")); m.Update(keyRune("d")) }
+
 func TestConfirmDeleteProjectFlow(t *testing.T) {
 	be := &fakeBackend{}
 	m := newTestModel(be)
 
-	m.Update(keyRune("D"))
+	openPickerDelete(m)
 	if m.mode != ModeConfirmDeleteProject {
 		t.Fatalf("mode = %v", m.mode)
 	}
@@ -1161,11 +1167,11 @@ func TestConfirmDeleteProjectFlow(t *testing.T) {
 	}
 
 	m.Update(keyRune("n"))
-	if m.mode != ModeList || len(be.removeProjectCalls) != 0 {
+	if m.mode != ModeProjectPicker || len(be.removeProjectCalls) != 0 {
 		t.Fatalf("mode=%v calls=%v", m.mode, be.removeProjectCalls)
 	}
 
-	m.Update(keyRune("D"))
+	m.Update(keyRune("d"))
 	run(m, keyRune("y"))
 	if len(be.removeProjectCalls) != 1 || be.removeProjectCalls[0] != "demo" {
 		t.Fatalf("removeProjectCalls = %v", be.removeProjectCalls)
@@ -1178,9 +1184,9 @@ func TestConfirmDeleteProjectFlow(t *testing.T) {
 func TestConfirmDeleteProjectErrorFlashes(t *testing.T) {
 	be := &fakeBackend{removeProjectErr: errors.New("has active sessions")}
 	m := newTestModel(be)
-	m.Update(keyRune("D"))
+	openPickerDelete(m)
 	run(m, keyRune("y"))
-	if m.mode != ModeList || m.flashKind != "error" || !strings.Contains(m.flash, "active sessions") {
+	if m.flashKind != "error" || !strings.Contains(m.flash, "active sessions") {
 		t.Fatalf("mode=%v flash=%q (%s)", m.mode, m.flash, m.flashKind)
 	}
 }
@@ -1189,25 +1195,13 @@ func TestDeleteProjectWithSessionsIsBlocked(t *testing.T) {
 	for _, archived := range []bool{false, true} {
 		be := &fakeBackend{sessions: []session.Session{{ID: "demo:a", Project: "demo", Name: "a", Archived: archived}}}
 		m := newTestModel(be)
-		m.Update(keyRune("D"))
-		if m.mode != ModeList || m.flashKind != "error" || !strings.Contains(m.flash, "delete them first") {
+		openPickerDelete(m)
+		if m.mode != ModeProjectPicker || m.flashKind != "error" || !strings.Contains(m.flash, "delete them first") {
 			t.Fatalf("archived=%v mode=%v flash=%q (%s)", archived, m.mode, m.flash, m.flashKind)
 		}
 		if len(be.removeProjectCalls) != 0 {
 			t.Fatalf("archived=%v removeProjectCalls = %v", archived, be.removeProjectCalls)
 		}
-	}
-}
-
-func TestDeleteProjectWithNoProjectsFlashesError(t *testing.T) {
-	cfg := &config.Config{Projects: map[string]config.Project{}}
-	be := &fakeBackend{}
-	m := New(cfg, be, testAgentOptions, make(chan sessionview.Snapshot), func() {})
-	m.width, m.height = 80, 24
-	m.mode = ModeList
-	m.Update(keyRune("D"))
-	if m.flashKind != "error" || !strings.Contains(m.flash, "no projects") {
-		t.Fatalf("flash = %q (%s)", m.flash, m.flashKind)
 	}
 }
 
@@ -1241,6 +1235,41 @@ func TestKillTmuxFlow(t *testing.T) {
 	}
 	if !strings.Contains(m.flash, "parked") {
 		t.Fatalf("flash = %q", m.flash)
+	}
+}
+
+func TestDiffToolFlow(t *testing.T) {
+	// A stand-in "diff tool" that records the directory it was handed.
+	wt := t.TempDir()
+	out := filepath.Join(t.TempDir(), "arg")
+	script := filepath.Join(t.TempDir(), "tool.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf %s \"$1\" > "+out+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	be := &fakeBackend{sessions: []session.Session{{ID: "demo:a", Project: "demo", Name: "a", WorktreePath: wt}}}
+	m := newTestModel(be)
+
+	// Unconfigured: the shortcut says so instead of launching anything.
+	run(m, keyRune("D"))
+	if !strings.Contains(m.flash, "no diff tool configured") {
+		t.Fatalf("flash = %q", m.flash)
+	}
+
+	m.client.DiffTool = "/bin/sh " + script
+	run(m, keyRune("D"))
+	if !strings.Contains(m.flash, "diff tool launched") {
+		t.Fatalf("flash = %q", m.flash)
+	}
+	var got []byte
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		if b, err := os.ReadFile(out); err == nil {
+			got = b
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if string(got) != wt {
+		t.Fatalf("diff tool got %q, want worktree %q", got, wt)
 	}
 }
 

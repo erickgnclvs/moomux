@@ -14,7 +14,7 @@
 │    A          show archived          │
 │    t          tag ticket / PR        │
 │    e          edit session           │
-│    g          file into a folder     │
+│    D          diff tool              │
 │                                      │
 │  ↑↓/jk/pg scroll  ?/esc close        │
 │                                      │
@@ -35,19 +35,19 @@
            │    A          show archived            shift+←→ / HL      reorder project  │           
            │    t          tag ticket / PR          R                  force-copy       │           
            │    e          edit session                                ticket/PR        │           
-           │    g          file into a folder                          links: off       │           
+           │    D          diff tool                                   links: off       │           
+           │    g          file into a folder                                           │           
            │    z          collapse its folder                                          │           
            │    G          manage folders                                               │           
            │                                                                            │           
            │                                                                            │           
            │  Projects                            General                               │           
            │    /      pick project                 ?  toggle this help                 │           
-           │    D      remove project               q  quit                             │           
-           │    n/e/d  add/edit/remove (picker)     r  refresh                          │           
+           │    n/e/d  add/edit/remove (picker)     q  quit                             │           
+           │                                        r  refresh                          │           
            │                                        s  settings (theme, sort mode,      │           
-           │                                           auto-tmux, auto-submit)          │           
-           │                                        u  update & relaunch (when a new    │           
-           │                                           version is available)            │           
+           │                                           auto-tmux, auto-submit, diff     │           
+           │                                           tool)                            │           
            │                                                                            │           
            │  ↑↓/jk/pg scroll  ?/esc close                                              │           
            │                                                                            │           

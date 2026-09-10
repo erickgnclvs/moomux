@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strings"
 	"time"
@@ -361,6 +362,15 @@ type Model struct {
 	// model and thinking selectors read from instead of a copy of their own.
 	agentOptions []config.AgentOption
 	keys         KeyMap
+	// client is this front end's own settings (currently just the diff
+	// tool), loaded from and saved to clientPath — this machine's file,
+	// never the core's served config. See config.Client.
+	client     config.Client
+	clientPath string
+	// settingsInput is the inline editor for the settings screen's one
+	// free-text row (diff tool); settingsEditing is whether it has focus.
+	settingsInput   textinput.Model
+	settingsEditing bool
 	// Version is shown in the bottom-right corner of the footer; empty hides it.
 	Version string
 	// UpdateVersion is the latest GitHub release, set by checkUpdateCmd once
@@ -771,8 +781,18 @@ func New(cfg *config.Config, backend Backend, agentOptions []config.AgentOption,
 	// instead hands Update() a fresh snapshot via a Msg's Cfg field (see
 	// ProjectAddedMsg and friends), applied with *m.cfg = *msg.Cfg.
 	own := cfg.Clone()
+	// The front end's own settings come from this machine's file, not from
+	// cfg — over a socket cfg is the core's, possibly on another host. A
+	// missing or unreadable file just means "nothing configured".
+	clientPath := config.ClientPath()
+	client, err := config.LoadClient(clientPath)
+	if err != nil {
+		slog.Warn("read client config", "path", clientPath, "err", err)
+	}
 	m := &Model{
 		cfg:               &own,
+		client:            client,
+		clientPath:        clientPath,
 		backend:           backend,
 		agentOptions:      agentOptions,
 		keys:              DefaultKeyMap(),
@@ -1059,18 +1079,10 @@ func (m *Model) editProjectForm(name string, p config.Project) projectForm {
 	return pf
 }
 
-// projectSessionCount returns how many sessions the active project has,
-// archived or not — a project can only be removed once it has none.
-func (m *Model) projectSessionCount() int {
-	if len(m.projects) == 0 {
-		return 0
-	}
-	return m.projectSessionCountFor(m.projects[m.activeProj])
-}
-
-// projectSessionCountFor is projectSessionCount for an arbitrary project
-// name, used by the project picker to check a highlighted project that may
-// not be the active one.
+// projectSessionCountFor returns how many sessions a project has, archived
+// or not — a project can only be removed once it has none. Takes a name
+// rather than using the active project: removing one is a project-picker
+// action, checked against the highlighted entry.
 func (m *Model) projectSessionCountFor(proj string) int {
 	n := 0
 	for _, s := range m.allSessions() {

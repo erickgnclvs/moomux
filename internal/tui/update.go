@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -697,6 +698,14 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return TmuxKilledMsg{ID: id}
 			}
 		}
+	case key.Matches(msg, m.keys.DiffTool):
+		if len(m.sessions) > 0 {
+			if err := m.launchDiffTool(m.sessions[m.cursor]); err != nil {
+				return m.flashError(err)
+			}
+			m.setFlash("info", "diff tool launched")
+		}
+		return m, nil
 	case key.Matches(msg, m.keys.New):
 		if m.busy {
 			// A session create is already in flight; opening another form here
@@ -818,17 +827,6 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refreshSearchResults()
 		m.mode = ModeSearch
 		m.sessionDialogReturn = ModeList
-		m.resetOverlayViewport()
-		return m, nil
-	case key.Matches(msg, m.keys.DelProject):
-		if len(m.projects) == 0 {
-			return m.flashError(fmt.Errorf("no projects to remove"))
-		}
-		if n := m.projectSessionCount(); n > 0 {
-			return m.flashError(fmt.Errorf("%s has %d session(s) (incl. archived) — delete them first", m.projects[m.activeProj], n))
-		}
-		m.projectDialogReturn = ModeList
-		m.mode = ModeConfirmDeleteProject
 		m.resetOverlayViewport()
 		return m, nil
 	case key.Matches(msg, m.keys.Open):
@@ -2031,6 +2029,7 @@ func (m *Model) openThemePicker() {
 // bumps this to ModeMultiView when opened from there (see its switch).
 func (m *Model) openSettings() {
 	m.settingsCursor = 0
+	m.settingsEditing = false
 	m.mode = ModeSettings
 	m.sessionDialogReturn = ModeList
 	m.resetOverlayViewport()
@@ -2043,6 +2042,29 @@ func (m *Model) openSettings() {
 // toggling anything itself, since a theme is a choice among many, not a
 // boolean.
 func (m *Model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.settingsEditing {
+		switch {
+		case key.Matches(msg, m.keys.Cancel):
+			m.settingsEditing = false
+			return m, nil
+		case key.Matches(msg, m.keys.Enter):
+			value := strings.TrimSpace(m.settingsInput.Value())
+			m.settingsEditing = false
+			m.client.DiffTool = value
+			if err := config.SaveClient(m.clientPath, m.client); err != nil {
+				return m.flashError(err)
+			}
+			if value == "" {
+				m.setFlash("info", "diff tool: not set")
+			} else {
+				m.setFlash("info", "diff tool: "+value)
+			}
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.settingsInput, cmd = m.settingsInput.Update(msg)
+		return m, cmd
+	}
 	switch {
 	case key.Matches(msg, m.keys.Cancel):
 		m.mode = m.sessionDialogReturn
@@ -2080,9 +2102,20 @@ func (m *Model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // Msg.Cfg treatment as the rest.
 func (m *Model) applySettingsRow(i int) (tea.Model, tea.Cmd) {
 	row := settingsRows[i]
-	if row.kind == settingsRowDrill {
+	switch row.kind {
+	case settingsRowDrill:
 		m.openThemePicker()
 		return m, nil
+	case settingsRowText:
+		m.settingsInput = textinput.New()
+		m.settingsInput.CharLimit = 256
+		m.settingsInput.Placeholder = "diffier"
+		m.settingsInput.SetValue(m.client.DiffTool)
+		m.settingsInput.CursorEnd()
+		m.settingsInput.Focus()
+		m.settingsInput.Width = settingsInputWidth(m.overlayWidth(formHintWidth))
+		m.settingsEditing = true
+		return m, textinput.Blink
 	}
 	next := !row.get(m.cfg)
 	row.set(m.cfg, next)

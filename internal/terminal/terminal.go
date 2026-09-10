@@ -126,5 +126,5 @@ func fallback() TerminalOpener {
 			return opener
 		}
 	}
-	return &fallbackOpener{}
+	return platformFallback()
 }

@@ -96,6 +96,8 @@ func TestPRStatusLabel(t *testing.T) {
 		{"open, conflicting", prstatus.Info{State: "OPEN", Mergeable: "CONFLICTING", CI: "NONE"}, "open, conflicts"},
 		{"open, conflicting and failing", prstatus.Info{State: "OPEN", Mergeable: "CONFLICTING", CI: "FAILING"}, "open, conflicts, CI failing"},
 		{"open, pending", prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "PENDING"}, "open, CI running"},
+		{"open, one comment", prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "PASSING", Unresolved: 1}, "open, CI passing, 1 open comment"},
+		{"open, comments only", prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "NONE", Unresolved: 3}, "open, 3 open comments"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -279,6 +281,9 @@ func TestPRGlyph(t *testing.T) {
 		{"conflicts beat CI", &prstatus.Info{State: "OPEN", Mergeable: "CONFLICTING", CI: "FAILING"}, "⚠️"},
 		{"ci failing", &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "FAILING"}, "❌"},
 		{"ci pending", &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "PENDING"}, "⏳"},
+		{"open comments", &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "PASSING", Unresolved: 2}, "💬"},
+		{"CI failing beats comments", &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "FAILING", Unresolved: 2}, "❌"},
+		{"comments beat pending", &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "PENDING", Unresolved: 2}, "💬"},
 		// A repo with no checks configured at all is not "pending".
 		{"no checks configured", &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "NONE"}, "🔀"},
 		{"ready", &prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "PASSING"}, "🔀"},

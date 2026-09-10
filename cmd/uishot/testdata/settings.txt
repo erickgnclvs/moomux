@@ -11,11 +11,11 @@
 │     auto-tmux                [off]   │
 │     auto-submit default      [off]   │
 │     compact detail view      [off]   │
+│     diff tool              not set   │
 │                                      │
 │  esc close  enter change             │
 │                                      │
 ╰──────────────────────────────────────╯
-                                        
                                         
                                         
                                         
@@ -38,11 +38,11 @@
            │     auto-tmux                                                      [off]   │           
            │     auto-submit default                                            [off]   │           
            │     compact detail view                                            [off]   │           
+           │     diff tool                                                    not set   │           
            │                                                                            │           
            │  ↑↓ select  enter/←→ change  esc close                                     │           
            │                                                                            │           
            ╰────────────────────────────────────────────────────────────────────────────╯           
-                                                                                                    
                                                                                                     
                                                                                                     
                                                                                                     
