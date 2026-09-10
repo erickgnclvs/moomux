@@ -181,6 +181,12 @@ func (m *Model) renderDetailContent(s session.Session, view sessionview.View, ha
 	if !compact {
 		row("agent", s.AgentName(), "")
 	}
+	// Which folder a session is filed under is otherwise only visible as an
+	// indent in the list — and not at all once the folder is collapsed or
+	// the session was reached from search.
+	if s.Folder != "" && !compact {
+		row("folder", truncate(s.Folder, valueWidth), "")
+	}
 	if view.GitOK {
 		row("git", gitStatusLabel(gitStatusInfo{dirty: view.Dirty, unpushed: view.Unpushed, ok: true}), "")
 	}
@@ -332,6 +338,9 @@ func prStatusLabel(info prstatus.Info) string {
 	case "PASSING":
 		parts = append(parts, "CI passing")
 	}
+	if info.Unresolved > 0 {
+		parts = append(parts, pluralCount(info.Unresolved, "open comment", "open comments"))
+	}
 	if len(parts) == 0 {
 		return "open"
 	}
@@ -450,6 +459,11 @@ func prGlyph(info *prstatus.Info) string {
 	}
 	if info.CI == "FAILING" {
 		return "❌"
+	}
+	// An unresolved review thread blocks a merge as surely as a red check,
+	// and unlike CI nothing will clear it on its own.
+	if info.Unresolved > 0 {
+		return "💬"
 	}
 	// Checks still running isn't a problem, so it gets its own neutral glyph
 	// rather than the warn colours — an amber icon on every PR for the

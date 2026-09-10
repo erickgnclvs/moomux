@@ -120,7 +120,7 @@ func TestMultiViewPanelShowsCowWhenListIsLong(t *testing.T) {
 	be := &fakeBackend{sessions: sessions}
 	m := newTestModel(be)
 
-	content, _, _ := m.renderMultiPanel("alpha", sessions, 19, 40, 33, true)
+	content, _, _, _ := m.renderMultiPanel("alpha", plainLines(sessions), sessions, 19, 40, 33, true)
 	if !strings.Contains(content, "||     ||") {
 		t.Fatalf("detail panel's cow art got clipped off the bottom despite the panel being tall enough, just because its session list is long:\n%s", content)
 	}
@@ -154,7 +154,7 @@ func TestMultiViewListDetailSplitStableAcrossSelection(t *testing.T) {
 	m := newTestModel(be)
 
 	splitLine := func(cursor int) int {
-		frame, _, _ := m.renderMultiPanel("alpha", sessions, cursor, 40, 33, true)
+		frame, _, _, _ := m.renderMultiPanel("alpha", plainLines(sessions), sessions, cursor, 40, 33, true)
 		for i, line := range strings.Split(frame, "\n") {
 			if strings.Contains(line, "──────") {
 				return i
@@ -829,4 +829,15 @@ func TestMultiViewOpenUsesFocusedPanelSession(t *testing.T) {
 	if len(be.openCalls) != 1 || be.openCalls[0] != "b1" {
 		t.Fatalf("openCalls = %v, want [b1]", be.openCalls)
 	}
+}
+
+// plainLines is the folder-free line layout for a slice of sessions — what
+// visibleList produces for a project with no folders, for the panel tests
+// that only care about sizing and scrolling.
+func plainLines(sessions []session.Session) []listLine {
+	lines := make([]listLine, 0, len(sessions))
+	for i := range sessions {
+		lines = append(lines, listLine{sessionIdx: i})
+	}
+	return lines
 }

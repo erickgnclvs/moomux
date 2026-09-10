@@ -34,6 +34,7 @@ type Session struct {
 	NewBranch    bool      `json:"new_branch,omitempty"`  // true if moomux created Branch fresh (vs. checking out an existing one); safe to delete on session delete
 	BaseBranch   string    `json:"base_branch,omitempty"` // the branch Branch was cut from, when NewBranch; empty for a resumed branch or a no-worktree project, where there is none to diff against
 	Prompt       string    `json:"prompt,omitempty"`      // first prompt typed into the agent at creation time, captured directly rather than relying on the agent's own log
+	Folder       string    `json:"folder,omitempty"`      // name of a collapsible group (config.Project.Folders) this session is filed under within its project; "" = top-level
 }
 
 // CreateRequest is everything one "new session" action carries.

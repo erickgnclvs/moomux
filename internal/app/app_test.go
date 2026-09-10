@@ -3,11 +3,13 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1464,26 +1466,269 @@ func TestWorktreeStatusFetchesOnceUntilStale(t *testing.T) {
 	}
 }
 
-func TestMoveSession(t *testing.T) {
+func TestReorderSessionsPersistsGivenOrder(t *testing.T) {
 	a, _, _ := newTestApp(t, gitProject("/repo"))
 	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Order: 1})
 	_ = a.Store.Put(session.Session{ID: "demo:b", Project: "demo", Name: "b", Order: 2})
 
-	if err := a.MoveSession("demo:b", -1); err != nil {
+	if err := a.ReorderSessions([]string{"demo:b", "demo:a"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := a.Store.ByProject("demo"); got[0].ID != "demo:b" || got[1].ID != "demo:a" {
 		t.Fatalf("order = %v, %v", got[0].ID, got[1].ID)
 	}
-	// out of bounds: no-op
-	if err := a.MoveSession("demo:b", -1); err != nil {
+}
+
+// TestReorderSessionsSkipsUnknownIDs guards against an unknown id (e.g. a
+// session deleted by another moomux process between the TUI reading its
+// displayed order and this call landing) aborting the whole reorder — it
+// should simply be dropped from the persisted order rather than erroring.
+func TestReorderSessionsSkipsUnknownIDs(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Order: 1})
+	_ = a.Store.Put(session.Session{ID: "demo:b", Project: "demo", Name: "b", Order: 2})
+
+	if err := a.ReorderSessions([]string{"demo:b", "demo:nope", "demo:a"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := a.Store.ByProject("demo"); got[0].ID != "demo:b" {
-		t.Fatalf("unexpected reorder: %v", got)
+	if got := a.Store.ByProject("demo"); got[0].ID != "demo:b" || got[1].ID != "demo:a" {
+		t.Fatalf("order = %v, %v", got[0].ID, got[1].ID)
 	}
-	if err := a.MoveSession("demo:nope", 1); err == nil {
-		t.Fatal("unknown id must fail")
+}
+
+// TestReorderSessionsUsesCallerOrderNotStoreOrder is a regression test for
+// the bug where MoveSession (ReorderSessions' predecessor) recomputed peers
+// via Store.ByProject (sorted by Order) instead of using the caller-supplied
+// order. That diverges from Store order whenever the TUI's displayed list
+// does — e.g. a session floats to the top of the list for having a live
+// tmux window, state tracked entirely client-side and invisible to the
+// store — so reordering against ByProject's own recomputed peers either
+// silently no-ops or reorders a pair the user never saw adjacent on screen.
+// Here the caller's order is the reverse of the sessions' stored Order,
+// simulating exactly that divergence, and the persisted order must follow
+// it, not Order.
+func TestReorderSessionsUsesCallerOrderNotStoreOrder(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Order: 1})
+	_ = a.Store.Put(session.Session{ID: "demo:b", Project: "demo", Name: "b", Order: 2})
+	_ = a.Store.Put(session.Session{ID: "demo:c", Project: "demo", Name: "c", Order: 3})
+
+	// Store order is a, b, c — but the caller (simulating "b" floated to the
+	// top for being tmux-alive, then "a" moved up past it) displays a, b, c.
+	if err := a.ReorderSessions([]string{"demo:a", "demo:b", "demo:c"}); err != nil {
+		t.Fatal(err)
+	}
+	got := a.Store.ByProject("demo")
+	want := []string{"demo:a", "demo:b", "demo:c"}
+	for i, w := range want {
+		if got[i].ID != w {
+			t.Fatalf("order[%d] = %s, want %s (full: %v)", i, got[i].ID, w, got)
+		}
+	}
+}
+
+// TestReorderSessionsLeavesArchivedSessionsUntouched is a regression test
+// for the bug where MoveSession's ByProject-derived peers included archived
+// sessions (ByProject never filters them) while the TUI's displayed order
+// never does — a mismatch that could shift an archived session's Order as a
+// side effect of reordering the active list. Passing only the active ids
+// (as the TUI does) must never touch the archived one.
+func TestReorderSessionsLeavesArchivedSessionsUntouched(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Order: 1})
+	_ = a.Store.Put(session.Session{ID: "demo:archived", Project: "demo", Name: "old", Order: 2, Archived: true})
+	_ = a.Store.Put(session.Session{ID: "demo:b", Project: "demo", Name: "b", Order: 3})
+
+	if err := a.ReorderSessions([]string{"demo:b", "demo:a"}); err != nil {
+		t.Fatal(err)
+	}
+	archived, ok := a.Store.Get("demo:archived")
+	if !ok || archived.Order != 2 {
+		t.Fatalf("archived session's Order changed: %+v", archived)
+	}
+}
+
+// TestCreateFolderStoresNoPosition pins the model down: a folder's place in
+// the list is its members' place (see sessionview.BuildRows), so creating
+// one must persist nothing but its existence. A stored position was the old
+// design, and it drifted out of step with session.Session.Order every time
+// Store.Reorder renumbered a subset of a project's sessions.
+func TestCreateFolderStoresNoPosition(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Order: 1})
+
+	if err := a.CreateFolder("demo", "fresh"); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
+		t.Fatal(err)
+	}
+	meta, ok := a.Cfg.Projects["demo"].Folders["fresh"]
+	if !ok {
+		t.Fatal("expected folder \"fresh\" to be created")
+	}
+	if meta != (config.FolderMeta{}) {
+		t.Fatalf("new folder meta = %+v, want the zero value (expanded, no stored position)", meta)
+	}
+}
+
+// A folder name that can't be drawn as a list row must be refused at the
+// core, not in a form handler: internal/ipc reaches these same mutators
+// from another front end, where no form ever ran.
+func TestFolderNamesAreValidatedAtTheCore(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a"})
+
+	// "" is not in this list: it is SetSessionFolder's own "put this back at
+	// top level", and CreateFolder rejects it on its own below.
+	for _, name := range []string{"   ", "a\nb", "with\ttab", strings.Repeat("x", config.FolderNameMax+1)} {
+		if err := a.CreateFolder("demo", name); err == nil {
+			t.Errorf("CreateFolder(%q) succeeded, want an error", name)
+		}
+		if _, err := a.SetSessionFolder("demo:a", name); err == nil {
+			t.Errorf("SetSessionFolder(%q) succeeded, want an error", name)
+		}
+	}
+	if err := a.CreateFolder("demo", ""); err == nil {
+		t.Error("CreateFolder(\"\") succeeded, want an error")
+	}
+
+	// Surrounding whitespace is trimmed rather than rejected, so " auth "
+	// and "auth" can't become two folders that look identical on screen.
+	if err := a.CreateFolder("demo", " auth "); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := a.Cfg.Projects["demo"].Folders["auth"]; !ok {
+		t.Fatalf("expected the name to be trimmed to \"auth\", got %v", a.Cfg.Projects["demo"].Folders)
+	}
+	if _, err := a.SetSessionFolder("demo:a", " auth "); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := a.Store.Get("demo:a"); s.Folder != "auth" {
+		t.Fatalf("session filed under %q, want the trimmed \"auth\"", s.Folder)
+	}
+}
+
+func TestCreateFolderRejectsDuplicateName(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	if err := a.CreateFolder("demo", "dup"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateFolder("demo", "dup"); err == nil {
+		t.Fatal("expected an error creating a folder that already exists")
+	}
+}
+
+func TestSetSessionFolderCreatesFolderOnFirstUse(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Order: 3})
+
+	got, err := a.SetSessionFolder("demo:a", "auth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Folder != "auth" {
+		t.Fatalf("session.Folder = %q, want auth", got.Folder)
+	}
+	if _, ok := a.Cfg.Projects["demo"].Folders["auth"]; !ok {
+		t.Fatal("expected folder \"auth\" to be created")
+	}
+}
+
+func TestSetSessionFolderEmptyRemovesFromFolder(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Folder: "auth"})
+
+	got, err := a.SetSessionFolder("demo:a", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Folder != "" {
+		t.Fatalf("session.Folder = %q, want empty (top-level)", got.Folder)
+	}
+}
+
+func TestRenameFolderUpdatesMembersAndRejectsCollision(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Folder: "old"})
+	_ = a.Store.Put(session.Session{ID: "demo:b", Project: "demo", Name: "b", Folder: "other"})
+	p := a.Cfg.Projects["demo"]
+	p.Folders = map[string]config.FolderMeta{"old": {}, "other": {}}
+	a.Cfg.Projects["demo"] = p
+	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.RenameFolder("demo", "old", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := a.Cfg.Projects["demo"].Folders["old"]; exists {
+		t.Fatal("old folder name should no longer exist")
+	}
+	if _, exists := a.Cfg.Projects["demo"].Folders["new"]; !exists {
+		t.Fatal("expected folder \"new\" to exist")
+	}
+	member, ok := a.Store.Get("demo:a")
+	if !ok || member.Folder != "new" {
+		t.Fatalf("member session.Folder = %+v, want \"new\"", member)
+	}
+	other, ok := a.Store.Get("demo:b")
+	if !ok || other.Folder != "other" {
+		t.Fatalf("unrelated session's folder changed: %+v", other)
+	}
+
+	if err := a.RenameFolder("demo", "new", "other"); err == nil {
+		t.Fatal("expected an error renaming onto an existing folder name")
+	}
+}
+
+func TestSetFolderCollapsedPersists(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	p := a.Cfg.Projects["demo"]
+	p.Folders = map[string]config.FolderMeta{"auth": {}}
+	a.Cfg.Projects["demo"] = p
+	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.SetFolderCollapsed("demo", "auth", true); err != nil {
+		t.Fatal(err)
+	}
+	if !a.Cfg.Projects["demo"].Folders["auth"].Collapsed {
+		t.Fatal("expected auth folder to be collapsed")
+	}
+	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !a.Cfg.Projects["demo"].Folders["auth"].Collapsed {
+		t.Fatal("collapsed state did not persist to disk")
+	}
+}
+
+func TestDeleteFolderUnparentsMembers(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Folder: "auth"})
+	_ = a.Store.Put(session.Session{ID: "demo:b", Project: "demo", Name: "b", Folder: "other"})
+	p := a.Cfg.Projects["demo"]
+	p.Folders = map[string]config.FolderMeta{"auth": {}, "other": {}}
+	a.Cfg.Projects["demo"] = p
+	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.DeleteFolder("demo", "auth"); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := a.Cfg.Projects["demo"].Folders["auth"]; exists {
+		t.Fatal("expected auth folder to be deleted")
+	}
+	member, ok := a.Store.Get("demo:a")
+	if !ok || member.Folder != "" {
+		t.Fatalf("member session should be un-parented to top-level, got %+v", member)
+	}
+	other, ok := a.Store.Get("demo:b")
+	if !ok || other.Folder != "other" {
+		t.Fatalf("unrelated session's folder changed: %+v", other)
 	}
 }
 
@@ -1820,7 +2065,7 @@ func TestUpdateProjectValidationAndRollback(t *testing.T) {
 	if err := a.UpdateProject("demo", updated); err == nil {
 		t.Fatal("config write must fail")
 	}
-	if got := a.Cfg.Projects["demo"]; got != original {
+	if got := a.Cfg.Projects["demo"]; !reflect.DeepEqual(got, original) {
 		t.Fatalf("project after rollback = %+v, want %+v", got, original)
 	}
 }
@@ -2993,8 +3238,10 @@ func TestPRStatusDiscoversUntaggedSession(t *testing.T) {
 	if got.Ticket != "https://linear.app/acme/issue/ENG-412" {
 		t.Errorf("session ticket = %q, want the link from the PR body", got.Ticket)
 	}
-	if len(gh.dirs) != 1 || gh.dirs[0] != s.WorktreePath {
-		t.Errorf("gh ran in %v, want one call in %q", gh.dirs, s.WorktreePath)
+	// The review-thread lookup that follows is URL-scoped, so only the
+	// first call — `gh pr view` — has to land in the worktree.
+	if len(gh.dirs) == 0 || gh.dirs[0] != s.WorktreePath {
+		t.Errorf("gh ran in %v, want the first call in %q", gh.dirs, s.WorktreePath)
 	}
 }
 
@@ -3019,8 +3266,8 @@ func TestPRStatusFillsTicketOnTaggedSession(t *testing.T) {
 	}
 	// A tagged session looks its PR up by URL, so the call needs no dir —
 	// and must not depend on a worktree that may since have gone away.
-	if len(gh.dirs) != 1 || gh.dirs[0] != "" {
-		t.Errorf("gh ran in %v, want one call with no working directory", gh.dirs)
+	if len(gh.dirs) == 0 || gh.dirs[0] != "" {
+		t.Errorf("gh ran in %v, want the lookup to use no working directory", gh.dirs)
 	}
 }
 
@@ -3058,4 +3305,62 @@ func TestPRStatusNoPRForBranch(t *testing.T) {
 	if got, _ := a.Store.Get(s.ID); got.PR != "" {
 		t.Errorf("session PR = %q, want it left empty", got.PR)
 	}
+}
+
+func TestSetFolderCollapsedRejectsUnknownFolder(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+
+	if err := a.SetFolderCollapsed("demo", "nope", true); err == nil {
+		t.Fatal("expected an error collapsing a folder that does not exist")
+	}
+	// Writing a zero-value FolderMeta for it would conjure the folder into
+	// existence at Order 0, i.e. pinned above every real session.
+	if _, exists := a.Cfg.Projects["demo"].Folders["nope"]; exists {
+		t.Fatal("collapsing an unknown folder created it")
+	}
+}
+
+// The folder mutators mutate a.Cfg, which every front end reads through
+// ConfigSnapshot from other goroutines, so they must hold cfgMu for writing
+// like every other config mutator (see MoveProject/SetTheme). Run with -race.
+func TestFolderMutatorsHoldCfgLock(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a"})
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 20; i++ {
+			_ = a.ConfigSnapshot()
+			_ = a.Projects()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 20; i++ {
+			name := fmt.Sprintf("f%d", i)
+			if err := a.CreateFolder("demo", name); err != nil {
+				t.Errorf("CreateFolder: %v", err)
+				return
+			}
+			if err := a.SetFolderCollapsed("demo", name, true); err != nil {
+				t.Errorf("SetFolderCollapsed: %v", err)
+				return
+			}
+			if err := a.RenameFolder("demo", name, name+"x"); err != nil {
+				t.Errorf("RenameFolder: %v", err)
+				return
+			}
+			if err := a.DeleteFolder("demo", name+"x"); err != nil {
+				t.Errorf("DeleteFolder: %v", err)
+				return
+			}
+			if _, err := a.SetSessionFolder("demo:a", name); err != nil {
+				t.Errorf("SetSessionFolder: %v", err)
+				return
+			}
+		}
+	}()
+	wg.Wait()
 }

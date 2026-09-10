@@ -278,13 +278,18 @@ func TestTerminalBackendDeleteSessionClosesTabAroundTheDelete(t *testing.T) {
 //
 //	CreateSession, OpenSession, KillTmux, DeleteSession
 //
-// Everything else is core-only work and passes straight through.
+// Everything else is core-only work and passes straight through. The
+// folder methods are the reviewed example: DeleteFolder un-parents its
+// member sessions rather than deleting them, so nothing there reaches a
+// tmux session, let alone a terminal.
 var wantBackendMethods = []string{
 	"AddPlainProject", "AddProject", "ChangeSummary", "ConfigSnapshot",
-	"CreateSession", "DeleteSession", "EnsureTmux", "InitProjectAndAdd",
-	"KillTmux", "MoveProject", "MoveSession", "OpenSession", "RemoveProject",
-	"RenameSession", "Sessions", "SetAutoSubmitDefault", "SetAutoTmux",
-	"SetCompactDetail", "SetSessionAgent", "SetSessionArchived",
+	"CreateFolder", "CreateSession", "DeleteFolder", "DeleteSession",
+	"EnsureTmux", "InitProjectAndAdd", "KillTmux", "MoveProject",
+	"OpenSession", "RemoveProject", "RenameFolder", "RenameSession",
+	"ReorderSessions", "Sessions", "SetAutoSubmitDefault", "SetAutoTmux",
+	"SetCompactDetail", "SetFolderCollapsed", "SetProjectCollapsed",
+	"SetSessionAgent", "SetSessionArchived", "SetSessionFolder",
 	"SetSessionPrompt", "SetSessionTags", "SetSortRecentFirst", "SetTheme",
 	"SuggestedProject", "UpdateProject", "WorktreeStatus",
 }

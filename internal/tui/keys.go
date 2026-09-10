@@ -25,7 +25,6 @@ type KeyMap struct {
 	Quit           key.Binding
 	Cancel         key.Binding
 	Confirm        key.Binding
-	DelProject     key.Binding
 	EditSession    key.Binding
 	Tag            key.Binding
 	Enter          key.Binding
@@ -39,7 +38,11 @@ type KeyMap struct {
 	ProjectPicker  key.Binding
 	Settings       key.Binding
 	Search         key.Binding
+	AssignFolder   key.Binding
+	ToggleFolder   key.Binding
+	Folders        key.Binding
 	Update         key.Binding
+	DiffTool       key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -77,7 +80,6 @@ func DefaultKeyMap() KeyMap {
 		Quit:           key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 		Cancel:         key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 		Confirm:        key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "confirm")),
-		DelProject:     key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "remove project")),
 		EditSession:    key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit session")),
 		Tag:            key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tag")),
 		Enter:          key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "submit")),
@@ -108,8 +110,20 @@ func DefaultKeyMap() KeyMap {
 		// straight into a text field, so it searches every project's
 		// sessions at once rather than needing its own scoping key.
 		Search: key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "find session")),
+		// Files the selected session under a named, collapsible group within
+		// its project (blank name removes it from one) — a mnemonic pair with
+		// Folders below, which manages the groups themselves.
+		AssignFolder: key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "folder")),
+		ToggleFolder: key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "collapse folder")),
+		Folders:      key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "manage folders")),
 		// Only does anything once UpdateVersion is set (a newer release was
 		// found) — see updateList's Update case.
-		Update: key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "update & relaunch")),
+		// Launches client.toml's diff_tool on the selected session's worktree.
+		// "d" stays delete-session; this is its shifted neighbour. It took
+		// over "D" from a main-list remove-project shortcut that was a
+		// leftover — removing a project happens in the picker ("/" then
+		// "d"), which is the single entry point for every project action.
+		DiffTool: key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "diff tool")),
+		Update:   key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "update & relaunch")),
 	}
 }

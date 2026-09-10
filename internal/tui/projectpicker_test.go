@@ -189,29 +189,9 @@ func TestProjectPickerDeleteCancelReturnsToPicker(t *testing.T) {
 	}
 }
 
-// TestDelProjectFromMainListStillReturnsToList is the main-list counterpart:
-// D pressed there (not from the picker) must still land back on ModeList,
-// not the picker, after the delete completes.
-func TestDelProjectFromMainListStillReturnsToList(t *testing.T) {
-	be := &fakeBackend{}
-	m := newMultiProjectTestModel(be)
-	m.activeProj = 0
-
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
-	if m.mode != ModeConfirmDeleteProject {
-		t.Fatalf("expected ModeConfirmDeleteProject, got %v", m.mode)
-	}
-
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
-	drainCmd(m, cmd)
-	if m.mode != ModeList {
-		t.Fatalf("expected mode back to ModeList after a main-list-initiated delete, got %v", m.mode)
-	}
-}
-
 // TestProjectPickerDeleteBlockedByExistingSessions ensures the picker
-// enforces the same "no sessions" guard as the main list's D, checked
-// against the highlighted project rather than the active one.
+// enforces the "no sessions" guard against the highlighted project rather
+// than the active one.
 func TestProjectPickerDeleteBlockedByExistingSessions(t *testing.T) {
 	be := &fakeBackend{}
 	m := newMultiProjectTestModel(be)

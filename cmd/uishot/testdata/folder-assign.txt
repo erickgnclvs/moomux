@@ -2,17 +2,17 @@
                                         
                                         
                                         
-                                        
 ╭──────────────────────────────────────╮
 │                                      │
-│  Remove project?                     │
+│  Assign to folder                    │
 │                                      │
-│  name: spare                         │
+│  folder:> auth                       │
 │                                      │
-│  This only removes the entry from c  │
-│  Worktrees and the repo itself are   │
+│  blank removes it from any folder    │
+│  existing: auth, legacy              │
 │                                      │
-│  y to confirm   n/esc to cancel      │
+│                                      │
+│  enter save  esc cancel              │
 │                                      │
 ╰──────────────────────────────────────╯
                                         
@@ -29,19 +29,19 @@
                                                                                                     
                                                                                                     
                                                                                                     
-                                                                                                    
-                         ╭────────────────────────────────────────────────╮                         
-                         │                                                │                         
-                         │  Remove project?                               │                         
-                         │                                                │                         
-                         │  name: spare                                   │                         
-                         │                                                │                         
-                         │  This only removes the entry from config.      │                         
-                         │  Worktrees and the repo itself are untouched.  │                         
-                         │                                                │                         
-                         │  y to confirm   n/esc to cancel                │                         
-                         │                                                │                         
-                         ╰────────────────────────────────────────────────╯                         
+           ╭────────────────────────────────────────────────────────────────────────────╮           
+           │                                                                            │           
+           │  Assign to folder                                                          │           
+           │                                                                            │           
+           │  folder:     > auth                                                        │           
+           │                                                                            │           
+           │  blank removes it from any folder                                          │           
+           │  existing: auth, legacy                                                    │           
+           │                                                                            │           
+           │                                                                            │           
+           │  enter save  esc cancel                                                    │           
+           │                                                                            │           
+           ╰────────────────────────────────────────────────────────────────────────────╯           
                                                                                                     
                                                                                                     
                                                                                                     

@@ -51,6 +51,10 @@ func (m *Model) helpGroups() []helpGroup {
 				{"A", archivedDesc},
 				{"t", "tag ticket / PR"},
 				{"e", "edit session"},
+				{"D", "diff tool"},
+				{"g", "file into a folder"},
+				{"z", "collapse its folder"},
+				{"G", "manage folders"},
 			},
 		},
 		{
@@ -73,7 +77,6 @@ func (m *Model) helpGroups() []helpGroup {
 			title: "Projects",
 			entries: []helpEntry{
 				{"/", "pick project"},
-				{"D", "remove project"},
 				// Adding/editing a project only happens inside the picker —
 				// there's no main-list P/E anymore.
 				{"n/e/d", "add/edit/remove (picker)"},
@@ -85,7 +88,7 @@ func (m *Model) helpGroups() []helpGroup {
 				{"?", "toggle this help"},
 				{"q", "quit"},
 				{"r", "refresh"},
-				{"s", "settings (theme, sort mode, auto-tmux, auto-submit)"},
+				{"s", "settings (theme, sort mode, auto-tmux, auto-submit, diff tool)"},
 				{"u", "update & relaunch (when a new version is available)"},
 			},
 		},

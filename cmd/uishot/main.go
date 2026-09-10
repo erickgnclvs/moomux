@@ -72,6 +72,16 @@ var screens = map[string][]string{
 	// removed from the main list), so these open it first.
 	"new-project": {"/", "n"},
 	"tag":         {"t"},
+	// "folders" shows the plain list with one expanded folder ("auth", 2
+	// members interleaved into the session list) and one collapsed folder
+	// ("legacy", header only) alongside loose sessions — see the "folders"
+	// case in renderScreen for the sample data. "folders-manage" opens the
+	// Folders (G) overlay on the same data; "folder-assign" opens the
+	// per-session assign form (g) with a session already filed under "auth".
+	"folders":        {},
+	"folders-manage": {"G"},
+	"folder-delete":  {"G", "d"},
+	"folder-assign":  {"down", "down", "g"},
 	// Same session as "list" but with a PR added alongside its existing
 	// ticket — the case that motivated CompactDetail: a session tagged with
 	// both blows up the detail pane. "compact-detail" is the same data with
@@ -107,11 +117,12 @@ var screens = map[string][]string{
 	// left undrained by renderScreen, so this captures the "checking git
 	// status…" loading note before it resolves.
 	"confirm-delete-checking": {"d"},
-	// "demo" has sample sessions, so D there flashes the blocked error; the
-	// confirm screen is only reachable on the sessionless "spare" project
-	// (tab switches to it).
-	"confirm-delete-project": {"tab", "D"},
-	"delete-project-blocked": {"D"},
+	// Removing a project is a picker action ("/" then "d"). "demo" has
+	// sample sessions, so "d" on it flashes the blocked error; the confirm
+	// screen is only reachable on the sessionless "spare" project (one
+	// "down" in the picker).
+	"confirm-delete-project": {"/", "down", "d"},
+	"delete-project-blocked": {"/", "d"},
 	"archived":               {"A"},
 	"help":                   {"?"},
 	"help-bottom":            {"?"},
@@ -147,6 +158,9 @@ var screens = map[string][]string{
 	// guard), hence the dedicated single-project config below.
 	"project-picker-emptied": {"/", "d", "y"},
 	"settings":               {"s"},
+	// Diff tool is the settings screen's last row (index 5): five "down"s
+	// from sort mode, then enter opens its inline text editor.
+	"settings-difftool": {"s", "down", "down", "down", "down", "down", "enter"},
 	// Theme is the settings screen's second row (index 1): one "down" from
 	// sort mode, then enter drills into the existing theme picker.
 	"theme-picker": {"s", "down", "enter"},
@@ -159,6 +173,9 @@ var screens = map[string][]string{
 	"pr-merged": {"down"},
 	// Same cursor move again, with CI still running — the pending glyph.
 	"pr-pending": {"down"},
+	// And again with green CI but unresolved review comments — the comment
+	// glyph and the detail row's "2 open comments".
+	"pr-comments": {"down"},
 	// ModeMultiView is the default now (see tui.New), so "list" above already
 	// captures it; these confirm normal session key bindings (delete/tag/
 	// archived) still work and render their dialog correctly on top of it.
@@ -270,8 +287,55 @@ func (f *fakeBackend) PRStatus(id string) (prstatus.Info, bool) {
 }
 func (f *fakeBackend) KillTmux(id string) error                                { return nil }
 func (f *fakeBackend) SetSessionStatusTitle(id string, st watcher.State) error { return nil }
-func (f *fakeBackend) MoveSession(id string, delta int) error                  { return nil }
+func (f *fakeBackend) ReorderSessions(ids []string) error                      { return nil }
 func (f *fakeBackend) MoveProject(name string, delta int) error                { return nil }
+func (f *fakeBackend) CreateFolder(project, name string) error {
+	if f.cfg == nil {
+		return nil
+	}
+	p := f.cfg.Projects[project]
+	if p.Folders == nil {
+		p.Folders = map[string]config.FolderMeta{}
+	}
+	if _, exists := p.Folders[name]; exists {
+		return fmt.Errorf("folder %q already exists", name)
+	}
+	p.Folders[name] = config.FolderMeta{}
+	f.cfg.Projects[project] = p
+	return nil
+}
+func (f *fakeBackend) SetSessionFolder(id, folder string) (session.Session, error) {
+	return session.Session{}, nil
+}
+func (f *fakeBackend) RenameFolder(project, oldName, newName string) error { return nil }
+func (f *fakeBackend) SetFolderCollapsed(project, name string, collapsed bool) error {
+	if f.cfg == nil {
+		return nil
+	}
+	p := f.cfg.Projects[project]
+	if p.Folders == nil {
+		p.Folders = map[string]config.FolderMeta{}
+	}
+	meta := p.Folders[name]
+	meta.Collapsed = collapsed
+	p.Folders[name] = meta
+	f.cfg.Projects[project] = p
+	return nil
+}
+func (f *fakeBackend) DeleteFolder(project, name string) error                  { return nil }
+func (f *fakeBackend) SetProjectCollapsed(project string, collapsed bool) error { return nil }
+func (f *fakeBackend) ProjectFolders() map[string]map[string]config.FolderMeta {
+	if f.cfg == nil {
+		return nil
+	}
+	out := map[string]map[string]config.FolderMeta{}
+	for name, p := range f.cfg.Projects {
+		if len(p.Folders) > 0 {
+			out[name] = p.Folders
+		}
+	}
+	return out
+}
 func (f *fakeBackend) SetSessionTags(id, ticket, pr string) (session.Session, error) {
 	return session.Session{}, nil
 }
@@ -486,6 +550,41 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 		if screenName == "multiview-compact-detail" {
 			cfg.CompactDetail = true
 		}
+	case "folders", "folders-manage", "folder-assign", "folder-delete":
+		now := time.Now().UTC()
+		// The core serves sessions already in display order (see
+		// sessionview.Snapshot.Sessions), so this fixture lays them out
+		// that way rather than relying on Order fields a fake backend never
+		// sorts by. The collapsed "legacy" folder sits between the two
+		// loose sessions, which is the point being shown: a collapsed
+		// folder holds the position of its members instead of sinking to
+		// the bottom of the list.
+		var ordered []session.Session
+		for _, s := range sessions {
+			ordered = append(ordered, s)
+			if s.ID == "demo:feature-auth" {
+				ordered = append(ordered, session.Session{
+					ID: "demo:legacy-cleanup", Project: "demo", Name: "legacy-cleanup",
+					WorktreePath: "/tmp/demo/legacy-cleanup", TmuxSession: "moomux-legacy-cleanup",
+					CreatedAt: now, Agent: "claude", Folder: "legacy",
+				})
+			}
+		}
+		sessions = append(ordered, session.Session{
+			ID: "demo:auth-refresh", Project: "demo", Name: "auth-refresh",
+			WorktreePath: "/tmp/demo/auth-refresh", TmuxSession: "moomux-auth-refresh",
+			CreatedAt: now, Agent: "claude", Folder: "auth",
+		}, session.Session{
+			ID: "demo:auth-logout", Project: "demo", Name: "auth-logout",
+			WorktreePath: "/tmp/demo/auth-logout", TmuxSession: "moomux-auth-logout",
+			CreatedAt: now, Agent: "claude", Folder: "auth",
+		})
+		p := cfg.Projects["demo"]
+		p.Folders = map[string]config.FolderMeta{
+			"auth":   {},
+			"legacy": {Collapsed: true},
+		}
+		cfg.Projects["demo"] = p
 	case "project-picker-emptied":
 		cfg = &config.Config{Projects: map[string]config.Project{
 			"solo": {Kind: "git", Repo: "/tmp/solo", BaseBranch: "main"},
@@ -533,6 +632,11 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 	if screenName == "pr-pending" && len(sessions) > 1 {
 		be.prStatus = map[string]prstatus.Info{
 			sessions[1].ID: {State: "OPEN", Mergeable: "MERGEABLE", CI: "PENDING"},
+		}
+	}
+	if screenName == "pr-comments" && len(sessions) > 1 {
+		be.prStatus = map[string]prstatus.Info{
+			sessions[1].ID: {State: "OPEN", Mergeable: "MERGEABLE", CI: "PASSING", Unresolved: 2},
 		}
 	}
 	if screenName == "detail-ticket-and-pr" || screenName == "compact-detail" {

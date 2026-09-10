@@ -5,12 +5,12 @@
                                         
 ╭──────────────────────────────────────╮
 │                                      │
-│  Remove project?                     │
+│  Delete folder?                      │
 │                                      │
-│  name: spare                         │
+│  name: auth                          │
 │                                      │
-│  This only removes the entry from c  │
-│  Worktrees and the repo itself are   │
+│  2 session(s) move back to top leve  │
+│  No session or worktree is deleted.  │
 │                                      │
 │  y to confirm   n/esc to cancel      │
 │                                      │
@@ -30,18 +30,18 @@
                                                                                                     
                                                                                                     
                                                                                                     
-                         ╭────────────────────────────────────────────────╮                         
-                         │                                                │                         
-                         │  Remove project?                               │                         
-                         │                                                │                         
-                         │  name: spare                                   │                         
-                         │                                                │                         
-                         │  This only removes the entry from config.      │                         
-                         │  Worktrees and the repo itself are untouched.  │                         
-                         │                                                │                         
-                         │  y to confirm   n/esc to cancel                │                         
-                         │                                                │                         
-                         ╰────────────────────────────────────────────────╯                         
+                             ╭────────────────────────────────────────╮                             
+                             │                                        │                             
+                             │  Delete folder?                        │                             
+                             │                                        │                             
+                             │  name: auth                            │                             
+                             │                                        │                             
+                             │  2 session(s) move back to top level.  │                             
+                             │  No session or worktree is deleted.    │                             
+                             │                                        │                             
+                             │  y to confirm   n/esc to cancel        │                             
+                             │                                        │                             
+                             ╰────────────────────────────────────────╯                             
                                                                                                     
                                                                                                     
                                                                                                     

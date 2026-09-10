@@ -24,6 +24,10 @@ type Info struct {
 	State     string `json:"state"`     // OPEN, MERGED, CLOSED
 	Mergeable string `json:"mergeable"` // MERGEABLE, CONFLICTING, UNKNOWN
 	CI        string `json:"ci"`        // PASSING, FAILING, PENDING, NONE
+	// Unresolved is the number of open (unresolved) review threads on the
+	// PR — a reviewer's code comment nobody has answered is as much a
+	// "don't merge this yet" as a red check.
+	Unresolved int `json:"unresolved"`
 }
 
 // Runner takes the working directory first, like gitwt.Runner: a
@@ -113,15 +117,60 @@ func (c *Client) Fetch(dir, prURL string) (PR, error) {
 	if raw.URL == "" {
 		return PR{}, fmt.Errorf("gh pr view: no URL in the response")
 	}
+	info := Info{
+		State:     raw.State,
+		Mergeable: raw.Mergeable,
+		CI:        aggregateCI(raw.StatusCheckRollup),
+	}
+	// Only an open PR's comments are worth flagging, and the extra round
+	// trip is only spent there.
+	if raw.State == "OPEN" {
+		info.Unresolved = c.unresolvedThreads(raw.URL)
+	}
 	return PR{
-		Info: Info{
-			State:     raw.State,
-			Mergeable: raw.Mergeable,
-			CI:        aggregateCI(raw.StatusCheckRollup),
-		},
+		Info:   info,
 		URL:    raw.URL,
 		Ticket: ticketIn(raw.Title, raw.Body),
 	}, nil
+}
+
+// threadQuery counts a PR's unresolved review threads. `gh pr view --json`
+// has no field for them, so this is a second call — GraphQL is the only
+// place resolution state is exposed.
+const threadQuery = `query($url:URI!){resource(url:$url){... on PullRequest{reviewThreads(first:100){nodes{isResolved}}}}}`
+
+// unresolvedThreads returns the count of open review threads on prURL, or 0
+// if the lookup fails — an unavailable count degrades to "nothing to flag"
+// rather than failing the whole status fetch.
+//
+// ponytail: first 100 threads only; paginate if a PR ever has more than
+// that and the count matters beyond "some".
+func (c *Client) unresolvedThreads(prURL string) int {
+	out, err := c.Runner.Run("", "api", "graphql", "-f", "query="+threadQuery, "-f", "url="+prURL)
+	if err != nil {
+		return 0
+	}
+	var resp struct {
+		Data struct {
+			Resource struct {
+				ReviewThreads struct {
+					Nodes []struct {
+						IsResolved bool `json:"isResolved"`
+					} `json:"nodes"`
+				} `json:"reviewThreads"`
+			} `json:"resource"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		return 0
+	}
+	n := 0
+	for _, t := range resp.Data.Resource.ReviewThreads.Nodes {
+		if !t.IsResolved {
+			n++
+		}
+	}
+	return n
 }
 
 // ticketURL matches the ticket links that are unambiguous on sight: an
