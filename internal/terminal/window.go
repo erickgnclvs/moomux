@@ -81,8 +81,9 @@ func kittyArgs(title, tmuxSession string) []string {
 // (https://github.com/ghostty-org/ghostty/issues/12136), and routing
 // through `open -a`/`open -na` proved unreliable in practice (either
 // silently dropped the launch args on an already-running instance, or forced
-// a new window anyway) — this always opens a new window, which is the
-// tradeoff until Ghostty ships a native new-tab CLI flag.
+// a new window anyway) — so this always opens a new window. On macOS,
+// ghosttyClient gets a real tab through Ghostty's AppleScript bridge and
+// only falls back here; on Linux this is still all there is.
 func ghosttyArgs(title, tmuxSession string) []string {
 	args := []string{}
 	if title != "" {

@@ -4,6 +4,7 @@ package terminal
 import (
 	"os"
 	"os/exec"
+	"runtime"
 )
 
 // TerminalOpener opens a tmux session in the detected terminal. The returned
@@ -71,7 +72,7 @@ func Detect() TerminalOpener {
 		}
 		return newWindow
 	case os.Getenv("TERM_PROGRAM") == "ghostty" || os.Getenv("GHOSTTY_RESOURCES_DIR") != "":
-		return &windowOpener{binary: "ghostty", args: ghosttyArgs}
+		return ghosttyOpener()
 	case os.Getenv("WEZTERM_PANE") != "":
 		// WEZTERM_PANE means a wezterm mux server is running, so `cli spawn`
 		// can open a tab in the current window; fall back to a fresh
@@ -127,4 +128,16 @@ func fallback() TerminalOpener {
 		}
 	}
 	return platformFallback()
+}
+
+// ghosttyOpener prefers Ghostty's AppleScript dictionary on macOS, which
+// can open a tab in the current window; the `ghostty` binary can only open
+// a whole new window, so it stays the fallback (and the only option on
+// Linux, where there's no scripting bridge).
+func ghosttyOpener() TerminalOpener {
+	newWindow := &windowOpener{binary: "ghostty", args: ghosttyArgs}
+	if runtime.GOOS == "darwin" {
+		return newGhosttyClient(newWindow)
+	}
+	return newWindow
 }

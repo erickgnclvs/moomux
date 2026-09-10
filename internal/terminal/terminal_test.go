@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -66,11 +67,26 @@ func TestDetectReturnsKittyClientForKittyWithSocket(t *testing.T) {
 	}
 }
 
-func TestDetectReturnsWindowOpenerForGhostty(t *testing.T) {
+func TestDetectReturnsGhosttyOpener(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "ghostty")
+	t.Setenv("__CFBundleIdentifier", "")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv("WEZTERM_PANE", "")
 	got := Detect()
+	// On macOS Ghostty's AppleScript bridge can open a tab in the current
+	// window; elsewhere the binary is all there is, and it only makes
+	// windows.
+	if runtime.GOOS == "darwin" {
+		gc, ok := got.(*ghosttyClient)
+		if !ok {
+			t.Fatalf("expected *ghosttyClient, got %T", got)
+		}
+		fb, ok := gc.fallback.(*windowOpener)
+		if !ok || fb.binary != "ghostty" {
+			t.Fatalf("expected ghostty fallback, got %#v", gc.fallback)
+		}
+		return
+	}
 	wo, ok := got.(*windowOpener)
 	if !ok {
 		t.Fatalf("expected *windowOpener, got %T", got)
