@@ -3,6 +3,7 @@ package terminal
 import (
 	"fmt"
 	"log/slog"
+	"os/exec"
 	"strings"
 )
 
@@ -84,11 +85,12 @@ func (c *ghosttyClient) createTab(tmuxSession, title string) (string, string, er
 	// The command string is run through a shell, so the "=" exact-match
 	// target has to be quoted — zsh's EQUALS expansion would otherwise
 	// read a bare "=name" as a command-path lookup.
+	cmd := shellQuote(tmuxPath()) + " attach -t " + shellQuote("="+tmuxSession)
 	out, err := c.runner.Run(fmt.Sprintf(`
 tell application id "%s"
 	activate
-	return id of (new tab in front window with configuration {command:"tmux attach -t %s"})
-end tell`, ghosttyAppID, escapeAppleScript(shellQuote("="+tmuxSession))))
+	return id of (new tab in front window with configuration {command:"%s"})
+end tell`, ghosttyAppID, escapeAppleScript(cmd)))
 	slog.Debug("ghostty: new tab result", "tmux_session", tmuxSession, "out", out, "err", err)
 	if err != nil {
 		hint, ferr := c.fallback.OpenSession(tmuxSession, title)
@@ -115,4 +117,19 @@ tell application id "%s"
 end tell`, ghosttyAppID, escapeAppleScript(tabID)))
 	slog.Debug("ghostty: close tab result", "tab_id", tabID, "out", out, "err", err)
 	return err
+}
+
+// tmuxPath resolves tmux to an absolute path. Unlike the openers that spawn
+// a terminal as moomux's own child, Ghostty runs the configured command
+// itself — as `login -flp <user> /bin/bash --noprofile --norc -c ...`, in
+// *Ghostty's* environment. A Ghostty launched from the Dock has only the
+// bare system PATH, and --noprofile --norc means nothing ever adds to it,
+// so a plain "tmux" is not found on a Homebrew install ("bash: line 0:
+// exec: tmux: not found"). moomux's own PATH is the one that found tmux at
+// startup, so resolve it here and hand Ghostty somewhere real to look.
+func tmuxPath() string {
+	if p, err := exec.LookPath("tmux"); err == nil {
+		return p
+	}
+	return "tmux"
 }

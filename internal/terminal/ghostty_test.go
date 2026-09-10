@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -19,11 +20,29 @@ func TestGhosttyOpenSessionOpensTabInFrontWindow(t *testing.T) {
 	// The target must be single-quoted: Ghostty runs the configured
 	// command through a shell, and zsh's EQUALS expansion turns a bare
 	// leading "=" into a command-path lookup.
-	if !strings.Contains(fr.script, `tmux attach -t '=moomux-foo'`) {
+	if !strings.Contains(fr.script, `attach -t '=moomux-foo'`) {
 		t.Fatalf("missing quoted attach: %s", fr.script)
 	}
 	if fb.tmuxSession != "" {
 		t.Fatalf("fallback used despite a working script")
+	}
+}
+
+// Ghostty runs the command in its own environment via `bash --noprofile
+// --norc`, so a Dock-launched Ghostty has the bare system PATH and a plain
+// "tmux" is not found on a Homebrew install.
+func TestGhosttyRunsTmuxByAbsolutePath(t *testing.T) {
+	fr := &fakeRunner{out: "tab-1"}
+	c := &ghosttyClient{runner: fr, fallback: &fakeOpener{}}
+	if _, err := c.OpenSession("moomux-foo", "bar"); err != nil {
+		t.Fatal(err)
+	}
+	want, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("no tmux on PATH to resolve")
+	}
+	if !strings.Contains(fr.script, "command:\"'"+want+"' attach") {
+		t.Fatalf("want absolute tmux path %s: %s", want, fr.script)
 	}
 }
 
@@ -108,7 +127,7 @@ func TestGhosttyEscapesTmuxSession(t *testing.T) {
 	if _, err := c.OpenSession(`moomux-foo"; do shell script "rm`, "bar"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(fr.script, `tmux attach -t '=moomux-foo\"; do shell script \"rm'`) {
+	if !strings.Contains(fr.script, `attach -t '=moomux-foo\"; do shell script \"rm'`) {
 		t.Fatalf("tmux session not escaped: %s", fr.script)
 	}
 }
