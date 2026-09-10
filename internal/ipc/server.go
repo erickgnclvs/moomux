@@ -247,9 +247,6 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		}
 		sess, hint, err := b.CreateSession(*a.Req)
 		return Result{Session: &sess, Hint: hint}, err
-	case "OpenSession":
-		hint, err := b.OpenSession(a.ID)
-		return Result{Hint: hint}, err
 	case "EnsureTmux":
 		hint, err := b.EnsureTmux(a.ID)
 		return Result{Hint: hint}, err

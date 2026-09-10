@@ -31,7 +31,7 @@ func TestInstallKnownCommandsConcurrent(t *testing.T) {
 	// Both agents referenced, so every installer in agentInstallers runs.
 	// newTestApp sandboxes HOME itself; read it back rather than setting our
 	// own, which it would overwrite.
-	a, _, _, _ := newTestApp(t, map[string]config.Project{
+	a, _, _ := newTestApp(t, map[string]config.Project{
 		"claude-proj": {Kind: "plain", Agent: "claude"},
 		"codex-proj":  {Kind: "plain", Agent: "codex"},
 	})
@@ -83,7 +83,7 @@ func TestInstallKnownCommandsConcurrent(t *testing.T) {
 // fatal "concurrent map read and map write", not just a detected race.
 // Run under -race.
 func TestConcurrentCfgAccess(t *testing.T) {
-	a, _, _, _ := newTestApp(t, map[string]config.Project{"seed": {Kind: "plain", Repo: t.TempDir()}})
+	a, _, _ := newTestApp(t, map[string]config.Project{"seed": {Kind: "plain", Repo: t.TempDir()}})
 
 	var wg sync.WaitGroup
 	for i := range 8 {
@@ -110,7 +110,7 @@ func TestConcurrentCfgAccess(t *testing.T) {
 // TestConfigSnapshotIsACopy pins that callers outside App can't reach into
 // its state — the ipc server hands this straight to clients.
 func TestConfigSnapshotIsACopy(t *testing.T) {
-	a, _, _, _ := newTestApp(t, map[string]config.Project{"seed": {Kind: "plain"}})
+	a, _, _ := newTestApp(t, map[string]config.Project{"seed": {Kind: "plain"}})
 
 	snap := a.ConfigSnapshot()
 	snap.Projects["injected"] = config.Project{Repo: "/evil"}

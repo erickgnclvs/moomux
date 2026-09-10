@@ -34,6 +34,12 @@ type Backend interface {
 	// the core (see app.CreateSession), so a front end fills in the request
 	// and renders what comes back rather than replaying six calls in order.
 	CreateSession(req session.CreateRequest) (s session.Session, hint string, err error)
+	// OpenSession revives the session if needed and opens a terminal on it.
+	// The terminal half is not the core's — it's implemented by the
+	// front-end-side wrapper every front end goes through (terminalBackend
+	// in main.go), because the machine with a terminal is the one the user
+	// is sitting at, not necessarily the one running the core. On App and
+	// ipc.Client this is EnsureTmux and nothing else.
 	OpenSession(id string) (hint string, err error)
 	// EnsureTmux revives a session's tmux and agent without opening a
 	// terminal — for front ends that attach tmux themselves (the macOS

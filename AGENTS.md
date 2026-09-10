@@ -71,6 +71,14 @@ Clients filter and render; they do not re-derive. The same `Watcher` feeds the l
 implementation, and `internal/ipc` serializes `sessionview.Snapshot` as-is rather than reshaping
 it — a wire type in the middle is where the last drift came from.
 
+The mirror of that rule: if something can only be *done* on the machine a human is sitting at, the
+front end does it, and the core does not pretend to. Terminals are the whole of that category —
+opening a window or tab, focusing one, closing one. `internal/app` does not import
+`internal/terminal`; every front end goes through `terminalBackend` in `main.go` instead (the local
+TUI, `moomux ui -socket`, and the `moomux park` worker). A `moomux serve` core started by launchd
+has no `TERM_PROGRAM` and no `$TMUX`, so a core that answered these questions would be answering
+for the wrong process. See [docs/wire-protocol.md](docs/wire-protocol.md).
+
 `watcher.State` serializes by *name* (`MarshalJSON` in `internal/watcher`), not as its iota. The
 enum is deliberately ranked (NeedsInput above Working), so the numbers exist to be reordered — as
 bare ints a re-rank would silently reassign every state the Swift side shows, with no compile

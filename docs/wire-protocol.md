@@ -176,14 +176,53 @@ as plain folder" dialog.
 **Read** — `Config`, `Sessions`, `AgentOptions`, `Themes`, `SuggestedProject`,
 `WorktreeStatus`, `ChangeSummary`.
 
-**Session lifecycle** — `CreateSession`, `OpenSession`, `EnsureTmux`,
-`DeleteSession`, `KillTmux` (park).
+**Session lifecycle** — `CreateSession`, `EnsureTmux`, `DeleteSession`,
+`KillTmux` (park).
 
-`OpenSession` = `EnsureTmux` + open a terminal window on it. `EnsureTmux`
-alone revives a parked session's tmux and agent and stamps `LastOpened`,
-returning the same `hint`, but never touches iTerm — that's what a front end
-that attaches tmux itself (the macOS app) calls, so only its explicit "open
-in terminal" action spawns a tab.
+### The core never opens a terminal
+
+Not on any method. Which emulator to launch, which of its tabs a session is
+already in, and whether closing one is even meaningful are facts about the
+machine a human is sitting at — and the core is not reliably that machine's
+process. A `moomux serve` core started by launchd has no `TERM_PROGRAM` and
+no `$TMUX` at all, so `terminal.Detect()` over there answers for the wrong
+process.
+
+So every front end goes through `terminalBackend` (`main.go`), which
+decorates a backend — the core in-process, or the core over the socket,
+identically — and does the terminal work itself. The local TUI, `moomux ui
+-socket` and the `moomux park` worker all use it. `internal/app` doesn't
+import `internal/terminal`.
+
+What that leaves on the wire:
+
+- `EnsureTmux` revives a parked session's tmux and agent, stamps
+  `LastOpened`, and returns the `hint`. This is the whole of the core's
+  "make this session usable" job.
+- `OpenSession` **is** `EnsureTmux` — same call, kept because `tui.Backend`
+  has an "open" verb that `terminalBackend` overrides, and `App` and
+  `ipc.Client` have to satisfy it to be wrapped. There is no `OpenSession`
+  method on the wire any more.
+- `CreateSession`'s `req.OpenTerminal` is a statement, not an instruction:
+  *a terminal is being opened for this session by the caller*. The core acts
+  on it only by stamping `LastOpened` and skipping the "started in
+  background — attach with…" hint that would otherwise be the user's only
+  way in. It never opens anything.
+- `KillTmux` and `DeleteSession` kill tmux and stop there. Closing the tab
+  is `terminalBackend`'s, which resolves it *before* the call (the lookup
+  below joins on tmux's attached clients, so after the kill there's nothing
+  to find) and closes it *after* (closing first can take the tmux client
+  down before the kill is issued).
+
+There is no tab handle at all. `session.TermTabID` is gone, and so is the
+`TabReopener` interface that produced the handles: each terminal finds the
+tab a session is open in by joining `tmux list-clients` to what it can
+report about its own tabs — tty (`#{client_tty}`) for iTerm2 and
+wezterm, foreground-process pid (`#{client_pid}`) for kitty, which exposes
+no tty. Nothing is persisted, and the tab survives a restart of the front
+end or of the terminal. A stored handle would have done neither: kitty tab
+ids and wezterm pane ids restart from zero with the process, so a remembered
+one can name a stranger's tab.
 
 **Session edits** — `SetSessionTags`, `SetSessionPrompt`, `SetSessionAgent`,
 `RenameSession`, `SetSessionArchived`, `MoveSession`.
@@ -209,6 +248,9 @@ worktree + branch  →  tmux pane + agent
                    →  store it on the session
                    →  type it into the pane (submit if asked)
 ```
+
+The terminal is the one step that isn't in there — see "The core never
+opens a terminal" above.
 
 Composing that prompt means: prefix the thinking level *for agents with no
 launch-time flag for it*, then append the ticket and PR URLs. Which agents
@@ -252,6 +294,13 @@ different hosts, and anything derived from `$HOME`, `os.Getwd()`,
 `SuggestedProject` (the add-project prefill) and `AddProject`'s path warning
 both exist because the front end was answering for itself.
 
+The terminal emulator is the exception that proves it: worktrees, git and
+tmux live on the core's machine, but the window a human looks at lives on
+the client's. Which emulator, which tab, and whether this client is itself
+an SSH window (`browser.Remote()`) are the client's questions — the core
+answering them is the same bug in the other direction. The rule is *the*
+right machine, not *the core*.
+
 **`omitempty` on a meaningful `false`/`0`/`""` erases it.** A client decoding
 into optionals can't tell "absent" from "the answer is no". Keep it off
 fields that *are* the answer.
@@ -284,6 +333,8 @@ nil. What changed:
 | `CreateSession` with a dozen flat args | `Args.req` (`session.CreateRequest`) |
 | `Projects` | read `Config.projects` / the served order |
 | `prstatus.Info` as `{"State":…}` | `{"state":…}` — lowercase, like everything else |
+| `OpenSession` (the core spawns a terminal for "Open in terminal") | **removed** — the app opens its own; see "The core never opens a terminal" |
+| `session.Session.term_tab_id` | **removed** — never decoded on the Swift side, and nothing stores a tab handle now |
 
 A version handshake would be cheap insurance against the next one; there
 isn't one today.

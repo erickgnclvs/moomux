@@ -15,39 +15,45 @@ type TerminalOpener interface {
 	OpenSession(tmuxSession, title string) (hint string, err error)
 }
 
-// TabReopener is an optional capability: implement it on a TerminalOpener
-// whose terminal has an addressable tab/window concept and exposes a way to
-// bring a specific one back to the front (currently iTerm2, via AppleScript;
-// kitty, via `kitten @ focus-tab --match id:N`; and wezterm, via
-// `wezterm cli activate-pane --pane-id N` over its mux server). Callers
-// (see app.go's openTerminal) type-assert for this interface rather than
-// calling it directly, so terminals without the capability are unaffected.
-//
-// OpenTab brings tabID back to the front instead of always creating a new
-// tab; if tabID is empty or no longer exists, it falls back to opening a
-// fresh tab/window and returns its id so the caller can remember it for
-// next time. tabID is an opaque per-implementation handle, not necessarily
-// a literal "tab id" — iTerm2's AppleScript tab objects have no id
-// property, so itermClient uses the id of the tab's session instead (see
-// its OpenTab doc comment). Future implementers should pick whatever
-// stable handle their terminal actually exposes, not assume "tab id" means
-// a tab-scoped identifier.
-type TabReopener interface {
-	OpenTab(tabID, tmuxSession, title string) (newTabID, hint string, err error)
-}
-
-// TabCloser is an optional capability, mirroring TabReopener: implement it
-// on a TerminalOpener whose terminal can close a specific addressable tab
-// (currently just iTerm2, via AppleScript). Callers type-assert for this
+// TabCloser is an optional capability, mirroring TabFinder: implement it on
+// a TerminalOpener whose terminal can close a specific addressable tab. Callers type-assert for this
 // interface rather than calling it directly, so terminals without the
 // capability are unaffected — closing a session's tab is a best-effort
 // nicety, not something every terminal needs to support.
 //
 // CloseTab closes tabID's tab if it still exists; closing an already-gone
-// tab is not an error, mirroring TabReopener.OpenTab's "tab gone" handling.
+// tab is not an error: tabs close independently of the tmux session they
+// were attached to.
 type TabCloser interface {
 	CloseTab(tabID string) error
 }
+
+// TabFinder is an optional capability for a terminal that can identify a
+// session's tab from the outside rather than from a handle it was given
+// (currently just iTerm2, which joins tmux's attached-client tty to its own
+// per-session tty). It exists for the close path: a caller that wants to
+// close a session's tab has to learn which tab that is *before* tmux dies,
+// because tmux is half the join, and CloseTab can only be called after.
+//
+// FindTab returns an empty id, and no error, when there's no such tab.
+type TabFinder interface {
+	FindTab(tmuxSession string) (tabID string, err error)
+}
+
+// Compile-time capability roster: which terminal implements which optional
+// interface. Cheap insurance — these are all satisfied by method name, so a
+// renamed or re-signatured method would otherwise just silently stop being
+// detected by the type assertions in app.go and main.go.
+var (
+	_ TabCloser = (*itermClient)(nil)
+	_ TabFinder = (*itermClient)(nil)
+
+	_ TabCloser = (*kittyClient)(nil)
+	_ TabFinder = (*kittyClient)(nil)
+
+	_ TabCloser = (*weztermClient)(nil)
+	_ TabFinder = (*weztermClient)(nil)
+)
 
 // Detect returns the best TerminalOpener for the current environment by
 // inspecting well-known environment variables.

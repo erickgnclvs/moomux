@@ -2,7 +2,6 @@ package terminal
 
 import (
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"os/exec"
 	"strconv"
@@ -21,35 +20,104 @@ func (execKittyRunner) Run(args ...string) (string, error) {
 	return string(out), err
 }
 
-// kittyClient implements TabReopener for kitty over its remote-control
-// socket. Detect() only returns this when KITTY_LISTEN_ON is set; without a
+// kittyClient drives kitty over its remote-control socket. Detect() only returns this when KITTY_LISTEN_ON is set; without a
 // socket, `kitten @` falls back to tty-based control and fallback is used
 // instead.
 type kittyClient struct {
 	runner   kittyRunner
 	fallback TerminalOpener
+	// clients reports the terminal panes attached to a tmux session;
+	// injectable so tests don't need a live tmux server.
+	clients func(tmuxSession string) []tmuxClient
 }
 
 func newKittyClient(fallback TerminalOpener) *kittyClient {
-	return &kittyClient{runner: execKittyRunner{}, fallback: fallback}
+	return &kittyClient{runner: execKittyRunner{}, fallback: fallback, clients: attachedClients}
 }
 
+func (c *kittyClient) attached(tmuxSession string) []tmuxClient {
+	if c.clients == nil {
+		return attachedClients(tmuxSession)
+	}
+	return c.clients(tmuxSession)
+}
+
+// OpenSession focuses the tab tmuxSession is already open in, or opens a
+// fresh one. Nothing is remembered between calls: the tab is found (see
+// findTab), which survives a restart of the front end or of kitty — kitty
+// tab ids restart from 1 with the process, so a remembered one is actively
+// dangerous — and finds a tab another moomux front end opened.
 func (c *kittyClient) OpenSession(tmuxSession, title string) (string, error) {
-	_, hint, err := c.OpenTab("", tmuxSession, title)
-	return hint, err
-}
-
-// OpenTab focuses tabID's tab if kitty still has it, otherwise opens a
-// fresh tab (attaching tmuxSession) and returns the id of the tab kitty
-// created.
-func (c *kittyClient) OpenTab(tabID, tmuxSession, title string) (string, string, error) {
-	if tabID != "" {
-		if c.focusTab(tabID) {
-			return tabID, "", nil
+	if id := c.findTab(tmuxSession); id != "" {
+		if c.focusTab(id) {
+			return "", nil
 		}
-		slog.Debug("kitty: tab gone, opening a new one", "tab_id", tabID)
+		slog.Debug("kitty: found tab would not focus, opening a new one", "tab_id", id)
 	}
 	return c.createTab(tmuxSession, title)
+}
+
+// FindTab reports the id of the kitty tab attached to tmuxSession without
+// focusing it — see terminal.TabFinder, and findTab for how the match is
+// made.
+func (c *kittyClient) FindTab(tmuxSession string) (string, error) {
+	return c.findTab(tmuxSession), nil
+}
+
+// CloseTab closes tabID's tab. kitty exits non-zero when the tab is already
+// gone, which is not a failure worth reporting — same as focusTab.
+func (c *kittyClient) CloseTab(tabID string) error {
+	if _, err := c.runner.Run("@", "close-tab", "--match", "id:"+tabID); err != nil {
+		slog.Debug("kitty: close-tab failed (tab likely already gone)", "tab_id", tabID, "err", err)
+	}
+	return nil
+}
+
+// findTab returns the id of the kitty tab holding a tmux client attached to
+// tmuxSession, or "" if there isn't one.
+//
+// The join is on process id, not tty: kitty's `@ ls` reports the foreground
+// processes of every window (with pids), but no tty, and its `--match`
+// vocabulary has no tty either. tmux's #{client_pid} is exactly one of
+// those foreground processes — it's the `tmux attach` running in the tab.
+func (c *kittyClient) findTab(tmuxSession string) string {
+	clients := c.attached(tmuxSession)
+	if len(clients) == 0 {
+		return ""
+	}
+	out, err := c.runner.Run("@", "ls")
+	if err != nil {
+		slog.Debug("kitty: ls failed", "err", err)
+		return ""
+	}
+	var osWindows []struct {
+		Tabs []struct {
+			ID      int `json:"id"`
+			Windows []struct {
+				ForegroundProcesses []struct {
+					PID int `json:"pid"`
+				} `json:"foreground_processes"`
+			} `json:"windows"`
+		} `json:"tabs"`
+	}
+	if err := json.Unmarshal([]byte(out), &osWindows); err != nil {
+		slog.Debug("kitty: could not parse ls output", "err", err)
+		return ""
+	}
+	for _, client := range clients {
+		for _, osw := range osWindows {
+			for _, tab := range osw.Tabs {
+				for _, w := range tab.Windows {
+					for _, fg := range w.ForegroundProcesses {
+						if strconv.Itoa(fg.PID) == client.PID {
+							return strconv.Itoa(tab.ID)
+						}
+					}
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // focusTab brings tabID's tab to the front. kitty exits non-zero both when
@@ -61,46 +129,13 @@ func (c *kittyClient) focusTab(tabID string) bool {
 	return err == nil
 }
 
-// createTab opens tmuxSession in a new kitty tab and returns the id of the
-// tab kitty created. kitty focuses a freshly launched tab by default, so
-// that id is just whichever tab `kitten @ ls` reports as focused right
-// after the launch call succeeds — no need to parse launch's own output.
-func (c *kittyClient) createTab(tmuxSession, title string) (string, string, error) {
+// createTab opens tmuxSession in a new kitty tab. It doesn't report which
+// tab: nothing stores one, and finding it again is findTab's job — which
+// is also one fewer `kitten @ ls` on every open.
+func (c *kittyClient) createTab(tmuxSession, title string) (string, error) {
 	if _, err := c.runner.Run(kittyTabArgs(title, "="+tmuxSession)...); err != nil {
 		slog.Debug("kitty: launch failed, falling back", "err", err)
-		hint, ferr := c.fallback.OpenSession(tmuxSession, title)
-		return "", hint, ferr
+		return c.fallback.OpenSession(tmuxSession, title)
 	}
-	tabID, err := c.activeTabID()
-	if err != nil {
-		slog.Debug("kitty: could not determine new tab id", "err", err)
-		return "", "", nil
-	}
-	return tabID, "", nil
-}
-
-// activeTabID returns the id of kitty's currently focused tab, parsed from
-// `kitten @ ls`'s JSON (a list of OS windows, each with a list of tabs).
-func (c *kittyClient) activeTabID() (string, error) {
-	out, err := c.runner.Run("@", "ls")
-	if err != nil {
-		return "", err
-	}
-	var osWindows []struct {
-		Tabs []struct {
-			ID        int  `json:"id"`
-			IsFocused bool `json:"is_focused"`
-		} `json:"tabs"`
-	}
-	if err := json.Unmarshal([]byte(out), &osWindows); err != nil {
-		return "", err
-	}
-	for _, w := range osWindows {
-		for _, t := range w.Tabs {
-			if t.IsFocused {
-				return strconv.Itoa(t.ID), nil
-			}
-		}
-	}
-	return "", fmt.Errorf("kitty: no focused tab in ls output")
+	return "", nil
 }

@@ -1,4 +1,6 @@
-// Package app glues config, session store, tmux, terminal and gitwt into a TUI Backend.
+// Package app glues config, session store, tmux and gitwt into a TUI
+// Backend. Not terminals: opening and closing a terminal window belongs to
+// whichever front end has one — see main.go's terminalBackend.
 package app
 
 import (
@@ -13,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/erickgnclvs/moomux/internal/browser"
 	"github.com/erickgnclvs/moomux/internal/claudehook"
 	"github.com/erickgnclvs/moomux/internal/codexhook"
 	"github.com/erickgnclvs/moomux/internal/config"
@@ -21,7 +22,6 @@ import (
 	"github.com/erickgnclvs/moomux/internal/layout"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
-	"github.com/erickgnclvs/moomux/internal/terminal"
 	"github.com/erickgnclvs/moomux/internal/tmux"
 	"github.com/erickgnclvs/moomux/internal/userscript"
 	"github.com/erickgnclvs/moomux/internal/watcher"
@@ -32,7 +32,6 @@ type App struct {
 	CfgPath      string
 	Store        *session.Store
 	Tmux         *tmux.Client
-	Terminal     terminal.TerminalOpener
 	Git          *gitwt.Client
 	PR           *prstatus.Client
 	WorktreeRoot string
@@ -779,8 +778,9 @@ func joinHint(a, b string) string {
 
 // CreateSession's hint, when non-empty, is a user-facing instruction
 // (e.g. "run: tmux attach -t ...") to show alongside success — it is
-// not an error. When openTerminal is false, the tmux session is started
-// detached and no terminal window is opened. baseBranch, when set, is used
+// not an error. openTerminal says a terminal is being opened for the new
+// session by the caller — the core never opens one itself; it only affects
+// LastOpened and whether the manual-attach hint is worth returning. baseBranch, when set, is used
 // instead of the project's configured base branch as the ref a fresh branch
 // is cut from; it has no effect when existingBranch is set (resuming a
 // branch has no base to cut from). model, when non-empty and not "default",
@@ -910,7 +910,7 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 				Branch:   branch,
 			}) {
 				slog.Warn("userscript", "warning", w)
-				userscriptHint = joinHints(userscriptHint, w)
+				userscriptHint = JoinHints(userscriptHint, w)
 			}
 		}
 	}
@@ -941,28 +941,15 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 		return session.Session{}, "", fmt.Errorf("tmux new-session: %w", err)
 	}
 	slog.Info("tmux session created", "name", tmuxName)
-	var tabID, hint string
-	var opened bool
-	if openTerminal {
-		var err error
-		tabID, hint, err = a.openTerminal("", tmuxName, name)
-		if err != nil {
-			// The worktree and tmux session already exist at this point;
-			// failing would strand them outside the store. Degrade to a
-			// manual-attach hint instead.
-			slog.Error("terminal open failed", "tmux_session", tmuxName, "name", name, "err", err)
-			hint = fmt.Sprintf("couldn't open a terminal (%v) — attach yourself: tmux attach -t %s", err, tmuxName)
-		} else {
-			opened = true
-		}
-		if hooksHint != "" {
-			hint = joinHints(hooksHint, hint)
-		}
-		slog.Info("terminal opened", "tmux_session", tmuxName)
-	} else {
-		hint = joinHints(hooksHint, fmt.Sprintf("tmux session started in background — attach with: tmux attach -t %s", tmuxName))
+	hint := hooksHint
+	if !openTerminal {
+		// Nobody is opening a terminal, so the session is only reachable by
+		// hand. Composed here, not by the caller, so that a store-put
+		// failure below can still carry it into the error — the tmux
+		// session exists either way and the user needs a way in.
+		hint = JoinHints(hint, fmt.Sprintf("tmux session started in background — attach with: tmux attach -t %s", tmuxName))
 	}
-	hint = joinHints(hint, userscriptHint)
+	hint = JoinHints(hint, userscriptHint)
 
 	s := session.Session{
 		ID:           id,
@@ -978,13 +965,14 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 		Dangerous:    dangerousVal,
 		AgentPort:    agentPort,
 		Ticket:       ticket,
-		TermTabID:    tabID,
 	}
-	// A terminal opened right here means the user is dropped straight into
-	// the new session, same as OpenSession's attach — without this, a
-	// never-since-reopened session sorts as if never opened at all and
-	// sinks to the bottom under "most-recently-opened first".
-	if opened {
+	// A terminal being opened for this session means the user is dropped
+	// straight into it — without this, a never-since-reopened session sorts
+	// as if never opened at all and sinks to the bottom under
+	// "most-recently-opened first". The core doesn't open the terminal (the
+	// front end does, see main.go's terminalBackend); openTerminal is the
+	// caller saying one is being opened.
+	if openTerminal {
 		s.LastOpened = time.Now()
 	}
 	if err := a.Store.Put(s); err != nil {
@@ -1466,10 +1454,13 @@ func codexHooksHint(agent string) string {
 	return "Codex needs-input hooks were installed/updated in ~/.codex/hooks.json — run /hooks inside Codex once to trust them"
 }
 
-// joinHints combines two non-empty hint strings for display, e.g. a
+// JoinHints combines two non-empty hint strings for display, e.g. a
 // one-time educational note alongside a manual-attach fallback. Either may
-// be empty.
-func joinHints(a, b string) string {
+// be empty. Exported because
+// a front end that does part of a core operation itself (see main.go's
+// terminalBackend) has to join its own hint to the core's, and two spellings
+// of "how moomux punctuates hints" is exactly the drift worth avoiding.
+func JoinHints(a, b string) string {
 	switch {
 	case a == "":
 		return b
@@ -1569,54 +1560,15 @@ func (a *App) EnsureTmux(id string) (string, error) {
 	return hooksHint, nil
 }
 
+// OpenSession is EnsureTmux and nothing more: the core does not open
+// terminals. Which emulator to launch, and in which tab, are facts about
+// the machine a human is sitting at, so they belong to whichever front end
+// has one — see terminalBackend in main.go, which is what every front end
+// actually calls. This stays because tui.Backend (the core's whole API, and
+// what the socket serves) has an "open" verb, and App has to satisfy it to
+// be wrapped.
 func (a *App) OpenSession(id string) (string, error) {
-	hooksHint, err := a.EnsureTmux(id)
-	if err != nil {
-		return "", err
-	}
-	// Re-read: EnsureTmux may have stamped LastOpened and migrated
-	// TmuxSession/AgentPort, and Store.Put writes the whole struct — so the
-	// TermTabID write below has to build on its version, not a stale one.
-	s, ok := a.Store.Get(id)
-	if !ok {
-		return "", fmt.Errorf("unknown session %q", id)
-	}
-	var tabID, hint string
-	if browser.Remote() {
-		// Over SSH, the desktop terminal (iTerm/kitty/etc.) lives on a
-		// different machine than this process — jumping to or opening a
-		// tab there would target the wrong host. The tmux session is
-		// already up; just point the user at it.
-		hint = fmt.Sprintf("tmux attach -t %s", s.TmuxSession)
-	} else {
-		tabID, hint, err = a.openTerminal(s.TermTabID, s.TmuxSession, s.Name)
-		if err != nil {
-			// The tmux session is up regardless; give the user a way in.
-			slog.Error("Terminal.OpenSession failed", "id", id, "tmux_session", s.TmuxSession, "name", s.Name, "err", err)
-			hint = fmt.Sprintf("couldn't open a terminal (%v) — attach yourself: tmux attach -t %s", err, s.TmuxSession)
-		}
-	}
-	if hooksHint != "" {
-		hint = joinHints(hooksHint, hint)
-	}
-	s.TermTabID = tabID
-	if err := a.Store.Put(s); err != nil {
-		slog.Error("store term tab failed", "id", id, "err", err)
-	}
-	slog.Info("session opened", "id", id)
-	return hint, nil
-}
-
-// openTerminal opens tmuxSession in a terminal, reusing tabID if the
-// terminal supports jumping back to a specific tab (currently just
-// iTerm2). Returns the tab id to remember for next time — empty for
-// terminals without tab addressing.
-func (a *App) openTerminal(tabID, tmuxSession, name string) (newTabID, hint string, err error) {
-	if reopener, ok := a.Terminal.(terminal.TabReopener); ok {
-		return reopener.OpenTab(tabID, tmuxSession, name)
-	}
-	hint, err = a.Terminal.OpenSession(tmuxSession, name)
-	return "", hint, err
+	return a.EnsureTmux(id)
 }
 
 // SuggestedProject is the add-project form's prefill: the working directory
@@ -1649,47 +1601,25 @@ func (a *App) TmuxAliveAll() map[string]bool {
 }
 
 // KillTmux kills the tmux session but keeps the moomux session entry (and
-// its worktree) intact, so it can be re-opened later. Also closes the
-// session's terminal tab, if the terminal supports addressing one (see
-// terminal.TabCloser) and this session has one recorded — otherwise a dead
-// tmux session leaves a stale, unresponsive tab behind. TermTabID is
-// cleared on success so a later reopen creates a fresh tab instead of
-// chasing a handle that's gone.
+// its worktree) intact, so it can be re-opened later.
 //
-// The tmux session is killed before the terminal tab is closed. `moomux
-// park` runs this method in a detached helper so it survives killing its
-// own pane; closing the tab first can otherwise terminate the command and
-// all of its descendants before the tmux kill is issued.
+// The session's terminal tab is not closed here — that's the front end's,
+// since the tab is on the front end's machine (see main.go's
+// terminalBackend, which `moomux park` also goes through).
 func (a *App) KillTmux(id string) error {
 	s, ok := a.Store.Get(id)
 	if !ok {
 		return fmt.Errorf("unknown session %q", id)
 	}
-	slog.Debug("KillTmux: starting", "id", id, "pid", os.Getpid(), "tmux_session", s.TmuxSession, "term_tab_id", s.TermTabID)
-	// tmuxErr is recorded rather than returned immediately: the terminal-tab
-	// cleanup below must still run (and TermTabID still get cleared) even
-	// when tmux itself errored, or a session that fails to kill leaves a
-	// stale tab open forever with no way to close it short of deleting the
-	// session record.
-	var tmuxErr error
+	slog.Debug("KillTmux: starting", "id", id, "pid", os.Getpid(), "tmux_session", s.TmuxSession)
 	has, err := a.Tmux.HasSession(s.TmuxSession)
 	if err != nil {
-		tmuxErr = err
-	} else if has {
-		tmuxErr = a.Tmux.KillSession(s.TmuxSession)
+		return err
 	}
-	if closer, ok := a.Terminal.(terminal.TabCloser); ok && s.TermTabID != "" {
-		err := closer.CloseTab(s.TermTabID)
-		slog.Debug("KillTmux: CloseTab returned", "id", id, "tab_id", s.TermTabID, "err", err)
-		if err != nil {
-			slog.Warn("close terminal tab failed", "id", id, "tab_id", s.TermTabID, "err", err)
-		}
-		s.TermTabID = ""
-		if err := a.Store.Put(s); err != nil {
-			slog.Warn("clear terminal tab id failed", "id", id, "err", err)
-		}
+	if !has {
+		return nil
 	}
-	return tmuxErr
+	return a.Tmux.KillSession(s.TmuxSession)
 }
 
 // validateProjectLocked requires a.cfgMu held for writing: its duplicate-name
@@ -2047,7 +1977,8 @@ func (a *App) PRStatus(id string) (prstatus.Info, bool) {
 	return pr.Info, true
 }
 
-// DeleteSession removes the session's worktree, branch, and store entry. The
+// DeleteSession removes the session's worktree, branch, and store entry,
+// and closes the terminal tab it was open in (see closeTermTab). The
 // returned hint, when non-empty, is a user-facing message worth surfacing
 // (currently: output printed by worktree-delete userscripts).
 func (a *App) DeleteSession(id string) (string, error) {
@@ -2079,7 +2010,7 @@ func (a *App) DeleteSession(id string) (string, error) {
 					Branch:   s.Branch,
 				}) {
 					slog.Warn("userscript", "warning", w)
-					hint = joinHints(hint, w)
+					hint = JoinHints(hint, w)
 				}
 			}
 			if err := a.Git.RemoveWorktree(proj.Repo, s.WorktreePath); err != nil {
