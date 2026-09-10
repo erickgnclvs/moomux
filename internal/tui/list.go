@@ -34,9 +34,10 @@ type listLine struct {
 // keyboard's own list didn't, so acting on such a row hit whichever session
 // happened to share its index.
 //
-// Folder headers stay even when the current view has none of their members
-// (an empty folder, or one holding only archived sessions) — the header is
-// the only handle the folder has.
+// A folder with no members in the current view (empty, or holding only
+// sessions the archived filter excludes) is dropped header and all — an
+// empty header is a row the user can't do anything with. The folder itself
+// still exists and is reachable in the Folders overlay (G).
 func (m *Model) visibleList(proj string) ([]listLine, []session.Session) {
 	all := m.allSessions()
 	byID := make(map[string]session.Session, len(all))
@@ -47,6 +48,9 @@ func (m *Model) visibleList(proj string) ([]listLine, []session.Session) {
 	var sessions []session.Session
 	for _, r := range sessionview.BuildRows(all, m.cfg.Projects[proj].Folders, proj) {
 		if r.IsFolder() {
+			if m.memberCount(r) == 0 {
+				continue
+			}
 			lines = append(lines, listLine{row: r})
 			continue
 		}
