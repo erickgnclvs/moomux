@@ -110,12 +110,58 @@ type SessionAgentUpdatedMsg struct {
 }
 type TmuxKilledMsg struct{ ID string }
 
-// SessionMovedMsg is the result of an async reorder (MoveSession) call.
-// Update() re-syncs m.sessions and re-anchors the cursor on ID once this
-// arrives; Err is set if the persisted reorder failed.
-type SessionMovedMsg struct {
-	ID  string
+// SessionsReorderedMsg is the result of an async ReorderSessions call fired
+// by dispatchReorder. Err is set if the persist failed, in which case
+// Update() reverts the optimistic local reorder by re-syncing m.sessions
+// from the (unchanged) backend.
+type SessionsReorderedMsg struct {
 	Err error
+}
+
+// Every folder mutation lives in config (Project.Folders), so each of these
+// carries a fresh Cfg snapshot for Update() to apply via *m.cfg = *Cfg, the
+// same as ProjectAddedMsg and friends — m.cfg is the model's own clone, so
+// without it the write lands on disk and the list keeps rendering the old
+// folder state. Nil means the mutation failed; see cfgSnapshotOnSuccess.
+
+// SessionFolderSetMsg is the result of an async SetSessionFolder call, which
+// also creates the folder on its first use — hence the Cfg snapshot.
+type SessionFolderSetMsg struct {
+	Session session.Session
+	Cfg     *config.Config
+}
+
+// FolderCreatedMsg is the result of an async CreateFolder call.
+type FolderCreatedMsg struct {
+	Project, Name string
+	Err           error
+	Cfg           *config.Config
+}
+
+// FolderRenamedMsg is the result of an async RenameFolder call.
+type FolderRenamedMsg struct {
+	OldName, NewName string
+	Err              error
+	Cfg              *config.Config
+}
+
+// FolderCollapsedSetMsg is the result of an async SetFolderCollapsed call.
+// FocusID, when set, is the session the cursor should land on afterwards —
+// how a jump into a collapsed folder (search) opens it and selects its
+// target in one step.
+type FolderCollapsedSetMsg struct {
+	Project, Name string
+	Collapsed     bool
+	FocusID       string
+	Err           error
+	Cfg           *config.Config
+}
+
+// FolderDeletedMsg is the result of an async DeleteFolder call.
+type FolderDeletedMsg struct {
+	Project, Name string
+	Err           error
+	Cfg           *config.Config
 }
 
 // ProjectAddedMsg is the result of an async project-add flow. Kind

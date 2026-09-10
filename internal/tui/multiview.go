@@ -111,22 +111,18 @@ func (m *Model) ensureMultiFocusVisible() {
 	}
 }
 
-// multiViewSessionsFor returns proj's sessions matching the current
-// showArchived filter — mirrors refreshSessions' filter, but per-project
-// rather than folded into the single m.sessions list. Neither sorts: both
-// preserve the core's display order (see sessionview.Snapshot.Sessions).
-// Agreeing on that order matters: delegateToList navigates the focused
-// panel's selection through m.sessions (see enterSingleProjectContext), so
-// if this returned a different order from what the panel renders, Up/Down
-// would visibly skip over rows instead of moving to the adjacent one.
+// multiViewSessionsFor returns the sessions proj's panel actually lists, in
+// the order it lists them — the same visibleList the single-project view is
+// built from, so a panel row and the cursor that acts on it can't be two
+// different sessions.
+//
+// They used to be computed separately, and the difference was a collapsed
+// folder: this listed its members, refreshSessions dropped them, and every
+// key routed through delegateToList (delete and park included) landed on
+// whichever session had inherited that index.
 func (m *Model) multiViewSessionsFor(proj string) []session.Session {
-	var out []session.Session
-	for _, s := range m.allSessions() {
-		if s.Project == proj && s.Archived == m.showArchived {
-			out = append(out, s)
-		}
-	}
-	return out
+	_, sessions := m.visibleList(proj)
+	return sessions
 }
 
 // multiCursorFor returns proj's clamped selection within its own panel.
@@ -262,7 +258,7 @@ func (m *Model) delegateToList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// own nested add/edit/delete flows, and that must NOT be clobbered into
 	// bouncing out to multi-view instead of back to the picker.
 	switch m.mode {
-	case ModeNewForm, ModeConfirmDelete, ModeTagForm, ModeEditSession, ModeHelp, ModeProjectPicker, ModeThemePicker, ModeSearch, ModeSettings:
+	case ModeNewForm, ModeConfirmDelete, ModeTagForm, ModeEditSession, ModeHelp, ModeProjectPicker, ModeThemePicker, ModeSearch, ModeSettings, ModeFolderForm, ModeFolders:
 		if m.sessionDialogReturn == ModeList {
 			m.sessionDialogReturn = ModeMultiView
 		}
@@ -280,13 +276,11 @@ func (m *Model) delegateToList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // multi-view panel had focused. Returns false if proj isn't a real project
 // (nothing to enter).
 //
-// The focused session is carried across by ID, not index:
-// multiViewSessionsFor (what panels render from) and refreshSessions'
-// m.sessions (what updateList/renderListView act on) can order the same
-// project's sessions differently — the latter sorts live-tmux sessions to
-// the top, the former doesn't — so translating m.multiCursors[proj] into
-// m.cursor by position instead of ID could select the wrong session
-// entirely.
+// The focused session is carried across by ID, not index. Both sides read
+// the same visibleList now, so the two agree by construction — but by ID
+// they also survive the list changing under them between a panel render and
+// the keypress that acts on it (a session created, archived, or filed into
+// a collapsed folder), which an index would not.
 func (m *Model) enterSingleProjectContext(proj string) bool {
 	projIdx := indexOfProject(m.projects, proj)
 	if projIdx < 0 {
@@ -371,6 +365,7 @@ func (m *Model) renderMultiView() string {
 
 	m.linkHits = nil
 	m.rowHits = nil
+	m.folderHits = nil
 	m.panelHits = nil
 
 	projs := m.multiViewProjects()
@@ -399,9 +394,9 @@ func (m *Model) renderMultiView() string {
 		for i, proj := range projs {
 			w := widths[i]
 			focused := offset+i == m.multiFocus
-			sessions := m.multiViewSessionsFor(proj)
+			lines, sessions := m.visibleList(proj)
 			cursor := m.multiCursorFor(proj)
-			content, hits, rows := m.renderMultiPanel(proj, sessions, cursor, w-2, bodyHeight, focused)
+			content, hits, rows, headers := m.renderMultiPanel(proj, lines, sessions, cursor, w-2, bodyHeight, focused)
 			border := panelBorder
 			if focused {
 				border = border.BorderForeground(colAccent)
@@ -424,6 +419,15 @@ func (m *Model) renderMultiView() string {
 					y:         panelY + r.line,
 					x0:        originX,
 					x1:        originX + w - 2,
+				})
+			}
+			for _, h := range headers {
+				m.folderHits = append(m.folderHits, resolvedFolderHit{
+					project: proj,
+					folder:  h.folder,
+					y:       panelY + h.line,
+					x0:      originX,
+					x1:      originX + w - 2,
 				})
 			}
 			// The panel's own full rectangle, border included (+2 in each
@@ -492,10 +496,10 @@ const minMultiDetailHeight = 5
 // project's own selection is visible without needing to tab to it first.
 // The two are divided by a thin separator line rather than a "DETAIL"
 // title, mirroring the narrow single-project layout's own treatment.
-func (m *Model) renderMultiPanel(proj string, sessions []session.Session, cursor int, width, height int, focused bool) (string, []linkHit, []rowHit) {
+func (m *Model) renderMultiPanel(proj string, lines []listLine, sessions []session.Session, cursor int, width, height int, focused bool) (string, []linkHit, []rowHit, []folderHit) {
 	avail := height - 1 // reserve one row for the separator
 	if avail < minStackedPaneHeight+minMultiDetailHeight {
-		return m.renderSessionPanel(proj, sessions, cursor, width, height, focused)
+		return m.renderSessionPanel(proj, lines, sessions, cursor, width, height, focused)
 	}
 
 	var sel session.Session
@@ -521,7 +525,7 @@ func (m *Model) renderMultiPanel(proj string, sessions []session.Session, cursor
 		detailH = minMultiDetailHeight
 	}
 	listH := avail - detailH
-	list, hits, rows := m.renderSessionPanel(proj, sessions, cursor, width, listH, focused)
+	list, hits, rows, headers := m.renderSessionPanel(proj, lines, sessions, cursor, width, listH, focused)
 
 	detail, detailHits := m.renderDetailFor(sel, hasSel, width, detailH, false)
 	// detail sits below the list and its one-row separator, so its hits
@@ -533,7 +537,7 @@ func (m *Model) renderMultiPanel(proj string, sessions []session.Session, cursor
 		hits = append(hits, h)
 	}
 	separator := lipgloss.NewStyle().Foreground(colBorder).Render(strings.Repeat("─", width))
-	return lipgloss.JoinVertical(lipgloss.Left, list, separator, detail), hits, rows
+	return lipgloss.JoinVertical(lipgloss.Left, list, separator, detail), hits, rows, headers
 }
 
 // renderSessionPanel renders one project's session list for ModeMultiView.
@@ -542,7 +546,7 @@ func (m *Model) renderMultiPanel(proj string, sessions []session.Session, cursor
 // by explicit sessions/cursor arguments instead of the model's single
 // active-project state, since multi-view shows several projects' lists at
 // once.
-func (m *Model) renderSessionPanel(proj string, sessions []session.Session, cursor int, width, height int, focused bool) (string, []linkHit, []rowHit) {
+func (m *Model) renderSessionPanel(proj string, lines []listLine, sessions []session.Session, cursor int, width, height int, focused bool) (string, []linkHit, []rowHit, []folderHit) {
 	var b strings.Builder
 	title := m.projectEmoji(proj) + " " + proj
 	compact := m.compactScreen()
@@ -556,17 +560,20 @@ func (m *Model) renderSessionPanel(proj string, sessions []session.Session, curs
 		b.WriteString("\n\n")
 		titleRows = 2
 	}
-	if len(sessions) == 0 {
+	if len(lines) == 0 {
 		b.WriteString(muteStyle.Render("  no sessions"))
-		return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(b.String()), nil, nil
+		return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(b.String()), nil, nil, nil
 	}
 
 	visible := height - titleRows
 	if visible < 1 {
 		visible = 1
 	}
-	start, end := scrollWindow(cursor, len(sessions), visible)
-	hasAbove, hasBelow := start > 0, end < len(sessions)
+	// Scroll in line coordinates, not session coordinates: folder headers
+	// take rows too, and a window sized in sessions would run off the
+	// bottom of the panel by however many headers it contained.
+	start, end := scrollWindow(cursorDisplayLine(lines, cursor), len(lines), visible)
+	hasAbove, hasBelow := start > 0, end < len(lines)
 	rowOffset := 0
 	if hasAbove {
 		b.WriteString(scrollHintLine("⌃", width))
@@ -575,20 +582,35 @@ func (m *Model) renderSessionPanel(proj string, sessions []session.Session, curs
 	}
 	var hits []linkHit
 	var rows []rowHit
-	for i := start; i < end; i++ {
-		s := sessions[i]
-		selected := focused && i == cursor
-		line := titleRows + rowOffset + (i - start)
+	var headers []folderHit
+	for li := start; li < end; li++ {
+		dl := lines[li]
+		line := titleRows + rowOffset + (li - start)
+		if dl.row.IsFolder() {
+			headers = append(headers, folderHit{folder: dl.row.Folder, line: line})
+			b.WriteString(m.renderFolderHeaderLine(dl.row.Folder, dl.row.Collapsed, m.memberCount(dl.row), width))
+			b.WriteString("\n")
+			continue
+		}
+		s := sessions[dl.sessionIdx]
+		selected := focused && dl.sessionIdx == cursor
+		indent := ""
+		rowWidth := width - 2
+		if dl.row.Folder != "" {
+			indent = "  "
+			rowWidth -= 2
+		}
 		rows = append(rows, rowHit{sessionID: s.ID, line: line})
-		row, iconHits := renderRow(s, m.viewFor(s.ID), width-2, selected, "")
+		row, iconHits := renderRow(s, m.viewFor(s.ID), rowWidth, selected, "")
+		colOffset := 1 + len(indent) // +1 for the row style's own left padding
 		for _, h := range iconHits {
 			h.sessionID = s.ID
 			h.line = line
-			// +1 column for the row style's own left padding.
-			h.col0++
-			h.col1++
+			h.col0 += colOffset
+			h.col1 += colOffset
 			hits = append(hits, h)
 		}
+		row = indent + row
 		if selected {
 			row = listRowSelected.Render(row)
 		} else {
@@ -601,5 +623,5 @@ func (m *Model) renderSessionPanel(proj string, sessions []session.Session, curs
 		b.WriteString(scrollHintLine("⌄", width))
 		b.WriteString("\n")
 	}
-	return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(b.String()), hits, rows
+	return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(b.String()), hits, rows, headers
 }

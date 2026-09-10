@@ -6,12 +6,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
 type fakeCore struct {
+	folders map[string]map[string]config.FolderMeta
+
 	mu       sync.Mutex
 	sessions []session.Session
 	alive    map[string]bool
@@ -24,6 +27,12 @@ type fakeCore struct {
 	titles     map[string]watcher.State
 
 	gitDelay time.Duration
+}
+
+func (f *fakeCore) ProjectFolders() map[string]map[string]config.FolderMeta {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.folders
 }
 
 func (f *fakeCore) Sessions() []session.Session {

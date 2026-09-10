@@ -52,6 +52,9 @@ func (m *Model) helpGroups() []helpGroup {
 				{"t", "tag ticket / PR"},
 				{"e", "edit session"},
 				{"D", "diff tool"},
+				{"g", "file into a folder"},
+				{"z", "collapse its folder"},
+				{"G", "manage folders"},
 			},
 		},
 		{

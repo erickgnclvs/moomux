@@ -536,6 +536,48 @@ func (a *App) Projects() []string {
 	return a.Cfg.OrderedProjectNames()
 }
 
+// SetProjectCollapsed persists whether a project's own group is collapsed
+// in a client that renders projects as collapsible groups. Nothing in the
+// TUI reads it (see config.Project.Collapsed); it exists so that state
+// lives with every other piece of display state instead of in one front
+// end's private preferences.
+func (a *App) SetProjectCollapsed(project string, collapsed bool) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
+		return fmt.Errorf("reload config: %w", err)
+	}
+	p, ok := a.Cfg.Projects[project]
+	if !ok {
+		return fmt.Errorf("unknown project %q", project)
+	}
+	prev := p.Collapsed
+	p.Collapsed = collapsed
+	a.Cfg.Projects[project] = p
+	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
+		p.Collapsed = prev
+		a.Cfg.Projects[project] = p
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
+}
+
+// ProjectFolders returns every project's folder display state, copied out
+// from under cfgMu so a caller can hold it while the config changes. Feeds
+// sessionview.BuildRows, which is where a folder's layout is decided for
+// every front end at once.
+func (a *App) ProjectFolders() map[string]map[string]config.FolderMeta {
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+	out := make(map[string]map[string]config.FolderMeta, len(a.Cfg.Projects))
+	for name, p := range a.Cfg.Projects {
+		if len(p.Folders) > 0 {
+			out[name] = maps.Clone(p.Folders)
+		}
+	}
+	return out
+}
+
 // MoveProject shifts the project with the given name by delta positions (-1
 // left, +1 right) in the manual project order and persists it. It's a no-op
 // if the move would go out of bounds.
@@ -1220,31 +1262,35 @@ func (a *App) pressEnterUntilSubmitted(tmuxSession, prompt string) error {
 	}
 }
 
-// MoveSession shifts the session with the given id by delta positions (-1
-// up, +1 down) within its project's session list, and persists the new
-// order. It's a no-op if the move would go out of bounds.
-func (a *App) MoveSession(id string, delta int) error {
-	s, ok := a.Store.Get(id)
-	if !ok {
-		return fmt.Errorf("unknown session %q", id)
-	}
-	peers := a.Store.ByProject(s.Project)
-	idx := -1
-	for i, p := range peers {
-		if p.ID == id {
-			idx = i
-			break
+// ReorderSessions persists ids, verbatim, as the new manual Order for
+// exactly those sessions — sessions outside ids are untouched. The caller
+// (the TUI) is responsible for computing ids: it already has the exact
+// visual order on screen, including any swap the user's keypress just made,
+// so this never re-derives sibling order itself.
+//
+// An earlier version took (id, siblingIDs, delta) and swapped within
+// siblingIDs here. Two problems with that: siblingIDs was re-derived via
+// Store.ByProject in the very first version, which sorts differently (and
+// doesn't filter archived) than what the TUI actually displays
+// (tmux-alive-first, archived-filtered) — "the row above/below" on screen
+// often wasn't the pair that got swapped. Fixing the caller to pass its own
+// displayed order closed that gap, but the delta-based API still meant two
+// rapid keypresses raced two independent goroutines, each computing its own
+// final order from a snapshot taken at dispatch time — if the *older*
+// goroutine's write landed after the newer one's (tea.Cmd completion order
+// isn't dispatch order), it would silently revert the newer move. Taking the
+// caller's already-fully-resolved ids removes the need for this method to
+// compute anything from a stale snapshot; internal/tui/update.go's
+// dispatchReorder closes the remaining race by never letting two of these
+// calls be in flight at once.
+func (a *App) ReorderSessions(ids []string) error {
+	sessions := make([]session.Session, 0, len(ids))
+	for _, id := range ids {
+		if s, ok := a.Store.Get(id); ok {
+			sessions = append(sessions, s)
 		}
 	}
-	if idx < 0 {
-		return fmt.Errorf("unknown session %q", id)
-	}
-	j := idx + delta
-	if j < 0 || j >= len(peers) {
-		return nil
-	}
-	peers[idx], peers[j] = peers[j], peers[idx]
-	return a.Store.Reorder(peers)
+	return a.Store.Reorder(sessions)
 }
 
 // statusGlyphs are the status prefixes titleGlyph applies, checked in order
@@ -1330,6 +1376,174 @@ func (a *App) SetSessionTags(id, ticket, pr string) (session.Session, error) {
 		return s, fmt.Errorf("store: %w", err)
 	}
 	return s, nil
+}
+
+// withFolders runs mutate against a copy of project's folder map and
+// persists the result, following the same cfgMu -> reload -> mutate -> save
+// idiom as SetTheme and friends: the lock is what keeps a mutation from
+// racing the ConfigSnapshot reads every front end does, and the reload makes
+// the write land on top of whatever another process saved meanwhile. Mutating
+// a copy is what makes the rollback a single reassignment — the map inside
+// a.Cfg.Projects[project] is shared, so undoing an in-place key write would
+// otherwise mean replaying each individual change in reverse.
+func (a *App) withFolders(project string, mutate func(map[string]config.FolderMeta) error) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
+		return fmt.Errorf("reload config: %w", err)
+	}
+	p, ok := a.Cfg.Projects[project]
+	if !ok {
+		return fmt.Errorf("unknown project %q", project)
+	}
+	prev := p.Folders
+	folders := maps.Clone(p.Folders)
+	if folders == nil {
+		folders = map[string]config.FolderMeta{}
+	}
+	if err := mutate(folders); err != nil {
+		return err
+	}
+	p.Folders = folders
+	a.Cfg.Projects[project] = p
+	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
+		p.Folders = prev
+		a.Cfg.Projects[project] = p
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
+}
+
+// refileSessions points every session in project currently filed under from
+// at to ("" un-parents them back to top-level). Used by RenameFolder and
+// DeleteFolder to bring membership — which lives on each Session, not in the
+// folder map — in step with the config write they just made.
+//
+// ponytail: the config write and these store writes are two separate saves,
+// not one transaction — a crash between them leaves members pointing at a
+// name no longer in Project.Folders. That degrades gracefully (a missing
+// FolderMeta reads as a zero-value one everywhere), so it is left as is;
+// revisit with a combined write if orphaned folders show up in practice.
+func (a *App) refileSessions(project, from, to string) error {
+	for _, s := range a.Store.All() {
+		if s.Project == project && s.Folder == from {
+			s.Folder = to
+			if err := a.Store.Put(s); err != nil {
+				return fmt.Errorf("store: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+// CreateFolder adds an empty, expanded folder to project so it exists (and
+// can be filed into) before any session has been assigned to it — the
+// Folders overlay's "n" (new) action. It's an error to create one that
+// already exists; use SetSessionFolder/RenameFolder to file sessions or
+// rename instead.
+//
+// A folder with no members renders last (see sessionview.BuildRows), so
+// there's nothing to position here: it moves into place on its own as soon
+// as the first session is filed into it.
+func (a *App) CreateFolder(project, name string) error {
+	name, err := config.CleanFolderName(name)
+	if err != nil {
+		return err
+	}
+	return a.withFolders(project, func(folders map[string]config.FolderMeta) error {
+		if _, exists := folders[name]; exists {
+			return fmt.Errorf("folder %q already exists", name)
+		}
+		folders[name] = config.FolderMeta{}
+		return nil
+	})
+}
+
+// SetSessionFolder files id under the named folder within its own project
+// ("" moves it back to top-level), creating the folder (expanded by default)
+// on its first use if it doesn't already exist in Project.Folders.
+func (a *App) SetSessionFolder(id, folder string) (session.Session, error) {
+	s, ok := a.Store.Get(id)
+	if !ok {
+		return session.Session{}, fmt.Errorf("unknown session %q", id)
+	}
+	if folder != "" {
+		clean, err := config.CleanFolderName(folder)
+		if err != nil {
+			return session.Session{}, err
+		}
+		folder = clean
+		err = a.withFolders(s.Project, func(folders map[string]config.FolderMeta) error {
+			if _, exists := folders[folder]; !exists {
+				folders[folder] = config.FolderMeta{}
+			}
+			return nil
+		})
+		if err != nil {
+			return session.Session{}, err
+		}
+	}
+	s.Folder = folder
+	if err := a.Store.Put(s); err != nil {
+		return s, fmt.Errorf("store: %w", err)
+	}
+	return s, nil
+}
+
+// RenameFolder renames a project's folder, updating every member session's
+// Folder field to match in the same pass.
+func (a *App) RenameFolder(project, oldName, newName string) error {
+	newName, err := config.CleanFolderName(newName)
+	if err != nil {
+		return err
+	}
+	if oldName == newName {
+		return nil
+	}
+	err = a.withFolders(project, func(folders map[string]config.FolderMeta) error {
+		meta, ok := folders[oldName]
+		if !ok {
+			return fmt.Errorf("unknown folder %q", oldName)
+		}
+		if _, exists := folders[newName]; exists {
+			return fmt.Errorf("folder %q already exists", newName)
+		}
+		delete(folders, oldName)
+		folders[newName] = meta
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return a.refileSessions(project, oldName, newName)
+}
+
+// SetFolderCollapsed persists a folder's collapsed/expanded display state.
+func (a *App) SetFolderCollapsed(project, name string, collapsed bool) error {
+	return a.withFolders(project, func(folders map[string]config.FolderMeta) error {
+		meta, ok := folders[name]
+		if !ok {
+			// Writing a zero-value meta here would conjure the folder into
+			// existence at Order 0, i.e. pinned to the top of the list.
+			return fmt.Errorf("unknown folder %q", name)
+		}
+		meta.Collapsed = collapsed
+		folders[name] = meta
+		return nil
+	})
+}
+
+// DeleteFolder removes a folder definition and un-parents its member
+// sessions back to top-level (Session.Folder = "").
+func (a *App) DeleteFolder(project, name string) error {
+	err := a.withFolders(project, func(folders map[string]config.FolderMeta) error {
+		delete(folders, name)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return a.refileSessions(project, name, "")
 }
 
 // SessionForTmuxName finds the session running as tmux session tmuxName.

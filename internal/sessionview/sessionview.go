@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/prompt"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
@@ -75,8 +76,14 @@ type View struct {
 type Snapshot struct {
 	Sessions []session.Session `json:"sessions"`
 	Views    map[string]View   `json:"views"`
-	PollTime time.Time         `json:"poll_time"`
-	Err      string            `json:"err,omitempty"`
+	// Rows is Sessions laid out as display rows — folder headers spliced
+	// in, members grouped under them — keyed by project, since every client
+	// renders one project at a time (a panel, or the whole list). Same
+	// reasoning as Sessions' order: grouping is derived once here instead of
+	// once per front end. See BuildRows.
+	Rows     map[string][]Row `json:"rows,omitempty"`
+	PollTime time.Time        `json:"poll_time"`
+	Err      string           `json:"err,omitempty"`
 }
 
 // Source is a stream of Snapshots. Implemented by Watcher (the real thing,
@@ -95,6 +102,9 @@ type Source interface {
 // satisfies it.
 type Core interface {
 	Sessions() []session.Session
+	// ProjectFolders is each project's folder display state, by project
+	// name — the other half of what BuildRows needs.
+	ProjectFolders() map[string]map[string]config.FolderMeta
 	TmuxAliveAll() map[string]bool
 	WorktreeStatus(id string) (dirty, unpushed, ok bool)
 	PRStatus(id string) (prstatus.Info, bool)
@@ -408,7 +418,14 @@ func (w *Watcher) build() (Snapshot, map[string]watcher.State) {
 	}
 
 	w.prune(sessions, live)
-	return Snapshot{Sessions: ordered, Views: views, PollTime: time.Now(), Err: w.lastErr}, changedTitles
+
+	folders := w.Core.ProjectFolders()
+	rows := make(map[string][]Row, len(folders))
+	for project := range projectsOf(ordered, folders) {
+		rows[project] = BuildRows(ordered, folders[project], project)
+	}
+
+	return Snapshot{Sessions: ordered, Views: views, Rows: rows, PollTime: time.Now(), Err: w.lastErr}, changedTitles
 }
 
 // prune drops per-session bookkeeping for sessions that no longer exist.
@@ -640,4 +657,18 @@ func Once(core Core, home string, states map[string]watcher.State) Snapshot {
 
 	snap, _ := w.build()
 	return snap
+}
+
+// projectsOf is every project worth building rows for: one with a session,
+// plus one with only folders (a project whose sessions were all deleted
+// still has its folders, and a client showing it should still see them).
+func projectsOf(sessions []session.Session, folders map[string]map[string]config.FolderMeta) map[string]struct{} {
+	out := make(map[string]struct{}, len(folders))
+	for _, s := range sessions {
+		out[s.Project] = struct{}{}
+	}
+	for p := range folders {
+		out[p] = struct{}{}
+	}
+	return out
 }

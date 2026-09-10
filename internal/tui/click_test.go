@@ -35,11 +35,26 @@ type fakeBackend struct {
 	sessionsCalls  atomic.Int64
 	tmuxAliveCalls atomic.Int64
 
-	moveSessionCalls []moveSessionCall
-	moveSessionErr   error
+	reorderSessionsCalls []reorderSessionsCall
+	reorderSessionsErr   error
 
 	moveProjectCalls []moveProjectCall
 	moveProjectErr   error
+
+	createFolderCalls []createFolderCall
+	createFolderErr   error
+
+	setSessionFolderCalls []setSessionFolderCall
+	setSessionFolderErr   error
+
+	renameFolderCalls []renameFolderCall
+	renameFolderErr   error
+
+	setFolderCollapsedCalls []setFolderCollapsedCall
+	setFolderCollapsedErr   error
+
+	deleteFolderCalls []deleteFolderCall
+	deleteFolderErr   error
 
 	createCalls []session.CreateRequest
 	createErr   error
@@ -150,14 +165,34 @@ type projectCall struct {
 	p    config.Project
 }
 
-type moveSessionCall struct {
-	id    string
-	delta int
+type reorderSessionsCall struct {
+	ids []string
 }
 
 type moveProjectCall struct {
 	name  string
 	delta int
+}
+
+type createFolderCall struct {
+	project, name string
+}
+
+type setSessionFolderCall struct {
+	id, folder string
+}
+
+type renameFolderCall struct {
+	project, oldName, newName string
+}
+
+type setFolderCollapsedCall struct {
+	project, name string
+	collapsed     bool
+}
+
+type deleteFolderCall struct {
+	project, name string
 }
 
 func (f *fakeBackend) SuggestedProject() (string, string) { return "", "" }
@@ -321,9 +356,9 @@ func (f *fakeBackend) SetSessionArchived(id string, archived bool) (session.Sess
 	}
 	return session.Session{ID: id, Archived: archived}, nil
 }
-func (f *fakeBackend) MoveSession(id string, delta int) error {
-	f.moveSessionCalls = append(f.moveSessionCalls, moveSessionCall{id: id, delta: delta})
-	return f.moveSessionErr
+func (f *fakeBackend) ReorderSessions(ids []string) error {
+	f.reorderSessionsCalls = append(f.reorderSessionsCalls, reorderSessionsCall{ids: ids})
+	return f.reorderSessionsErr
 }
 func (f *fakeBackend) MoveProject(name string, delta int) error {
 	f.moveProjectCalls = append(f.moveProjectCalls, moveProjectCall{name: name, delta: delta})
@@ -351,6 +386,111 @@ func (f *fakeBackend) TmuxAliveAll() map[string]bool {
 func (f *fakeBackend) Sessions() []session.Session {
 	f.sessionsCalls.Add(1)
 	return f.sessions
+}
+
+// The folder fakes mutate f.cfg the way AddProject does, so ConfigSnapshot
+// answers with the mutation applied — the real backend's folder state lives
+// in config, and a fake that only records the call can't catch a Model that
+// forgets to apply the returned snapshot.
+func (f *fakeBackend) CreateFolder(project, name string) error {
+	f.createFolderCalls = append(f.createFolderCalls, createFolderCall{project: project, name: name})
+	if f.createFolderErr != nil {
+		return f.createFolderErr
+	}
+	f.setFolderMeta(project, name, config.FolderMeta{})
+	return nil
+}
+
+// setFolderMeta writes one folder's metadata into f.cfg, allocating the
+// project's folder map on first use.
+func (f *fakeBackend) setFolderMeta(project, name string, meta config.FolderMeta) {
+	p := f.cfg.Projects[project]
+	if p.Folders == nil {
+		p.Folders = map[string]config.FolderMeta{}
+	}
+	p.Folders[name] = meta
+	f.cfg.Projects[project] = p
+}
+func (f *fakeBackend) SetSessionFolder(id, folder string) (session.Session, error) {
+	f.setSessionFolderCalls = append(f.setSessionFolderCalls, setSessionFolderCall{id: id, folder: folder})
+	if f.setSessionFolderErr == nil && folder != "" {
+		for _, s := range f.sessions {
+			if s.ID == id {
+				if _, exists := f.cfg.Projects[s.Project].Folders[folder]; !exists {
+					f.setFolderMeta(s.Project, folder, config.FolderMeta{})
+				}
+				break
+			}
+		}
+	}
+	for i := range f.sessions {
+		if f.sessions[i].ID == id {
+			f.sessions[i].Folder = folder
+			return f.sessions[i], f.setSessionFolderErr
+		}
+	}
+	return session.Session{ID: id, Folder: folder}, f.setSessionFolderErr
+}
+func (f *fakeBackend) RenameFolder(project, oldName, newName string) error {
+	f.renameFolderCalls = append(f.renameFolderCalls, renameFolderCall{project: project, oldName: oldName, newName: newName})
+	if f.renameFolderErr != nil {
+		return f.renameFolderErr
+	}
+	if meta, ok := f.cfg.Projects[project].Folders[oldName]; ok {
+		delete(f.cfg.Projects[project].Folders, oldName)
+		f.setFolderMeta(project, newName, meta)
+	}
+	for i := range f.sessions {
+		if f.sessions[i].Project == project && f.sessions[i].Folder == oldName {
+			f.sessions[i].Folder = newName
+		}
+	}
+	return nil
+}
+func (f *fakeBackend) SetFolderCollapsed(project, name string, collapsed bool) error {
+	f.setFolderCollapsedCalls = append(f.setFolderCollapsedCalls, setFolderCollapsedCall{project: project, name: name, collapsed: collapsed})
+	if f.setFolderCollapsedErr != nil {
+		return f.setFolderCollapsedErr
+	}
+	meta := f.cfg.Projects[project].Folders[name]
+	meta.Collapsed = collapsed
+	f.setFolderMeta(project, name, meta)
+	return nil
+}
+
+// ProjectFolders satisfies sessionview.Core, so a fake backend can feed the
+// same row derivation the real core serves.
+func (f *fakeBackend) ProjectFolders() map[string]map[string]config.FolderMeta {
+	out := map[string]map[string]config.FolderMeta{}
+	for name, p := range f.cfg.Projects {
+		if len(p.Folders) > 0 {
+			out[name] = p.Folders
+		}
+	}
+	return out
+}
+
+func (f *fakeBackend) SetProjectCollapsed(project string, collapsed bool) error {
+	if f.cfg.Projects != nil {
+		p := f.cfg.Projects[project]
+		p.Collapsed = collapsed
+		f.cfg.Projects[project] = p
+	}
+	return nil
+}
+
+func (f *fakeBackend) DeleteFolder(project, name string) error {
+	f.deleteFolderCalls = append(f.deleteFolderCalls, deleteFolderCall{project: project, name: name})
+	if f.deleteFolderErr != nil {
+		return f.deleteFolderErr
+	}
+	delete(f.cfg.Projects[project].Folders, name)
+	for i := range f.sessions {
+		if f.sessions[i].Project == project && f.sessions[i].Folder == name {
+			f.sessions[i].Folder = ""
+		}
+	}
+	return f.deleteFolderErr
 }
 func (f *fakeBackend) Projects() []string            { return nil }
 func (f *fakeBackend) ConfigSnapshot() config.Config { return f.cfg.Clone() }

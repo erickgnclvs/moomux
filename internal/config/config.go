@@ -4,6 +4,7 @@ package config
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io/fs"
 	"maps"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
 
@@ -60,6 +62,68 @@ type Project struct {
 	// compact views (e.g. the all-projects session list). Empty means no
 	// glyph has been chosen — callers fall back to a deterministic pick.
 	Emoji string `toml:"emoji,omitempty" json:"emoji,omitempty"`
+	// Folders holds display state for this project's named, collapsible
+	// session groups, keyed by folder name (the name is also the id — a
+	// rename replaces the map key and updates every member's
+	// session.Session.Folder to match). Membership itself lives on each
+	// Session, not here; a folder with no members currently pointing at it
+	// still sits here inertly until renamed or deleted. One flat level only —
+	// a folder cannot contain another folder.
+	Folders map[string]FolderMeta `toml:"folders,omitempty" json:"folders,omitempty"`
+	// Collapsed hides this project's sessions in a client that lists
+	// several projects as collapsible groups — the same idea as
+	// FolderMeta.Collapsed, one level up. Display state, stored here
+	// because it is the user's choice and should survive a restart and be
+	// the same in every client, not per-window scratch state.
+	//
+	// The TUI has no use for it: it shows one project at a time, and
+	// multi-view already drops a project to a panel rather than a group. It
+	// is served for the front ends that do render projects as a tree.
+	Collapsed bool `toml:"collapsed,omitempty" json:"collapsed,omitempty"`
+}
+
+// FolderMeta is a project's per-folder display state.
+//
+// Deliberately not a position: a folder sits wherever its first member sits
+// (see sessionview.BuildRows), so there is no folder order to persist and
+// get out of step with session.Session.Order. An earlier version did carry
+// one, in the same units as Session.Order, and it drifted every time
+// Store.Reorder renumbered a subset of a project's sessions.
+type FolderMeta struct {
+	// Collapsed hides the folder's member sessions from the list, showing
+	// only its header line.
+	Collapsed bool `toml:"collapsed,omitempty" json:"collapsed,omitempty"`
+}
+
+// FolderNameMax caps a folder name at something that still renders as a
+// list row on a narrow terminal. Names are also the map key in
+// Project.Folders and the value of session.Session.Folder, so this is the
+// one place the limit belongs.
+const FolderNameMax = 64
+
+// CleanFolderName trims a folder name and rejects one that can't be
+// rendered as a single list row: empty/whitespace-only (indistinguishable
+// from "no folder", and unselectable once created), anything carrying a
+// control character (a newline turns one row into two, which is a layout
+// bug in every client, not just this one), or an over-long one.
+//
+// It lives here rather than in the TUI because the TUI is one of several
+// front ends — internal/ipc reaches the same mutators over the socket, so
+// trimming in a form handler protects nothing.
+func CleanFolderName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", errors.New("folder name required")
+	}
+	if len([]rune(name)) > FolderNameMax {
+		return "", fmt.Errorf("folder name too long (max %d characters)", FolderNameMax)
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return "", errors.New("folder name can't contain control characters")
+		}
+	}
+	return name, nil
 }
 
 func (p Project) IsPlain() bool { return p.Kind == "plain" }
@@ -167,8 +231,17 @@ type Config struct {
 
 // Clone returns a copy of c safe to use independently of the original —
 // Projects and Order are copied so mutating one doesn't affect the other.
+// Clone copies c deeply enough that the copy shares no mutable state with
+// the original — ConfigSnapshot hands the result to other goroutines, so a
+// map left aliased here is a data race there. Project is a value type, but
+// its Folders map is not: cloning only c.Projects would leave every copy
+// sharing one folder map with App.Cfg's.
 func (c Config) Clone() Config {
 	c.Projects = maps.Clone(c.Projects)
+	for name, p := range c.Projects {
+		p.Folders = maps.Clone(p.Folders)
+		c.Projects[name] = p
+	}
 	c.Order = slices.Clone(c.Order)
 	return c
 }

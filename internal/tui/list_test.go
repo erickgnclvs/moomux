@@ -144,6 +144,42 @@ func TestCycleProjectEmojiIdx(t *testing.T) {
 	}
 }
 
+// A collapsed folder has no visible member to anchor its header on, so its
+// position comes from where its members sit in the core's own order — see
+// sessionview.BuildRows. It used to come from a stored FolderMeta.Order,
+// which pinned the header to the bottom of any project nobody had manually
+// reordered (every Order there is 0, so nothing sorted after it).
+func TestVisibleListPositionsCollapsedFolderAmongItsNeighbours(t *testing.T) {
+	be := &fakeBackend{sessions: []session.Session{
+		{ID: "demo:a", Project: "demo", Name: "a"},
+		{ID: "demo:m", Project: "demo", Name: "m", Folder: "grp"},
+		{ID: "demo:z", Project: "demo", Name: "z"},
+	}}
+	m := newTestModel(be)
+	proj := m.cfg.Projects["demo"]
+	proj.Folders = map[string]config.FolderMeta{"grp": {Collapsed: true}}
+	m.cfg.Projects["demo"] = proj
+	be.cfg = *m.cfg
+	m.sessionsChanged()
+
+	lines, sessions := m.visibleList("demo")
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines (a, grp header, z), got %d: %+v", len(lines), lines)
+	}
+	if lines[0].row.IsFolder() || sessions[lines[0].sessionIdx].ID != "demo:a" {
+		t.Fatalf("expected line 0 to be session a, got %+v", lines[0])
+	}
+	if lines[1].row.Folder != "grp" || !lines[1].row.IsFolder() {
+		t.Fatalf("expected line 1 to be the grp header, between a and z, got %+v", lines[1])
+	}
+	if lines[2].row.IsFolder() || sessions[lines[2].sessionIdx].ID != "demo:z" {
+		t.Fatalf("expected line 2 to be session z, got %+v", lines[2])
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("expected the collapsed member to be excluded from the cursor's list, got %d sessions", len(sessions))
+	}
+}
+
 func TestModelProjectEmojiPrefersConfiguredOverFallback(t *testing.T) {
 	be := &fakeBackend{}
 	m := newTestModel(be)

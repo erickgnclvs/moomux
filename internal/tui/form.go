@@ -81,6 +81,8 @@ func (m *Model) resizeFormInputs() {
 	// edge on wide terminals, so let it fill the available width instead.
 	m.promptInput.SetWidth(avail)
 
+	setInputWidth(&m.folderForm.input, textInputWidth(&m.folderForm.input, 32, avail-m.formLabelWidth("folder", 12)))
+
 	if len(m.tagForm.inputs) == 2 {
 		labels := []string{"ticket url", "pr url"}
 		for i := range m.tagForm.inputs {

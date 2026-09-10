@@ -181,6 +181,12 @@ func (m *Model) renderDetailContent(s session.Session, view sessionview.View, ha
 	if !compact {
 		row("agent", s.AgentName(), "")
 	}
+	// Which folder a session is filed under is otherwise only visible as an
+	// indent in the list — and not at all once the folder is collapsed or
+	// the session was reached from search.
+	if s.Folder != "" && !compact {
+		row("folder", truncate(s.Folder, valueWidth), "")
+	}
 	if view.GitOK {
 		row("git", gitStatusLabel(gitStatusInfo{dirty: view.Dirty, unpushed: view.Unpushed, ok: true}), "")
 	}

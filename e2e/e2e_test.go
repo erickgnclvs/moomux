@@ -487,7 +487,7 @@ func TestSessionTagsAndArchive(t *testing.T) {
 	}
 }
 
-func TestMoveSessionAndMoveProject(t *testing.T) {
+func TestReorderSessionsAndMoveProject(t *testing.T) {
 	repo := initRepo(t, "main")
 	a := newTestApp(t)
 	if _, err := a.AddProject("demo", config.Project{Repo: repo, BaseBranch: "main"}); err != nil {
@@ -506,19 +506,21 @@ func TestMoveSessionAndMoveProject(t *testing.T) {
 		t.Fatalf("CreateSession b: %v", err)
 	}
 
-	if err := a.MoveSession(sB.ID, -1); err != nil {
-		t.Fatalf("MoveSession: %v", err)
+	if err := a.ReorderSessions([]string{sB.ID, sA.ID}); err != nil {
+		t.Fatalf("ReorderSessions: %v", err)
 	}
 	peers := a.Store.ByProject("demo")
 	if len(peers) != 2 || peers[0].ID != sB.ID || peers[1].ID != sA.ID {
 		t.Fatalf("unexpected order after move: %+v", peers)
 	}
-	// Moving the first entry further left is a no-op, not an error.
-	if err := a.MoveSession(peers[0].ID, -1); err != nil {
-		t.Fatalf("MoveSession out-of-bounds: %v", err)
+	// An id that no longer exists (deleted while the caller was holding its
+	// snapshot) is skipped, not an error — the rest of the order still lands.
+	if err := a.ReorderSessions([]string{sA.ID, "nonexistent", sB.ID}); err != nil {
+		t.Fatalf("ReorderSessions with unknown id: %v", err)
 	}
-	if err := a.MoveSession("nonexistent", -1); err == nil {
-		t.Fatalf("expected error for unknown session id")
+	peers = a.Store.ByProject("demo")
+	if len(peers) != 2 || peers[0].ID != sA.ID || peers[1].ID != sB.ID {
+		t.Fatalf("unexpected order after reorder with unknown id: %+v", peers)
 	}
 
 	order := a.Projects()

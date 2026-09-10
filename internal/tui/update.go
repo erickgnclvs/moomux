@@ -14,6 +14,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/gitwt"
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 )
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -231,14 +232,104 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setFlash("info", "updated session "+msg.Session.Name)
 		return m, nil
 
-	case SessionMovedMsg:
+	case SessionsReorderedMsg:
+		m.reorderInFlight = false
+		if msg.Err != nil {
+			m.reorderDirty = false
+			m.reorderPending = nil
+			m.setError(msg.Err)
+			// moveSelected applied the move optimistically (see
+			// applyOrderLocally) so the persist doesn't visibly stall the
+			// cursor; a failure has to undo that local guess. Dropping the
+			// cached list is what does it — the guess was written into the
+			// cache, so re-deriving from the cache would just reproduce it.
+			// refreshSessions' own selectedID-preserving logic (it
+			// re-anchors on whatever m.sessions[m.cursor] is right now,
+			// still the session that was being moved) then re-syncs both
+			// m.sessions and m.cursor back to the backend's actual —
+			// unchanged, since the write failed — order.
+			m.sessionsChanged()
+			// snapOrder carries the local guess too (see
+			// applyOrderLocally), so dropping the snapshot alone would
+			// re-apply the move that just failed to persist. Clearing it
+			// costs the core's live-first grouping until the next snapshot
+			// lands a couple of seconds later — a fair price on an error
+			// path that is already showing the user a failure.
+			m.snapOrder = nil
+			m.refreshSessions()
+			return m, nil
+		}
+		if m.reorderDirty {
+			// Another move happened locally while this persist was in
+			// flight; fire the deferred one now, carrying the latest order
+			// computed rather than a stale snapshot.
+			m.reorderDirty = false
+			ids := m.reorderPending
+			m.reorderPending = nil
+			return m, m.dispatchReorder(ids)
+		}
+		return m, nil
+
+	case SessionFolderSetMsg:
+		m.applyFolderChange(msg.Cfg)
+		switch {
+		case msg.Session.Folder == "":
+			m.setFlash("info", "moved "+msg.Session.Name+" out of its folder")
+		case m.cfg.Projects[msg.Session.Project].Folders[msg.Session.Folder].Collapsed:
+			// It just disappeared from the list; say where it went rather
+			// than leaving that looking like a delete.
+			m.setFlash("info", "filed "+msg.Session.Name+" under "+msg.Session.Folder+" (collapsed — z or click to open)")
+		default:
+			m.setFlash("info", "filed "+msg.Session.Name+" under "+msg.Session.Folder)
+		}
+		return m, nil
+
+	case FolderRenamedMsg:
 		if msg.Err != nil {
 			m.setError(msg.Err)
 			return m, nil
 		}
-		m.sessionsChanged()
-		m.refreshSessions()
-		m.focusSession(msg.ID)
+		m.applyFolderChange(msg.Cfg)
+		m.setFlash("info", "renamed folder to "+msg.NewName)
+		return m, nil
+
+	case FolderCollapsedSetMsg:
+		if msg.Err != nil {
+			m.setError(msg.Err)
+			return m, nil
+		}
+		m.applyFolderChange(msg.Cfg)
+		if msg.FocusID != "" {
+			m.focusSession(msg.FocusID)
+			m.refreshSessionsAndSync()
+		}
+		return m, nil
+
+	case FolderDeletedMsg:
+		if msg.Err != nil {
+			m.setError(msg.Err)
+			return m, nil
+		}
+		m.folderCursor = 0
+		m.applyFolderChange(msg.Cfg)
+		m.setFlash("info", "deleted folder "+msg.Name)
+		return m, nil
+
+	case FolderCreatedMsg:
+		if msg.Err != nil {
+			m.setError(msg.Err)
+			return m, nil
+		}
+		m.applyFolderChange(msg.Cfg)
+		m.setFlash("info", "created folder "+msg.Name)
+		// Land the overlay cursor on the folder just created — only
+		// possible after applyFolderChange, since the name isn't in m.cfg
+		// (which currentProjectFolders reads) until the snapshot lands.
+		for i, n := range m.currentProjectFolders() {
+			if n == msg.Name {
+				m.folderCursor = i
+			}
+		}
 		return m, nil
 
 	case SessionOpenedMsg:
@@ -414,6 +505,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateProjectInitChoice(msg)
 		case ModeTagForm:
 			return m.updateTagForm(msg)
+		case ModeFolderForm:
+			return m.updateFolderForm(msg)
+		case ModeFolders:
+			return m.updateFolders(msg)
+		case ModeConfirmDeleteFolder:
+			return m.updateConfirmDeleteFolder(msg)
 		case ModeHelp:
 			return m.updateHelp(msg)
 		case ModeEditSession:
@@ -538,29 +635,20 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.resetOverlayViewport()
 		return m, nil
 	case key.Matches(msg, m.keys.Up):
-		if len(m.sessions) > 0 {
-			m.cursor = (m.cursor - 1 + len(m.sessions)) % len(m.sessions)
+		// m.sessions is already in display order (visibleList builds it
+		// from the same rows the list renders), so the neighbour on screen
+		// is the neighbouring index — no folder-aware walk needed here.
+		if n := len(m.sessions); n > 0 {
+			m.cursor = (m.cursor - 1 + n) % n
 		}
 	case key.Matches(msg, m.keys.Down):
-		if len(m.sessions) > 0 {
-			m.cursor = (m.cursor + 1) % len(m.sessions)
+		if n := len(m.sessions); n > 0 {
+			m.cursor = (m.cursor + 1) % n
 		}
 	case key.Matches(msg, m.keys.MoveUp):
-		if m.cfg.SortRecentFirst {
-			m.setFlash("info", "manual reorder is off while sorting by most-recently-opened (change in settings, s)")
-			return m, nil
-		}
-		if len(m.sessions) > 0 && m.cursor > 0 {
-			return m, m.moveSessionCmd(m.sessions[m.cursor].ID, -1)
-		}
+		return m.moveSelected(-1)
 	case key.Matches(msg, m.keys.MoveDown):
-		if m.cfg.SortRecentFirst {
-			m.setFlash("info", "manual reorder is off while sorting by most-recently-opened (change in settings, s)")
-			return m, nil
-		}
-		if len(m.sessions) > 0 && m.cursor < len(m.sessions)-1 {
-			return m, m.moveSessionCmd(m.sessions[m.cursor].ID, 1)
-		}
+		return m.moveSelected(1)
 	case key.Matches(msg, m.keys.MoveProjLeft):
 		if len(m.projects) > 0 && m.activeProj > 0 {
 			return m, m.moveProjectCmd(m.projects[m.activeProj], -1)
@@ -684,6 +772,32 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.resetOverlayViewport()
 			m.resizeFormInputs()
 		}
+	case key.Matches(msg, m.keys.AssignFolder):
+		if len(m.sessions) > 0 {
+			s := m.sessions[m.cursor]
+			m.mode = ModeFolderForm
+			m.sessionDialogReturn = ModeList
+			m.folderFormKind = "assign"
+			m.folderFormSessionID = s.ID
+			m.folderForm = newFolderForm("folder name (blank = none)", s.Folder)
+			m.resetOverlayViewport()
+			m.resizeFormInputs()
+		}
+	case key.Matches(msg, m.keys.ToggleFolder):
+		if len(m.sessions) > 0 && m.cursor < len(m.sessions) {
+			s := m.sessions[m.cursor]
+			if s.Folder == "" {
+				m.setFlash("info", "not in a folder — g files it into one")
+				return m, nil
+			}
+			collapsed := !m.cfg.Projects[s.Project].Folders[s.Folder].Collapsed
+			return m, m.setFolderCollapsedCmd(s.Project, s.Folder, collapsed, "")
+		}
+	case key.Matches(msg, m.keys.Folders):
+		m.folderCursor = 0
+		m.mode = ModeFolders
+		m.sessionDialogReturn = ModeList
+		m.resetOverlayViewport()
 	case key.Matches(msg, m.keys.EditSession):
 		if len(m.sessions) > 0 {
 			s := m.sessions[m.cursor]
@@ -814,6 +928,10 @@ func (m *Model) handleListMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		// Not a ticket/PR icon — a tap on the row selects it (and, in
 		// ModeMultiView, picks that row's project as the focused panel).
+		if proj, folder, ok := m.folderHeaderAt(msg.X, msg.Y); ok {
+			collapsed := !m.cfg.Projects[proj].Folders[folder].Collapsed
+			return m, m.setFolderCollapsedCmd(proj, folder, collapsed, "")
+		}
 		if id, ok := m.sessionRowAt(msg.X, msg.Y); ok {
 			if m.mode == ModeMultiView {
 				if p, ok := m.projectForSession(id); ok {
@@ -841,11 +959,160 @@ func (m *Model) handleListMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// moveSessionCmd and moveProjectCmd persist a reorder off the event loop.
-// A nil Err on the resulting msg is the success case, so the backend call's
-// error goes straight into the field rather than being branched on here.
-func (m *Model) moveSessionCmd(id string, delta int) tea.Cmd {
-	return func() tea.Msg { return SessionMovedMsg{ID: id, Err: m.backend.MoveSession(id, delta)} }
+// sessionIDs snapshots sessions' IDs in order.
+func sessionIDs(sessions []session.Session) []string {
+	ids := make([]string, len(sessions))
+	for i, s := range sessions {
+		ids[i] = s.ID
+	}
+	return ids
+}
+
+// moveSelected moves the selected session one step (-1 up, +1 down) and
+// persists the result.
+//
+// The move itself is sessionview.Reorder's: it works in blocks, so a loose
+// session hops a whole folder rather than landing between two of its
+// members (where the next render would only pull it back out — a keypress
+// that did nothing but write to disk), and a session inside a folder
+// rearranges among its siblings without escaping. Reorder answers with the
+// project's *entire* session order, hidden and archived rows included,
+// which is what App.ReorderSessions needs: Store.Reorder numbers what it is
+// handed 1..N, so anything left out keeps a stale Order that then
+// interleaves with the renumbered ones.
+func (m *Model) moveSelected(delta int) (tea.Model, tea.Cmd) {
+	if m.cfg.SortRecentFirst {
+		m.setFlash("info", "manual reorder is off while sorting by most-recently-opened (change in settings, s)")
+		return m, nil
+	}
+	if m.cursor >= len(m.sessions) || len(m.projects) == 0 {
+		return m, nil
+	}
+	proj := m.projects[m.activeProj]
+	all := m.allSessions()
+	rows := sessionview.BuildRows(all, m.cfg.Projects[proj].Folders, proj)
+	filtered := make(map[string]bool, len(all))
+	for _, s := range all {
+		if s.Archived != m.showArchived {
+			filtered[s.ID] = true
+		}
+	}
+	sel := m.sessions[m.cursor]
+	ids, ok := sessionview.Reorder(rows, sel.ID, delta, func(id string) bool { return filtered[id] })
+	if !ok {
+		if sel.Folder != "" {
+			m.setFlash("info", "already at the "+edgeWord(delta)+" of "+sel.Folder+" — g moves it out of the folder")
+		}
+		return m, nil
+	}
+	// Apply locally before the persist round-trips, so holding the key
+	// sends each repeat against already-correct state instead of racing a
+	// stale snapshot — see dispatchReorder.
+	m.applyOrderLocally(ids)
+	m.refreshSessionsAndSync()
+	m.focusSession(sel.ID)
+	return m, m.dispatchReorder(ids)
+}
+
+// edgeWord names the end of a folder a member just failed to move past.
+func edgeWord(delta int) string {
+	if delta < 0 {
+		return "top"
+	}
+	return "bottom"
+}
+
+// applyOrderLocally rewrites the cached session list so ids' new relative
+// order shows immediately, without waiting for the persist to round-trip
+// and a fresh snapshot to arrive. The sessions named in ids keep the set of
+// slots they already occupy in the cached list — they may be scattered
+// through it, since it holds every project — and are refilled in the new
+// order, leaving every other project exactly where it was.
+func (m *Model) applyOrderLocally(ids []string) {
+	pos := make(map[string]int, len(ids))
+	for i, id := range ids {
+		pos[id] = i
+	}
+	// Copy rather than rewrite in place: the cached list can be the very
+	// slice the backend returned (nothing promises a copy), and reordering
+	// that would edit the store's own answer — the local guess would then
+	// survive a failed persist, since there'd be nothing unmutated left to
+	// re-read.
+	reordered := func(list []session.Session) []session.Session {
+		out := append([]session.Session(nil), list...)
+		var slots []int
+		byID := make(map[string]session.Session, len(ids))
+		for i, s := range out {
+			if _, ok := pos[s.ID]; ok {
+				slots = append(slots, i)
+				byID[s.ID] = s
+			}
+		}
+		next := 0
+		for _, id := range ids {
+			s, ok := byID[id]
+			if !ok || next >= len(slots) {
+				continue
+			}
+			out[slots[next]] = s
+			next++
+		}
+		return out
+	}
+	list := reordered(m.allSessions())
+	m.sessCache = list
+	m.sessCacheValid = true
+	if m.snapSessions != nil {
+		m.snapSessions = list
+	}
+	// The per-Update memo is dropped on the next Update, and with no
+	// snapshot in hand the list is re-read from the backend — which has not
+	// heard about this move yet. snapOrder is the existing answer to
+	// exactly that ("put a backend read back into the order the core last
+	// served", see inLastServedOrder), so record the move there too and a
+	// key-repeat's second press works from the order the first one left.
+	m.snapOrder = make(map[string]int, len(list))
+	for i, s := range list {
+		m.snapOrder[s.ID] = i
+	}
+}
+
+// dispatchReorder persists the given full project order via
+// ReorderSessions.
+//
+// Only one persist is ever in flight: a call made while one is already
+// running just records the latest order and returns a nil Cmd instead of
+// starting a second goroutine. Without that, two nearly-simultaneous moves
+// (e.g. holding the key, which sends fast key-repeats) would each fire
+// independently; tea.Cmd completions don't arrive in dispatch order, so if
+// the *older* move's goroutine happened to finish after the newer one's,
+// its stale order would silently overwrite (and so revert) the newer move
+// on disk even though the UI kept showing it. The SessionsReorderedMsg
+// handler fires the deferred persist once the in-flight one completes, so
+// at most one write is ever in flight and completions can't reorder
+// relative to dispatch.
+func (m *Model) dispatchReorder(ids []string) tea.Cmd {
+	if m.reorderInFlight {
+		m.reorderDirty = true
+		m.reorderPending = ids
+		return nil
+	}
+	m.reorderInFlight = true
+	return func() tea.Msg { return SessionsReorderedMsg{Err: m.backend.ReorderSessions(ids)} }
+}
+
+// applyFolderChange lands a folder mutation's result: the fresh config
+// snapshot (folder names, order and collapse state all live in
+// Project.Folders, which m.cfg owns its own copy of) plus a session re-read,
+// because membership itself lives on each Session — sessionsChanged is what
+// drops the last streamed snapshot so the re-read actually sees the new
+// Folder fields instead of the pre-mutation ones.
+func (m *Model) applyFolderChange(cfg *config.Config) {
+	if cfg != nil {
+		*m.cfg = *cfg
+	}
+	m.sessionsChanged()
+	m.refreshSessionsAndSync()
 }
 
 // cfgSnapshotOnSuccess returns a fresh ConfigSnapshot for a mutation Msg's
@@ -859,6 +1126,23 @@ func (m *Model) cfgSnapshotOnSuccess(err error) *config.Config {
 	}
 	snap := m.backend.ConfigSnapshot()
 	return &snap
+}
+
+// setFolderCollapsedCmd persists a folder's collapse state. focusID, when
+// set, is the session the cursor should land on once the change applies —
+// used when expanding a folder in order to reach a member inside it.
+func (m *Model) setFolderCollapsedCmd(project, folder string, collapsed bool, focusID string) tea.Cmd {
+	return func() tea.Msg {
+		err := m.backend.SetFolderCollapsed(project, folder, collapsed)
+		return FolderCollapsedSetMsg{
+			Project:   project,
+			Name:      folder,
+			Collapsed: collapsed,
+			FocusID:   focusID,
+			Err:       err,
+			Cfg:       m.cfgSnapshotOnSuccess(err),
+		}
+	}
 }
 
 func (m *Model) moveProjectCmd(name string, delta int) tea.Cmd {
@@ -1599,7 +1883,13 @@ func (m *Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// own Archived state — refreshSessions filters on that equality.
 		m.showArchived = s.Archived
 		m.refreshSessions()
-		m.focusSession(s.ID)
+		// A session inside a collapsed folder isn't in the list to focus:
+		// expand its folder and land on it, rather than leaving the cursor
+		// on whatever was selected before and acting on that instead.
+		expand := tea.Cmd(nil)
+		if !m.focusSession(s.ID) && s.Folder != "" {
+			expand = m.setFolderCollapsedCmd(s.Project, s.Folder, false, s.ID)
+		}
 		// Return to wherever search was opened from. If that's MultiView,
 		// fold the newly-focused session into that project's own panel
 		// state (m.multiCursors) and move panel focus (m.multiFocus) to it
@@ -1614,7 +1904,7 @@ func (m *Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.ensureMultiFocusVisible()
 			}
 		}
-		return m, nil
+		return m, expand
 	}
 	var cmd tea.Cmd
 	m.searchInput, cmd = m.searchInput.Update(msg)

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -30,16 +31,25 @@ func boolPtr(b bool) *bool { return &b }
 // a round trip can assert both directions of the wire.
 type fakeBackend struct {
 	sessions  []session.Session
+	reordered []string
 	created   session.CreateRequest
 	createErr error
 	renamed   session.Session
 
+	projectCollapsed  []projectCollapsedCall
 	addProjectWarning string
 	addProjectErr     error
 	onAddProject      func(string, config.Project)
 	cfg               *config.Config
 	agentOptions      []config.AgentOption
 	mu                sync.Mutex
+}
+
+// projectCollapsedCall records a SetProjectCollapsed dispatch — the method
+// has no TUI caller, so the wire is the only thing exercising it.
+type projectCollapsedCall struct {
+	project string
+	on      bool
 }
 
 func (f *fakeBackend) SuggestedProject() (string, string) { return "", "" }
@@ -92,8 +102,24 @@ func (f *fakeBackend) RenameSession(id, name string) (session.Session, error) {
 func (f *fakeBackend) SetSessionArchived(id string, on bool) (session.Session, error) {
 	return session.Session{ID: id, Archived: on}, nil
 }
-func (f *fakeBackend) MoveSession(string, int) error { return nil }
-func (f *fakeBackend) MoveProject(string, int) error { return nil }
+func (f *fakeBackend) ReorderSessions(ids []string) error {
+	f.reordered = ids
+	return nil
+}
+func (f *fakeBackend) MoveProject(string, int) error           { return nil }
+func (f *fakeBackend) CreateFolder(project, name string) error { return nil }
+func (f *fakeBackend) SetSessionFolder(id, folder string) (session.Session, error) {
+	return session.Session{ID: id, Folder: folder}, nil
+}
+func (f *fakeBackend) RenameFolder(project, oldName, newName string) error { return nil }
+func (f *fakeBackend) SetFolderCollapsed(project, name string, collapsed bool) error {
+	return nil
+}
+func (f *fakeBackend) DeleteFolder(project, name string) error { return nil }
+func (f *fakeBackend) SetProjectCollapsed(project string, collapsed bool) error {
+	f.projectCollapsed = append(f.projectCollapsed, projectCollapsedCall{project: project, on: collapsed})
+	return nil
+}
 func (f *fakeBackend) AddProject(name string, p config.Project) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -713,4 +739,111 @@ func TestWatchNudgeReachesSource(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("nudge never reached the source")
+}
+
+// TestMoveSessionCompatShim: the macOS app lives in another repo with no CI
+// link back here and still sends MoveSession, so removing the method in
+// favour of ReorderSessions would break its reordering silently at runtime
+// rather than at build time. Driven through call() rather than a Client
+// method because no Go client sends it — the wire method is the contract.
+func TestMoveSessionCompatShim(t *testing.T) {
+	b := &fakeBackend{sessions: []session.Session{
+		{ID: "demo:a", Project: "demo"},
+		{ID: "demo:b", Project: "demo"},
+		{ID: "other:c", Project: "other"},
+	}}
+	c, _ := start(t, b, &config.Config{}, nil)
+
+	if _, err := c.call("MoveSession", Args{ID: "demo:b", Delta: -1}); err != nil {
+		t.Fatalf("MoveSession: %v", err)
+	}
+	// Only the moved session's own project peers are reordered, swapped —
+	// "other:c" must not be dragged into the write.
+	if got := b.reordered; !slices.Equal(got, []string{"demo:b", "demo:a"}) {
+		t.Fatalf("ReorderSessions got %v, want [demo:b demo:a]", got)
+	}
+
+	// Out of bounds is a no-op, not an error — the behaviour MoveSession has
+	// always had, and which its remaining caller relies on.
+	b.reordered = nil
+	if _, err := c.call("MoveSession", Args{ID: "demo:a", Delta: -1}); err != nil {
+		t.Fatalf("MoveSession out of bounds: %v", err)
+	}
+	if b.reordered != nil {
+		t.Fatalf("expected no reorder for an out-of-bounds move, got %v", b.reordered)
+	}
+	if _, err := c.call("MoveSession", Args{ID: "nope", Delta: -1}); err == nil {
+		t.Fatal("expected an error for an unknown session id")
+	}
+}
+
+// TestMoveSessionShimRespectsFolders: the deprecated delta-based reorder is
+// still what the macOS app sends, and it knows nothing about folders. The
+// shim must not let it land a session between two members of one — the next
+// render regroups them anyway, so the move would look like it did nothing.
+func TestMoveSessionShimRespectsFolders(t *testing.T) {
+	b := &fakeBackend{sessions: []session.Session{
+		{ID: "demo:a", Project: "demo", Folder: "auth"},
+		{ID: "demo:c", Project: "demo", Folder: "auth"},
+		{ID: "demo:b", Project: "demo"},
+	}}
+	cfg := &config.Config{Projects: map[string]config.Project{
+		"demo": {Folders: map[string]config.FolderMeta{"auth": {}}},
+	}}
+	c, _ := start(t, b, cfg, nil)
+
+	if _, err := c.call("MoveSession", Args{ID: "demo:b", Delta: -1}); err != nil {
+		t.Fatalf("MoveSession: %v", err)
+	}
+	if got := b.reordered; !slices.Equal(got, []string{"demo:b", "demo:a", "demo:c"}) {
+		t.Fatalf("ReorderSessions got %v, want [demo:b demo:a demo:c] — the whole folder hopped, not one member", got)
+	}
+}
+
+// SetProjectCollapsed has no TUI caller by design (see
+// config.Project.Collapsed), so the wire is the only thing that exercises
+// it — which is exactly why it needs a test here.
+func TestSetProjectCollapsedCrossesTheWire(t *testing.T) {
+	b := &fakeBackend{}
+	c, _ := start(t, b, &config.Config{}, nil)
+
+	if err := c.SetProjectCollapsed("demo", true); err != nil {
+		t.Fatalf("SetProjectCollapsed: %v", err)
+	}
+	want := []projectCollapsedCall{{project: "demo", on: true}}
+	if !slices.Equal(b.projectCollapsed, want) {
+		t.Fatalf("backend got %v, want %v", b.projectCollapsed, want)
+	}
+}
+
+// TestWatchCarriesRows: the row layout is the whole reason a second front
+// end doesn't have to re-derive folder grouping for itself, so it has to
+// survive the wire — including the fields that only matter to a renderer
+// (a hidden member, a header's per-view counts).
+func TestWatchCarriesRows(t *testing.T) {
+	snap := sessionview.Snapshot{
+		PollTime: time.Now(),
+		Rows: map[string][]sessionview.Row{
+			"demo": {
+				{ID: "demo:a"},
+				{Folder: "auth", Collapsed: true, Count: 1, ArchivedCount: 2},
+				{ID: "demo:b", Folder: "auth", Hidden: true},
+			},
+		},
+	}
+	c, _ := start(t, &fakeBackend{}, &config.Config{}, &fakeWatcher{snaps: []sessionview.Snapshot{snap}})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out := make(chan sessionview.Snapshot, 2)
+	go c.Run(ctx, out)
+
+	select {
+	case got := <-out:
+		if !slices.Equal(got.Rows["demo"], snap.Rows["demo"]) {
+			t.Fatalf("rows = %+v, want %+v", got.Rows["demo"], snap.Rows["demo"])
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for the snapshot")
+	}
 }

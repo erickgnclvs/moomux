@@ -1,0 +1,54 @@
+=== 40x20 ===
+                                        
+                                        
+                                        
+                                        
+╭──────────────────────────────────────╮
+│                                      │
+│  Delete folder?                      │
+│                                      │
+│  name: auth                          │
+│                                      │
+│  2 session(s) move back to top leve  │
+│  No session or worktree is deleted.  │
+│                                      │
+│  y to confirm   n/esc to cancel      │
+│                                      │
+╰──────────────────────────────────────╯
+                                        
+                                        
+                                        
+                                        
+=== 100x32 ===
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                             ╭────────────────────────────────────────╮                             
+                             │                                        │                             
+                             │  Delete folder?                        │                             
+                             │                                        │                             
+                             │  name: auth                            │                             
+                             │                                        │                             
+                             │  2 session(s) move back to top level.  │                             
+                             │  No session or worktree is deleted.    │                             
+                             │                                        │                             
+                             │  y to confirm   n/esc to cancel        │                             
+                             │                                        │                             
+                             ╰────────────────────────────────────────╯                             
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    

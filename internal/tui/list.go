@@ -12,6 +12,85 @@ import (
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
+// listLine is one rendered line of a session list panel: either a folder
+// header (row.IsFolder()) or a session, where sessionIdx indexes the
+// sessions slice visibleList returned alongside it.
+type listLine struct {
+	row        sessionview.Row
+	sessionIdx int
+}
+
+// visibleList is what a panel draws for one project: the core's row layout
+// (see sessionview.BuildRows — folder headers spliced in, members grouped
+// under them) filtered down to the current archived view, with a collapsed
+// folder's members dropped, plus the sessions those lines point at in the
+// same order.
+//
+// Both come out of one pass on purpose. They used to be computed
+// separately — the session list filtered here, the grouping recomputed at
+// render time — and any disagreement between them meant the cursor pointed
+// at a different session than the highlighted row. Multi-view had exactly
+// that bug: its panels listed a collapsed folder's members while the
+// keyboard's own list didn't, so acting on such a row hit whichever session
+// happened to share its index.
+//
+// Folder headers stay even when the current view has none of their members
+// (an empty folder, or one holding only archived sessions) — the header is
+// the only handle the folder has.
+func (m *Model) visibleList(proj string) ([]listLine, []session.Session) {
+	all := m.allSessions()
+	byID := make(map[string]session.Session, len(all))
+	for _, s := range all {
+		byID[s.ID] = s
+	}
+	var lines []listLine
+	var sessions []session.Session
+	for _, r := range sessionview.BuildRows(all, m.cfg.Projects[proj].Folders, proj) {
+		if r.IsFolder() {
+			lines = append(lines, listLine{row: r})
+			continue
+		}
+		s, ok := byID[r.ID]
+		if !ok || r.Hidden || s.Archived != m.showArchived {
+			continue
+		}
+		lines = append(lines, listLine{row: r, sessionIdx: len(sessions)})
+		sessions = append(sessions, s)
+	}
+	return lines, sessions
+}
+
+// memberCount is how many members a folder header should report, in
+// whichever view the list is currently filtered to.
+func (m *Model) memberCount(r sessionview.Row) int {
+	if m.showArchived {
+		return r.ArchivedCount
+	}
+	return r.Count
+}
+
+// cursorDisplayLine finds cursor's (a sessions index) position within
+// lines, so scrolling operates on line coordinates — which include folder
+// headers — while the cursor stays a plain session index everywhere else.
+func cursorDisplayLine(lines []listLine, cursor int) int {
+	for i, l := range lines {
+		if !l.row.IsFolder() && l.sessionIdx == cursor {
+			return i
+		}
+	}
+	return 0
+}
+
+// renderFolderHeaderLine renders one collapsible-group header row.
+func (m *Model) renderFolderHeaderLine(name string, collapsed bool, count int, width int) string {
+	glyph := "▾"
+	if collapsed {
+		glyph = "▸"
+	}
+	text := fmt.Sprintf("%s %s (%d)", glyph, name, count)
+	return muteStyle.Render(truncate(text, width))
+}
+
 // linkHit records where a clickable ticket/PR icon landed within the
 // rendered list, in the list panel's own local coordinates (line index and
 // column range on that line). The TUI translates these to absolute terminal
@@ -34,7 +113,15 @@ type rowHit struct {
 	line      int
 }
 
-func (m *Model) renderList(width, height int) (string, []linkHit, []rowHit) {
+// folderHit records a folder header's line, so clicking one collapses or
+// expands it. Headers aren't a cursor stop (the cursor is a session index),
+// so the mouse and the Folders overlay are how a folder gets toggled.
+type folderHit struct {
+	folder string
+	line   int
+}
+
+func (m *Model) renderList(width, height int) (string, []linkHit, []rowHit, []folderHit) {
 	var b strings.Builder
 	title := "SESSIONS"
 	empty := "  no sessions — press n to create"
@@ -57,16 +144,22 @@ func (m *Model) renderList(width, height int) (string, []linkHit, []rowHit) {
 		b.WriteString("\n\n")
 		titleRows = 2
 	}
-	if len(m.sessions) == 0 {
+	var lines []listLine
+	var sessions []session.Session
+	if len(m.projects) > 0 {
+		lines, sessions = m.visibleList(m.projects[m.activeProj])
+	}
+	if len(lines) == 0 {
 		b.WriteString(muteStyle.Render(empty))
-		return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(b.String()), nil, nil
+		return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(b.String()), nil, nil, nil
 	}
 	visible := height - titleRows
 	if visible < 1 {
 		visible = 1
 	}
-	start, end := scrollWindow(m.cursor, len(m.sessions), visible)
-	hasAbove, hasBelow := start > 0, end < len(m.sessions)
+	cursorLine := cursorDisplayLine(lines, m.cursor)
+	start, end := scrollWindow(cursorLine, len(lines), visible)
+	hasAbove, hasBelow := start > 0, end < len(lines)
 	rowOffset := 0
 	if hasAbove {
 		b.WriteString(scrollHintLine("⌃", width))
@@ -75,23 +168,38 @@ func (m *Model) renderList(width, height int) (string, []linkHit, []rowHit) {
 	}
 	var hits []linkHit
 	var rows []rowHit
-	for i := start; i < end; i++ {
-		s := m.sessions[i]
-		selected := i == m.cursor
+	var headers []folderHit
+	for li := start; li < end; li++ {
+		dl := lines[li]
 		// titleRows lines for the "SESSIONS" title and blank line above (0 on
 		// short terminals, where it's hidden), plus rowOffset for the "⌃ more
 		// above" hint line (0 unless it's actually shown).
-		line := titleRows + rowOffset + (i - start)
+		line := titleRows + rowOffset + (li - start)
+		if dl.row.IsFolder() {
+			headers = append(headers, folderHit{folder: dl.row.Folder, line: line})
+			b.WriteString(m.renderFolderHeaderLine(dl.row.Folder, dl.row.Collapsed, m.memberCount(dl.row), width))
+			b.WriteString("\n")
+			continue
+		}
+		s := sessions[dl.sessionIdx]
+		selected := dl.sessionIdx == m.cursor
+		indent := ""
+		rowWidth := width - 2
+		if dl.row.Folder != "" {
+			indent = "  "
+			rowWidth -= 2
+		}
 		rows = append(rows, rowHit{sessionID: s.ID, line: line})
-		row, iconHits := renderRow(s, m.viewFor(s.ID), width-2, selected, "")
+		row, iconHits := renderRow(s, m.viewFor(s.ID), rowWidth, selected, "")
+		colOffset := 1 + len(indent) // +1 for the row style's own left padding
 		for _, h := range iconHits {
 			h.sessionID = s.ID
 			h.line = line
-			// +1 column for the row style's own left padding.
-			h.col0++
-			h.col1++
+			h.col0 += colOffset
+			h.col1 += colOffset
 			hits = append(hits, h)
 		}
+		row = indent + row
 		if selected {
 			row = listRowSelected.Render(row)
 		} else {
@@ -104,7 +212,7 @@ func (m *Model) renderList(width, height int) (string, []linkHit, []rowHit) {
 		b.WriteString(scrollHintLine("⌄", width))
 		b.WriteString("\n")
 	}
-	return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(b.String()), hits, rows
+	return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(b.String()), hits, rows, headers
 }
 
 // scrollWindow computes the [start, end) window into a total-item list of

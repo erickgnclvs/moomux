@@ -276,10 +276,41 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		return sessionResult(b.RenameSession(a.ID, a.Name))
 	case "SetSessionArchived":
 		return sessionResult(b.SetSessionArchived(a.ID, a.On))
+	case "ReorderSessions":
+		return Result{}, b.ReorderSessions(a.IDs)
 	case "MoveSession":
-		return Result{}, b.MoveSession(a.ID, a.Delta)
+		// Deprecated: ReorderSessions replaced this, taking the caller's
+		// fully-resolved order rather than a delta the core has to resolve
+		// against a session list the client may be displaying differently.
+		// Kept because the macOS app still calls it and lives in another
+		// repo with no CI link back here, so dropping the method would break
+		// its reordering silently at runtime. It resolves the delta against
+		// the core's own order, which is exactly the imprecision that
+		// motivated the new method — remove this once moomux-mac sends an
+		// order instead of a delta.
+		return Result{}, s.moveSession(b, a.ID, a.Delta)
 	case "MoveProject":
 		return s.mutResult(b.MoveProject(a.Name, a.Delta))
+
+	case "CreateFolder":
+		return s.mutResult(b.CreateFolder(a.Project, a.Name))
+	case "SetSessionFolder":
+		// Unlike the other session Set*/Rename methods (sessionResult),
+		// this one can also create a folder — a config mutation — on its
+		// first use, so the response needs both a Session and (mutResult's)
+		// Cfg snapshot, not just one or the other.
+		sess, err := b.SetSessionFolder(a.ID, a.Name)
+		res, _ := s.mutResult(nil)
+		res.Session = &sess
+		return res, err
+	case "RenameFolder":
+		return s.mutResult(b.RenameFolder(a.Project, a.Name, a.NewName))
+	case "SetFolderCollapsed":
+		return s.mutResult(b.SetFolderCollapsed(a.Project, a.Name, a.On))
+	case "DeleteFolder":
+		return s.mutResult(b.DeleteFolder(a.Project, a.Name))
+	case "SetProjectCollapsed":
+		return s.mutResult(b.SetProjectCollapsed(a.Project, a.On))
 
 	case "AddProject":
 		warning, err := b.AddProject(a.Name, a.Proj)
@@ -313,6 +344,39 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 // (session.Session, error).
 func sessionResult(sess session.Session, err error) (Result, error) {
 	return Result{Session: &sess}, err
+}
+
+// moveSession shifts one session by delta within its project and persists
+// the result — the delta-based reorder the deprecated MoveSession method
+// still exposes. Out-of-bounds is a no-op, not an error, matching the
+// behaviour that method has always had.
+//
+// It moves in the same blocks the list is drawn in (sessionview.Reorder),
+// so a caller that knows nothing about folders still can't drop a session
+// into the middle of one — the resulting order would only be regrouped on
+// the next render anyway.
+func (s *Server) moveSession(b tui.Backend, id string, delta int) error {
+	sessions := b.Sessions()
+	project := ""
+	for _, sess := range sessions {
+		if sess.ID == id {
+			project = sess.Project
+			break
+		}
+	}
+	if project == "" {
+		return fmt.Errorf("unknown session %q", id)
+	}
+	var folders map[string]config.FolderMeta
+	if s.Config != nil {
+		cfg := s.Config()
+		folders = cfg.Projects[project].Folders
+	}
+	ids, ok := sessionview.Reorder(sessionview.BuildRows(sessions, folders, project), id, delta, nil)
+	if !ok {
+		return nil
+	}
+	return b.ReorderSessions(ids)
 }
 
 // mutResult adapts the config-mutating Backend methods (all bare error

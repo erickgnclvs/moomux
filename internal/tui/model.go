@@ -62,8 +62,31 @@ type Backend interface {
 	// SetSessionArchived hides (or restores) a session from the default
 	// list without touching its tmux session or worktree.
 	SetSessionArchived(id string, archived bool) (session.Session, error)
-	MoveSession(id string, delta int) error
+	// ReorderSessions persists ids, verbatim, as the new manual Order for
+	// exactly those sessions. The caller supplies the fully-resolved final
+	// order (not a delta) — see internal/app.App.ReorderSessions's doc.
+	ReorderSessions(ids []string) error
 	MoveProject(name string, delta int) error
+	// CreateFolder adds an empty, expanded folder to project. Errors if one
+	// by that name already exists.
+	CreateFolder(project, name string) error
+	// SetSessionFolder files id under the named folder within its project
+	// ("" removes it from any folder), creating the folder on first use.
+	SetSessionFolder(id, folder string) (session.Session, error)
+	// RenameFolder renames a project's folder, updating every member
+	// session's Folder field to match.
+	RenameFolder(project, oldName, newName string) error
+	// SetProjectCollapsed persists whether a whole project's group is
+	// collapsed. Nothing in the TUI calls it — it shows one project at a
+	// time — but it is part of the same display state folders are, and
+	// front ends that render projects as a tree reach it over
+	// internal/ipc (same arrangement as EnsureTmux above).
+	SetProjectCollapsed(project string, collapsed bool) error
+	// SetFolderCollapsed persists a folder's collapsed/expanded state.
+	SetFolderCollapsed(project, name string, collapsed bool) error
+	// DeleteFolder removes a folder definition and un-parents its members
+	// back to top-level.
+	DeleteFolder(project, name string) error
 	Sessions() []session.Session
 	// SuggestedProject is the add-project form's name/repo prefill, from
 	// the core's own working directory — see app.SuggestedProject.
@@ -117,6 +140,9 @@ const (
 	ModeMultiView
 	ModeSearch
 	ModeSettings
+	ModeFolderForm
+	ModeFolders
+	ModeConfirmDeleteFolder
 )
 
 // agentNames lists the agent CLIs a session/project can run, in the core's
@@ -292,6 +318,23 @@ func newSessionForm(id, project, name string, agentIdx int, dangerous bool) sess
 	}
 }
 
+// folderForm is the single-field form ModeFolderForm uses both to file a
+// session under a folder (m.folderFormKind == "assign") and to rename one
+// (m.folderFormKind == "rename") — see internal/tui/folders.go.
+type folderForm struct {
+	input textinput.Model
+}
+
+func newFolderForm(placeholder, current string) folderForm {
+	ti := textinput.New()
+	ti.Placeholder = placeholder
+	ti.Width = 32
+	ti.CharLimit = 64
+	ti.SetValue(current)
+	ti.Focus()
+	return folderForm{input: ti}
+}
+
 func newTagForm(ticket, pr string) tagForm {
 	mk := func(placeholder, value string) textinput.Model {
 		ti := textinput.New()
@@ -397,8 +440,34 @@ type Model struct {
 	sessionForm             sessionForm
 	editProjectName         string
 	tagForm                 tagForm
-	pickerCursor            int // index into m.projects while ModeProjectPicker is open
-	searchInput             textinput.Model
+	folderForm              folderForm
+	// folderFormKind is "assign" (filing a session into a folder) or
+	// "rename" (renaming a folder), deciding both what Enter does in
+	// updateFolderForm and which of folderFormSessionID/folderFormOldName is
+	// the relevant target.
+	folderFormKind string
+	// folderDeleteName is the folder ModeConfirmDeleteFolder is asking
+	// about — deleting one is unmakeable in a keystroke (every member has
+	// to be re-filed by hand), so it confirms like the other deletes do.
+	folderDeleteName    string
+	folderFormSessionID string // set when folderFormKind == "assign"
+	folderFormOldName   string // set when folderFormKind == "rename"
+	// folderCursor indexes the active project's folder-name list (see
+	// currentProjectFolders) while ModeFolders is open.
+	folderCursor int
+	// reorderInFlight is true while a dispatchReorder persist is running.
+	// reorderDirty means another reorder happened locally while it was in
+	// flight; dispatchReorder's completion handler fires one more persist
+	// (carrying whatever the latest m.sessions order is by then) instead of
+	// letting a second persist run concurrently — see dispatchReorder's doc
+	// for why two in-flight persists at once can silently revert a move.
+	reorderInFlight bool
+	reorderDirty    bool
+	// reorderPending is the order the deferred persist should send: the
+	// latest one computed locally while a write was in flight.
+	reorderPending []string
+	pickerCursor   int // index into m.projects while ModeProjectPicker is open
+	searchInput    textinput.Model
 	// searchResults is the flattened, filtered session list (every project,
 	// active + archived) while ModeSearch is open, recomputed on every
 	// keystroke by refreshSearchResults. searchCursor indexes into it.
@@ -483,6 +552,7 @@ type Model struct {
 
 	linkHits        []resolvedLinkHit
 	rowHits         []resolvedRowHit
+	folderHits      []resolvedFolderHit
 	panelHits       []resolvedPanelHit
 	overlayViewport viewport.Model
 	overlayMode     Mode
@@ -508,6 +578,17 @@ type resolvedRowHit struct {
 	sessionID string
 	y         int
 	x0, x1    int // half-open column range
+}
+
+// resolvedFolderHit is a folder header's line in absolute terminal
+// coordinates. Headers aren't a cursor stop — the cursor is a session index
+// — so clicking one is how a folder gets collapsed or expanded without
+// opening the Folders overlay.
+type resolvedFolderHit struct {
+	project string
+	folder  string
+	y       int
+	x0, x1  int // half-open column range
 }
 
 // resolvedPanelHit records one ModeMultiView panel's full rendered
@@ -544,11 +625,12 @@ func (m *Model) panelAt(x, y int) (string, bool) {
 // m.panelHits (the real multi-panel layout's own project-rectangle hits) is
 // cleared here too — it's stale outside that layout, e.g. right after a
 // resize drops down to a single panel.
-func (m *Model) updateLinkHits(header string, listHits, detailHits []linkHit, detailX, detailY int, listRows []rowHit, listWidth int) {
+func (m *Model) updateLinkHits(header string, listHits, detailHits []linkHit, detailX, detailY int, listRows []rowHit, listHeaders []folderHit, listWidth int) {
 	m.panelHits = nil
 	if m.mode != ModeList && m.mode != ModeMultiView {
 		m.linkHits = nil
 		m.rowHits = nil
+		m.folderHits = nil
 		return
 	}
 	m.linkHits = m.linkHits[:0]
@@ -578,6 +660,31 @@ func (m *Model) updateLinkHits(header string, listHits, detailHits []linkHit, de
 			x1:        listX + listWidth,
 		})
 	}
+
+	m.folderHits = m.folderHits[:0]
+	for _, h := range listHeaders {
+		if m.activeProj >= len(m.projects) {
+			break
+		}
+		m.folderHits = append(m.folderHits, resolvedFolderHit{
+			project: m.projects[m.activeProj],
+			folder:  h.folder,
+			y:       listY + h.line,
+			x0:      listX,
+			x1:      listX + listWidth,
+		})
+	}
+}
+
+// folderHeaderAt returns the folder header at absolute terminal
+// coordinates (x, y), if any — a click there toggles it.
+func (m *Model) folderHeaderAt(x, y int) (project, folder string, ok bool) {
+	for _, h := range m.folderHits {
+		if y == h.y && x >= h.x0 && x < h.x1 {
+			return h.project, h.folder, true
+		}
+	}
+	return "", "", false
 }
 
 // sessionRowAt returns the session ID whose row contains absolute terminal
@@ -1042,13 +1149,19 @@ func (m *Model) archivedCount() int {
 // focusSession moves the cursor onto id, if it's in the current list. A
 // no-op otherwise, which is what callers want after a refresh that may have
 // filtered the session out (archived, deleted, or now in another project).
-func (m *Model) focusSession(id string) {
+// focusSession moves the cursor to id, reporting whether it was there to
+// move to. A session filed under a collapsed folder is not in m.sessions at
+// all, so callers that jump to an arbitrary session (search) have to notice
+// the miss and expand the folder rather than silently leaving the cursor —
+// and whatever the next keypress acts on — on some other session.
+func (m *Model) focusSession(id string) bool {
 	for i, s := range m.sessions {
 		if s.ID == id {
 			m.cursor = i
-			return
+			return true
 		}
 	}
+	return false
 }
 
 // neighborSessionID returns the ID of whichever session should take over the
@@ -1106,18 +1219,10 @@ func (m *Model) refreshSessions() {
 		selectedID = m.sessions[m.cursor].ID
 	}
 
-	proj := m.projects[m.activeProj]
-	all := m.allSessions()
-	out := make([]session.Session, 0, len(all))
-	for _, s := range all {
-		if s.Project == proj && s.Archived == m.showArchived {
-			out = append(out, s)
-		}
-	}
-	// No sort: allSessions comes in display order, and filtering preserves
-	// it. Which project and whether archived are showing is the TUI's own
-	// state; the order is the core's.
-	m.sessions = out
+	// One pass produces both the sessions the cursor indexes and the lines
+	// they render as, so the two can't disagree — see visibleList.
+	_, sessions := m.visibleList(m.projects[m.activeProj])
+	m.sessions = sessions
 
 	if selectedID != "" {
 		m.focusSession(selectedID)

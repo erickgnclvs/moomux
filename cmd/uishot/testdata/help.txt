@@ -36,6 +36,9 @@
            │    t          tag ticket / PR          R                  force-copy       │           
            │    e          edit session                                ticket/PR        │           
            │    D          diff tool                                   links: off       │           
+           │    g          file into a folder                                           │           
+           │    z          collapse its folder                                          │           
+           │    G          manage folders                                               │           
            │                                                                            │           
            │                                                                            │           
            │  Projects                            General                               │           
@@ -45,9 +48,6 @@
            │                                        s  settings (theme, sort mode,      │           
            │                                           auto-tmux, auto-submit, diff     │           
            │                                           tool)                            │           
-           │                                        u  update & relaunch (when a new    │           
-           │                                           version is available)            │           
-           │                                                                            │           
            │                                                                            │           
            │  ↑↓/jk/pg scroll  ?/esc close                                              │           
            │                                                                            │           
