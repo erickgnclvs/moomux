@@ -242,3 +242,39 @@ func TestScrollWindowFitsAtEveryCursor(t *testing.T) {
 		}
 	}
 }
+
+// A folder with nothing in the view being shown renders no header: an empty
+// folder, and one whose only members are filtered out by the archived view,
+// are both just a dead row in the list. The folder still exists — the
+// Folders overlay lists it — and its header comes back with its members.
+func TestVisibleListHidesFoldersEmptyInCurrentView(t *testing.T) {
+	be := &fakeBackend{sessions: []session.Session{
+		{ID: "demo:a", Project: "demo", Name: "a"},
+		{ID: "demo:old", Project: "demo", Name: "old", Folder: "done", Archived: true},
+	}}
+	m := newTestModel(be)
+	proj := m.cfg.Projects["demo"]
+	proj.Folders = map[string]config.FolderMeta{"done": {}, "empty": {}}
+	m.cfg.Projects["demo"] = proj
+	be.cfg = *m.cfg
+	m.sessionsChanged()
+
+	lines, _ := m.visibleList("demo")
+	for _, l := range lines {
+		if l.row.IsFolder() {
+			t.Fatalf("active view should show no folder headers, got %q", l.row.Folder)
+		}
+	}
+
+	m.showArchived = true
+	lines, _ = m.visibleList("demo")
+	var headers []string
+	for _, l := range lines {
+		if l.row.IsFolder() {
+			headers = append(headers, l.row.Folder)
+		}
+	}
+	if len(headers) != 1 || headers[0] != "done" {
+		t.Fatalf("archived view headers = %v, want just [done]", headers)
+	}
+}
