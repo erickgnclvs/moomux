@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -13,122 +12,76 @@ import (
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
-// displayLine is one rendered line of the session list: either a real
-// session (sessionIdx indexes m.sessions) or a folder header (folder is the
-// name, sessionIdx meaningless).
-type displayLine struct {
-	folder     string
+// listLine is one rendered line of a session list panel: either a folder
+// header (row.IsFolder()) or a session, where sessionIdx indexes the
+// sessions slice visibleList returned alongside it.
+type listLine struct {
+	row        sessionview.Row
 	sessionIdx int
 }
 
-// buildDisplayLines groups m.sessions — already in final display order — by
-// folder: the first session belonging to a not-yet-seen folder gets a header
-// line right before it, followed immediately by every other session sharing
-// that folder (wherever it lands in m.sessions), so a folder's members
-// always render as one contiguous, indented block. Collapsed folders never
-// have members in m.sessions at all (see refreshSessions), so they have no
-// member to anchor a header on; those are spliced in afterward at the
-// position their FolderMeta.Order says they belong, compared directly
-// against the Order of the surrounding lines (an expanded folder's own
-// position in that comparison is its anchor member's Order, matching how
-// Session.Order already places it in m.sessions).
+// visibleList is what a panel draws for one project: the core's row layout
+// (see sessionview.BuildRows — folder headers spliced in, members grouped
+// under them) filtered down to the current archived view, with a collapsed
+// folder's members dropped, plus the sessions those lines point at in the
+// same order.
 //
-// ponytail: that splice assumes the surrounding lines run in ascending
-// Order, which holds for the manual sort but not once the core's live-first
-// partition has moved a parked session below a live one — a collapsed
-// folder then lands near, not exactly at, its anchor. Placing it exactly
-// would mean deciding whether a collapsed folder counts as live, which
-// depends on member states that aren't in m.sessions while it's collapsed;
-// revisit as a whole if that placement turns out to matter.
-func (m *Model) buildDisplayLines() []displayLine {
-	seen := map[string]bool{}
-	var lines []displayLine
-	var orders []int64 // orders[i] is lines[i]'s Order, for splicing collapsed folders in below
-	for i, s := range m.sessions {
-		if s.Folder == "" {
-			lines = append(lines, displayLine{sessionIdx: i})
-			orders = append(orders, s.Order)
+// Both come out of one pass on purpose. They used to be computed
+// separately — the session list filtered here, the grouping recomputed at
+// render time — and any disagreement between them meant the cursor pointed
+// at a different session than the highlighted row. Multi-view had exactly
+// that bug: its panels listed a collapsed folder's members while the
+// keyboard's own list didn't, so acting on such a row hit whichever session
+// happened to share its index.
+//
+// Folder headers stay even when the current view has none of their members
+// (an empty folder, or one holding only archived sessions) — the header is
+// the only handle the folder has.
+func (m *Model) visibleList(proj string) ([]listLine, []session.Session) {
+	all := m.allSessions()
+	byID := make(map[string]session.Session, len(all))
+	for _, s := range all {
+		byID[s.ID] = s
+	}
+	var lines []listLine
+	var sessions []session.Session
+	for _, r := range sessionview.BuildRows(all, m.cfg.Projects[proj].Folders, proj) {
+		if r.IsFolder() {
+			lines = append(lines, listLine{row: r})
 			continue
 		}
-		if seen[s.Folder] {
+		s, ok := byID[r.ID]
+		if !ok || r.Hidden || s.Archived != m.showArchived {
 			continue
 		}
-		seen[s.Folder] = true
-		lines = append(lines, displayLine{folder: s.Folder})
-		orders = append(orders, s.Order)
-		for j, other := range m.sessions {
-			if other.Folder == s.Folder {
-				lines = append(lines, displayLine{sessionIdx: j})
-				orders = append(orders, other.Order)
-			}
-		}
+		lines = append(lines, listLine{row: r, sessionIdx: len(sessions)})
+		sessions = append(sessions, s)
 	}
-	if len(m.projects) == 0 {
-		return lines
-	}
-	proj := m.projects[m.activeProj]
-	var collapsed []string
-	for name := range m.cfg.Projects[proj].Folders {
-		if !seen[name] {
-			collapsed = append(collapsed, name)
-		}
-	}
-	sort.Strings(collapsed) // stable tiebreak among folders landing at the same position
-	for _, name := range collapsed {
-		order := m.cfg.Projects[proj].Folders[name].Order
-		at := len(lines)
-		for i, o := range orders {
-			if o > order {
-				at = i
-				break
-			}
-		}
-		lines = append(lines, displayLine{})
-		copy(lines[at+1:], lines[at:])
-		lines[at] = displayLine{folder: name}
-		orders = append(orders, 0)
-		copy(orders[at+1:], orders[at:])
-		orders[at] = order
-	}
-	return lines
+	return lines, sessions
 }
 
-// cursorDisplayLine finds cursor's (an m.sessions index) position within
-// lines, so scrolling/rendering can operate on display-line coordinates
-// (which include folder headers) while m.cursor stays a plain m.sessions
-// index everywhere else in the codebase.
-func cursorDisplayLine(lines []displayLine, cursor int) int {
+// memberCount is how many members a folder header should report, in
+// whichever view the list is currently filtered to.
+func (m *Model) memberCount(r sessionview.Row) int {
+	if m.showArchived {
+		return r.ArchivedCount
+	}
+	return r.Count
+}
+
+// cursorDisplayLine finds cursor's (a sessions index) position within
+// lines, so scrolling operates on line coordinates — which include folder
+// headers — while the cursor stays a plain session index everywhere else.
+func cursorDisplayLine(lines []listLine, cursor int) int {
 	for i, l := range lines {
-		if l.folder == "" && l.sessionIdx == cursor {
+		if !l.row.IsFolder() && l.sessionIdx == cursor {
 			return i
 		}
 	}
 	return 0
 }
 
-// visualSessionOrder returns m.sessions indices in the order sessions are
-// actually displayed (buildDisplayLines' session lines, skipping folder
-// headers). updateList's Up/Down cursor movement and MoveUp/MoveDown
-// reordering must walk this instead of m.sessions' own index order: a
-// folder's members aren't necessarily contiguous in m.sessions (Folder
-// membership doesn't constrain Order — see SetSessionFolder), only in the
-// grouped display buildDisplayLines produces, so m.cursor±1 can silently
-// point at a session other than the one visually above/below.
-func (m *Model) visualSessionOrder() []int {
-	lines := m.buildDisplayLines()
-	order := make([]int, 0, len(m.sessions))
-	for _, l := range lines {
-		if l.folder == "" {
-			order = append(order, l.sessionIdx)
-		}
-	}
-	return order
-}
-
-// renderFolderHeaderLine renders one collapsible-group header row. It is
-// decoration only — never cursor-addressable or clickable; collapsing,
-// renaming, and deleting a folder go through the Folders (G) overlay instead
-// (see internal/tui/folders.go), so this needs no hit-testing of its own.
+// renderFolderHeaderLine renders one collapsible-group header row.
 func (m *Model) renderFolderHeaderLine(name string, collapsed bool, count int, width int) string {
 	glyph := "▾"
 	if collapsed {
@@ -136,26 +89,6 @@ func (m *Model) renderFolderHeaderLine(name string, collapsed bool, count int, w
 	}
 	text := fmt.Sprintf("%s %s (%d)", glyph, name, count)
 	return muteStyle.Render(truncate(text, width))
-}
-
-// folderMemberCounts returns folder name -> how many of the active
-// project's sessions (matching the current archived view) are filed under
-// it. It counts from allSessions, not m.sessions, because a collapsed
-// folder's members are excluded from the latter entirely — the header count
-// is the only place they show up. Shared by the list's folder headers and
-// the Folders overlay so the two can't drift.
-func (m *Model) folderMemberCounts() map[string]int {
-	if len(m.projects) == 0 {
-		return nil
-	}
-	proj := m.projects[m.activeProj]
-	counts := map[string]int{}
-	for _, s := range m.allSessions() {
-		if s.Project == proj && s.Folder != "" && s.Archived == m.showArchived {
-			counts[s.Folder]++
-		}
-	}
-	return counts
 }
 
 // linkHit records where a clickable ticket/PR icon landed within the
@@ -180,7 +113,15 @@ type rowHit struct {
 	line      int
 }
 
-func (m *Model) renderList(width, height int) (string, []linkHit, []rowHit) {
+// folderHit records a folder header's line, so clicking one collapses or
+// expands it. Headers aren't a cursor stop (the cursor is a session index),
+// so the mouse and the Folders overlay are how a folder gets toggled.
+type folderHit struct {
+	folder string
+	line   int
+}
+
+func (m *Model) renderList(width, height int) (string, []linkHit, []rowHit, []folderHit) {
 	var b strings.Builder
 	title := "SESSIONS"
 	empty := "  no sessions — press n to create"
@@ -203,10 +144,14 @@ func (m *Model) renderList(width, height int) (string, []linkHit, []rowHit) {
 		b.WriteString("\n\n")
 		titleRows = 2
 	}
-	lines := m.buildDisplayLines()
+	var lines []listLine
+	var sessions []session.Session
+	if len(m.projects) > 0 {
+		lines, sessions = m.visibleList(m.projects[m.activeProj])
+	}
 	if len(lines) == 0 {
 		b.WriteString(muteStyle.Render(empty))
-		return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(b.String()), nil, nil
+		return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(b.String()), nil, nil, nil
 	}
 	visible := height - titleRows
 	if visible < 1 {
@@ -223,24 +168,24 @@ func (m *Model) renderList(width, height int) (string, []linkHit, []rowHit) {
 	}
 	var hits []linkHit
 	var rows []rowHit
-	counts := m.folderMemberCounts()
+	var headers []folderHit
 	for li := start; li < end; li++ {
 		dl := lines[li]
 		// titleRows lines for the "SESSIONS" title and blank line above (0 on
 		// short terminals, where it's hidden), plus rowOffset for the "⌃ more
 		// above" hint line (0 unless it's actually shown).
 		line := titleRows + rowOffset + (li - start)
-		if dl.folder != "" {
-			collapsed := m.cfg.Projects[m.projects[m.activeProj]].Folders[dl.folder].Collapsed
-			b.WriteString(m.renderFolderHeaderLine(dl.folder, collapsed, counts[dl.folder], width))
+		if dl.row.IsFolder() {
+			headers = append(headers, folderHit{folder: dl.row.Folder, line: line})
+			b.WriteString(m.renderFolderHeaderLine(dl.row.Folder, dl.row.Collapsed, m.memberCount(dl.row), width))
 			b.WriteString("\n")
 			continue
 		}
-		s := m.sessions[dl.sessionIdx]
+		s := sessions[dl.sessionIdx]
 		selected := dl.sessionIdx == m.cursor
 		indent := ""
 		rowWidth := width - 2
-		if s.Folder != "" {
+		if dl.row.Folder != "" {
 			indent = "  "
 			rowWidth -= 2
 		}
@@ -267,7 +212,7 @@ func (m *Model) renderList(width, height int) (string, []linkHit, []rowHit) {
 		b.WriteString(scrollHintLine("⌄", width))
 		b.WriteString("\n")
 	}
-	return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(b.String()), hits, rows
+	return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(b.String()), hits, rows, headers
 }
 
 // scrollWindow computes the [start, end) window into a total-item list of

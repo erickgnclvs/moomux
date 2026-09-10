@@ -2,17 +2,17 @@
                                         
                                         
                                         
+                                        
 ╭──────────────────────────────────────╮
 │                                      │
-│  Assign to folder                    │
+│  Delete folder?                      │
 │                                      │
-│  folder:> auth                       │
+│  name: auth                          │
 │                                      │
-│  blank removes it from any folder    │
-│  existing: auth, legacy              │
+│  2 session(s) move back to top leve  │
+│  No session or worktree is deleted.  │
 │                                      │
-│                                      │
-│  enter save  esc cancel              │
+│  y to confirm   n/esc to cancel      │
 │                                      │
 ╰──────────────────────────────────────╯
                                         
@@ -29,19 +29,19 @@
                                                                                                     
                                                                                                     
                                                                                                     
-           ╭────────────────────────────────────────────────────────────────────────────╮           
-           │                                                                            │           
-           │  Assign to folder                                                          │           
-           │                                                                            │           
-           │  folder:     > auth                                                        │           
-           │                                                                            │           
-           │  blank removes it from any folder                                          │           
-           │  existing: auth, legacy                                                    │           
-           │                                                                            │           
-           │                                                                            │           
-           │  enter save  esc cancel                                                    │           
-           │                                                                            │           
-           ╰────────────────────────────────────────────────────────────────────────────╯           
+                                                                                                    
+                             ╭────────────────────────────────────────╮                             
+                             │                                        │                             
+                             │  Delete folder?                        │                             
+                             │                                        │                             
+                             │  name: auth                            │                             
+                             │                                        │                             
+                             │  2 session(s) move back to top level.  │                             
+                             │  No session or worktree is deleted.    │                             
+                             │                                        │                             
+                             │  y to confirm   n/esc to cancel        │                             
+                             │                                        │                             
+                             ╰────────────────────────────────────────╯                             
                                                                                                     
                                                                                                     
                                                                                                     

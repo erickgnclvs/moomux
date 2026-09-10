@@ -40,6 +40,7 @@ type KeyMap struct {
 	Settings       key.Binding
 	Search         key.Binding
 	AssignFolder   key.Binding
+	ToggleFolder   key.Binding
 	Folders        key.Binding
 	Update         key.Binding
 }
@@ -114,6 +115,7 @@ func DefaultKeyMap() KeyMap {
 		// its project (blank name removes it from one) — a mnemonic pair with
 		// Folders below, which manages the groups themselves.
 		AssignFolder: key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "folder")),
+		ToggleFolder: key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "collapse folder")),
 		Folders:      key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "manage folders")),
 		// Only does anything once UpdateVersion is set (a newer release was
 		// found) — see updateList's Update case.

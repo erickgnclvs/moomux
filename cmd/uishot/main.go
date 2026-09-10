@@ -80,6 +80,7 @@ var screens = map[string][]string{
 	// per-session assign form (g) with a session already filed under "auth".
 	"folders":        {},
 	"folders-manage": {"G"},
+	"folder-delete":  {"G", "d"},
 	"folder-assign":  {"down", "down", "g"},
 	// Same session as "list" but with a PR added alongside its existing
 	// ticket — the case that motivated CompactDetail: a session tagged with
@@ -314,7 +315,20 @@ func (f *fakeBackend) SetFolderCollapsed(project, name string, collapsed bool) e
 	f.cfg.Projects[project] = p
 	return nil
 }
-func (f *fakeBackend) DeleteFolder(project, name string) error { return nil }
+func (f *fakeBackend) DeleteFolder(project, name string) error                  { return nil }
+func (f *fakeBackend) SetProjectCollapsed(project string, collapsed bool) error { return nil }
+func (f *fakeBackend) ProjectFolders() map[string]map[string]config.FolderMeta {
+	if f.cfg == nil {
+		return nil
+	}
+	out := map[string]map[string]config.FolderMeta{}
+	for name, p := range f.cfg.Projects {
+		if len(p.Folders) > 0 {
+			out[name] = p.Folders
+		}
+	}
+	return out
+}
 func (f *fakeBackend) SetSessionTags(id, ticket, pr string) (session.Session, error) {
 	return session.Session{}, nil
 }
@@ -529,38 +543,39 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 		if screenName == "multiview-compact-detail" {
 			cfg.CompactDetail = true
 		}
-	case "folders", "folders-manage", "folder-assign":
+	case "folders", "folders-manage", "folder-assign", "folder-delete":
 		now := time.Now().UTC()
-		// Explicit Order values (feature-auth=1, legacy=2, bugfix-timeout=3,
-		// auth-refresh/-logout=4/5) put the collapsed "legacy" folder between
-		// the two loose sessions rather than at either end, demonstrating
-		// that a collapsed folder holds its manually-set position (via
-		// FolderMeta.Order) instead of always sinking to the bottom.
-		for i := range sessions {
-			switch sessions[i].ID {
-			case "demo:feature-auth":
-				sessions[i].Order = 1
-			case "demo:bugfix-timeout":
-				sessions[i].Order = 3
+		// The core serves sessions already in display order (see
+		// sessionview.Snapshot.Sessions), so this fixture lays them out
+		// that way rather than relying on Order fields a fake backend never
+		// sorts by. The collapsed "legacy" folder sits between the two
+		// loose sessions, which is the point being shown: a collapsed
+		// folder holds the position of its members instead of sinking to
+		// the bottom of the list.
+		var ordered []session.Session
+		for _, s := range sessions {
+			ordered = append(ordered, s)
+			if s.ID == "demo:feature-auth" {
+				ordered = append(ordered, session.Session{
+					ID: "demo:legacy-cleanup", Project: "demo", Name: "legacy-cleanup",
+					WorktreePath: "/tmp/demo/legacy-cleanup", TmuxSession: "moomux-legacy-cleanup",
+					CreatedAt: now, Agent: "claude", Folder: "legacy",
+				})
 			}
 		}
-		sessions = append(sessions, session.Session{
+		sessions = append(ordered, session.Session{
 			ID: "demo:auth-refresh", Project: "demo", Name: "auth-refresh",
 			WorktreePath: "/tmp/demo/auth-refresh", TmuxSession: "moomux-auth-refresh",
-			CreatedAt: now, Agent: "claude", Folder: "auth", Order: 4,
+			CreatedAt: now, Agent: "claude", Folder: "auth",
 		}, session.Session{
 			ID: "demo:auth-logout", Project: "demo", Name: "auth-logout",
 			WorktreePath: "/tmp/demo/auth-logout", TmuxSession: "moomux-auth-logout",
-			CreatedAt: now, Agent: "claude", Folder: "auth", Order: 5,
-		}, session.Session{
-			ID: "demo:legacy-cleanup", Project: "demo", Name: "legacy-cleanup",
-			WorktreePath: "/tmp/demo/legacy-cleanup", TmuxSession: "moomux-legacy-cleanup",
-			CreatedAt: now, Agent: "claude", Folder: "legacy", Order: 2,
+			CreatedAt: now, Agent: "claude", Folder: "auth",
 		})
 		p := cfg.Projects["demo"]
 		p.Folders = map[string]config.FolderMeta{
 			"auth":   {},
-			"legacy": {Collapsed: true, Order: 2},
+			"legacy": {Collapsed: true},
 		}
 		cfg.Projects["demo"] = p
 	case "project-picker-emptied":

@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"slices"
 	"sync"
 
 	"github.com/erickgnclvs/moomux/internal/config"
@@ -289,7 +288,7 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		// the core's own order, which is exactly the imprecision that
 		// motivated the new method — remove this once moomux-mac sends an
 		// order instead of a delta.
-		return Result{}, moveSession(b, a.ID, a.Delta)
+		return Result{}, s.moveSession(b, a.ID, a.Delta)
 	case "MoveProject":
 		return s.mutResult(b.MoveProject(a.Name, a.Delta))
 
@@ -310,6 +309,8 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		return s.mutResult(b.SetFolderCollapsed(a.Project, a.Name, a.On))
 	case "DeleteFolder":
 		return s.mutResult(b.DeleteFolder(a.Project, a.Name))
+	case "SetProjectCollapsed":
+		return s.mutResult(b.SetProjectCollapsed(a.Project, a.On))
 
 	case "AddProject":
 		warning, err := b.AddProject(a.Name, a.Proj)
@@ -345,34 +346,37 @@ func sessionResult(sess session.Session, err error) (Result, error) {
 	return Result{Session: &sess}, err
 }
 
-// moveSession shifts one session by delta within its project's slice of the
-// core's session order and persists the result — the delta-based reorder the
-// deprecated MoveSession method still exposes. Out-of-bounds is a no-op, not
-// an error, matching the behaviour that method has always had.
-func moveSession(b tui.Backend, id string, delta int) error {
-	var peers []string
-	var project string
-	for _, s := range b.Sessions() {
-		if s.ID == id {
-			project = s.Project
+// moveSession shifts one session by delta within its project and persists
+// the result — the delta-based reorder the deprecated MoveSession method
+// still exposes. Out-of-bounds is a no-op, not an error, matching the
+// behaviour that method has always had.
+//
+// It moves in the same blocks the list is drawn in (sessionview.Reorder),
+// so a caller that knows nothing about folders still can't drop a session
+// into the middle of one — the resulting order would only be regrouped on
+// the next render anyway.
+func (s *Server) moveSession(b tui.Backend, id string, delta int) error {
+	sessions := b.Sessions()
+	project := ""
+	for _, sess := range sessions {
+		if sess.ID == id {
+			project = sess.Project
 			break
 		}
 	}
 	if project == "" {
 		return fmt.Errorf("unknown session %q", id)
 	}
-	for _, s := range b.Sessions() {
-		if s.Project == project {
-			peers = append(peers, s.ID)
-		}
+	var folders map[string]config.FolderMeta
+	if s.Config != nil {
+		cfg := s.Config()
+		folders = cfg.Projects[project].Folders
 	}
-	idx := slices.Index(peers, id)
-	j := idx + delta
-	if idx < 0 || j < 0 || j >= len(peers) {
+	ids, ok := sessionview.Reorder(sessionview.BuildRows(sessions, folders, project), id, delta, nil)
+	if !ok {
 		return nil
 	}
-	peers[idx], peers[j] = peers[j], peers[idx]
-	return b.ReorderSessions(peers)
+	return b.ReorderSessions(ids)
 }
 
 // mutResult adapts the config-mutating Backend methods (all bare error

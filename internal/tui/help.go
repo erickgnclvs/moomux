@@ -51,6 +51,9 @@ func (m *Model) helpGroups() []helpGroup {
 				{"A", archivedDesc},
 				{"t", "tag ticket / PR"},
 				{"e", "edit session"},
+				{"g", "file into a folder"},
+				{"z", "collapse its folder"},
+				{"G", "manage folders"},
 			},
 		},
 		{

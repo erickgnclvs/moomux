@@ -287,6 +287,13 @@ func (c *Client) DeleteFolder(project, name string) error {
 	return c.mut("DeleteFolder", Args{Project: project, Name: name})
 }
 
+// SetProjectCollapsed persists a project group's own collapsed state, for
+// a front end that renders projects as collapsible groups. The TUI has no
+// caller for it — see config.Project.Collapsed.
+func (c *Client) SetProjectCollapsed(project string, collapsed bool) error {
+	return c.mut("SetProjectCollapsed", Args{Project: project, On: collapsed})
+}
+
 func (c *Client) AddProject(name string, p config.Project) (string, error) {
 	r, err := c.mutResult("AddProject", Args{Name: name, Proj: p})
 	return r.Hint, err

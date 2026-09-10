@@ -417,7 +417,7 @@ func (f *fakeBackend) SetSessionFolder(id, folder string) (session.Session, erro
 		for _, s := range f.sessions {
 			if s.ID == id {
 				if _, exists := f.cfg.Projects[s.Project].Folders[folder]; !exists {
-					f.setFolderMeta(s.Project, folder, config.FolderMeta{Order: s.Order})
+					f.setFolderMeta(s.Project, folder, config.FolderMeta{})
 				}
 				break
 			}
@@ -457,6 +457,28 @@ func (f *fakeBackend) SetFolderCollapsed(project, name string, collapsed bool) e
 	f.setFolderMeta(project, name, meta)
 	return nil
 }
+
+// ProjectFolders satisfies sessionview.Core, so a fake backend can feed the
+// same row derivation the real core serves.
+func (f *fakeBackend) ProjectFolders() map[string]map[string]config.FolderMeta {
+	out := map[string]map[string]config.FolderMeta{}
+	for name, p := range f.cfg.Projects {
+		if len(p.Folders) > 0 {
+			out[name] = p.Folders
+		}
+	}
+	return out
+}
+
+func (f *fakeBackend) SetProjectCollapsed(project string, collapsed bool) error {
+	if f.cfg.Projects != nil {
+		p := f.cfg.Projects[project]
+		p.Collapsed = collapsed
+		f.cfg.Projects[project] = p
+	}
+	return nil
+}
+
 func (f *fakeBackend) DeleteFolder(project, name string) error {
 	f.deleteFolderCalls = append(f.deleteFolderCalls, deleteFolderCall{project: project, name: name})
 	if f.deleteFolderErr != nil {

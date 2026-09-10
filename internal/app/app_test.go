@@ -1778,20 +1778,14 @@ func TestReorderSessionsLeavesArchivedSessionsUntouched(t *testing.T) {
 	}
 }
 
-// TestCreateFolderLandsAfterEverythingElse guards the Folders overlay's "n"
-// (new) action: a brand new folder must get an Order past every existing
-// top-level session and folder in the project, so it doesn't misleadingly
-// sort to the very top (Order's zero value sorts first).
-func TestCreateFolderLandsAfterEverythingElse(t *testing.T) {
+// TestCreateFolderStoresNoPosition pins the model down: a folder's place in
+// the list is its members' place (see sessionview.BuildRows), so creating
+// one must persist nothing but its existence. A stored position was the old
+// design, and it drifted out of step with session.Session.Order every time
+// Store.Reorder renumbered a subset of a project's sessions.
+func TestCreateFolderStoresNoPosition(t *testing.T) {
 	a, _, _, _ := newTestApp(t, gitProject("/repo"))
 	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Order: 1})
-	_ = a.Store.Put(session.Session{ID: "demo:b", Project: "demo", Name: "b", Order: 5})
-	p := a.Cfg.Projects["demo"]
-	p.Folders = map[string]config.FolderMeta{"existing": {Order: 3}}
-	a.Cfg.Projects["demo"] = p
-	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
-		t.Fatal(err)
-	}
 
 	if err := a.CreateFolder("demo", "fresh"); err != nil {
 		t.Fatal(err)
@@ -1803,11 +1797,45 @@ func TestCreateFolderLandsAfterEverythingElse(t *testing.T) {
 	if !ok {
 		t.Fatal("expected folder \"fresh\" to be created")
 	}
-	if meta.Order <= 5 {
-		t.Fatalf("new folder's Order = %d, want > 5 (past session b and folder existing)", meta.Order)
+	if meta != (config.FolderMeta{}) {
+		t.Fatalf("new folder meta = %+v, want the zero value (expanded, no stored position)", meta)
 	}
-	if meta.Collapsed {
-		t.Fatal("expected a newly created folder to start expanded")
+}
+
+// A folder name that can't be drawn as a list row must be refused at the
+// core, not in a form handler: internal/ipc reaches these same mutators
+// from another front end, where no form ever ran.
+func TestFolderNamesAreValidatedAtTheCore(t *testing.T) {
+	a, _, _, _ := newTestApp(t, gitProject("/repo"))
+	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a"})
+
+	// "" is not in this list: it is SetSessionFolder's own "put this back at
+	// top level", and CreateFolder rejects it on its own below.
+	for _, name := range []string{"   ", "a\nb", "with\ttab", strings.Repeat("x", config.FolderNameMax+1)} {
+		if err := a.CreateFolder("demo", name); err == nil {
+			t.Errorf("CreateFolder(%q) succeeded, want an error", name)
+		}
+		if _, err := a.SetSessionFolder("demo:a", name); err == nil {
+			t.Errorf("SetSessionFolder(%q) succeeded, want an error", name)
+		}
+	}
+	if err := a.CreateFolder("demo", ""); err == nil {
+		t.Error("CreateFolder(\"\") succeeded, want an error")
+	}
+
+	// Surrounding whitespace is trimmed rather than rejected, so " auth "
+	// and "auth" can't become two folders that look identical on screen.
+	if err := a.CreateFolder("demo", " auth "); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := a.Cfg.Projects["demo"].Folders["auth"]; !ok {
+		t.Fatalf("expected the name to be trimmed to \"auth\", got %v", a.Cfg.Projects["demo"].Folders)
+	}
+	if _, err := a.SetSessionFolder("demo:a", " auth "); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := a.Store.Get("demo:a"); s.Folder != "auth" {
+		t.Fatalf("session filed under %q, want the trimmed \"auth\"", s.Folder)
 	}
 }
 
@@ -1832,22 +1860,8 @@ func TestSetSessionFolderCreatesFolderOnFirstUse(t *testing.T) {
 	if got.Folder != "auth" {
 		t.Fatalf("session.Folder = %q, want auth", got.Folder)
 	}
-	meta, ok := a.Cfg.Projects["demo"].Folders["auth"]
-	if !ok {
+	if _, ok := a.Cfg.Projects["demo"].Folders["auth"]; !ok {
 		t.Fatal("expected folder \"auth\" to be created")
-	}
-	if meta.Order != 3 {
-		t.Fatalf("new folder's Order = %d, want 3 (anchored on the session it was created for)", meta.Order)
-	}
-
-	// Filing a second session into the same (now-existing) folder must not
-	// touch the folder's Order again.
-	_ = a.Store.Put(session.Session{ID: "demo:b", Project: "demo", Name: "b", Order: 9})
-	if _, err := a.SetSessionFolder("demo:b", "auth"); err != nil {
-		t.Fatal(err)
-	}
-	if got := a.Cfg.Projects["demo"].Folders["auth"].Order; got != 3 {
-		t.Fatalf("existing folder's Order changed to %d, want unchanged 3", got)
 	}
 }
 
@@ -1869,7 +1883,7 @@ func TestRenameFolderUpdatesMembersAndRejectsCollision(t *testing.T) {
 	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Folder: "old"})
 	_ = a.Store.Put(session.Session{ID: "demo:b", Project: "demo", Name: "b", Folder: "other"})
 	p := a.Cfg.Projects["demo"]
-	p.Folders = map[string]config.FolderMeta{"old": {Order: 1}, "other": {Order: 2}}
+	p.Folders = map[string]config.FolderMeta{"old": {}, "other": {}}
 	a.Cfg.Projects["demo"] = p
 	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
 		t.Fatal(err)

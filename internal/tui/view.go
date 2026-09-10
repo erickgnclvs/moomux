@@ -383,6 +383,8 @@ func (m *Model) View() string {
 	case ModeFolderForm:
 		content := m.compactOverlayContent(m.renderFolderForm())
 		return m.renderOverlay(content, m.formFooter("", "enter save  esc cancel", ""), m.focusedOverlayLine(content))
+	case ModeConfirmDeleteFolder:
+		return m.renderOverlay(m.renderConfirmDeleteFolder(), "", -1)
 	case ModeFolders:
 		content := m.compactOverlayContent(m.renderFolders())
 		return m.renderOverlay(content, m.foldersFooter(), m.focusedOverlayLine(content))
@@ -444,6 +446,7 @@ func (m *Model) renderListView() string {
 	var body string
 	var hits []linkHit
 	var rows []rowHit
+	var headers []folderHit
 	var detailHits []linkHit
 	var detailX, detailY, listWidth int
 	// Below this width a side-by-side list+detail split leaves too little
@@ -472,7 +475,7 @@ func (m *Model) renderListView() string {
 			// fraction split, kept unchanged so the keyboard-showing case
 			// still hides the detail pane the way it always has.
 			var listContent string
-			listContent, hits, rows = m.renderList(panelW-2, bodyHeight)
+			listContent, hits, rows, headers = m.renderList(panelW-2, bodyHeight)
 			body = panelBorder.Width(panelW).Height(bodyHeight).Render(listContent)
 		} else {
 			// detailH is sized around the tallest the detail panel could
@@ -496,7 +499,7 @@ func (m *Model) renderListView() string {
 			}
 			listH := avail - detailH
 			var listContent string
-			listContent, hits, rows = m.renderList(panelW-2, listH)
+			listContent, hits, rows, headers = m.renderList(panelW-2, listH)
 			var detailContent string
 			detailContent, detailHits = m.renderDetail(panelW-2, detailH)
 			separator := lipgloss.NewStyle().Foreground(colBorder).Render(strings.Repeat("─", panelW-2))
@@ -525,7 +528,7 @@ func (m *Model) renderListView() string {
 		// filler rows per panel and clipped link hits near the bottom.
 		listWidth = listW
 		var listContent string
-		listContent, hits, rows = m.renderList(listW-2, bodyHeight)
+		listContent, hits, rows, headers = m.renderList(listW-2, bodyHeight)
 		left := panelBorder.Width(listW).Height(bodyHeight).Render(listContent)
 		var detailContent string
 		detailContent, detailHits = m.renderDetail(detailW-2, bodyHeight)
@@ -535,7 +538,7 @@ func (m *Model) renderListView() string {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 	}
 
-	m.updateLinkHits(header, hits, detailHits, detailX, detailY, rows, listWidth)
+	m.updateLinkHits(header, hits, detailHits, detailX, detailY, rows, headers, listWidth)
 
 	base := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 	// Very small terminal sizes can be shorter/narrower than the fixed

@@ -355,7 +355,7 @@ func TestMoveDownSwapsVisuallyAdjacentSessionAcrossNonAdjacentFolderMembers(t *t
 	}
 
 	// Persisted physical slot order doesn't need to match rendered order —
-	// buildDisplayLines regroups by Folder on every render regardless. What
+	// the core's BuildRows regroups by folder regardless. What
 	// must hold is the actual regression: re-deriving the visual order from
 	// the persisted result puts e before c (c moved past its true visual
 	// neighbor) with d still right after the folder block, not reordered
@@ -369,16 +369,9 @@ func TestMoveDownSwapsVisuallyAdjacentSessionAcrossNonAdjacentFolderMembers(t *t
 		reordered[i] = byID[id]
 	}
 	be.sessions = reordered
+	m.sessionsChanged()
 	m.refreshSessions()
-	lines := m.buildDisplayLines()
-	var visual []string
-	for _, l := range lines {
-		if l.folder != "" {
-			visual = append(visual, "["+l.folder+"]")
-			continue
-		}
-		visual = append(visual, m.sessions[l.sessionIdx].ID)
-	}
+	visual := visualIDs(m, "demo")
 	want := []string{"demo:a", "demo:b", "[grp]", "demo:e", "demo:c", "demo:d"}
 	if len(visual) != len(want) {
 		t.Fatalf("visual order = %v, want %v", visual, want)
@@ -465,4 +458,19 @@ func TestRefreshSessionsSortsLiveStatusFirst(t *testing.T) {
 			t.Fatalf("sessions = %v, want %v (the live session should float above the non-live one)", got, want)
 		}
 	}
+}
+
+// visualIDs renders a project's list layout as ids, with folder headers in
+// brackets — what the user actually sees, top to bottom.
+func visualIDs(m *Model, proj string) []string {
+	lines, sessions := m.visibleList(proj)
+	var out []string
+	for _, l := range lines {
+		if l.row.IsFolder() {
+			out = append(out, "["+l.row.Folder+"]")
+			continue
+		}
+		out = append(out, sessions[l.sessionIdx].ID)
+	}
+	return out
 }

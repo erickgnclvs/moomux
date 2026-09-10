@@ -198,18 +198,59 @@ in `ids` are untouched, and an id that no longer exists is skipped rather
 than failing the whole write.
 
 **Folders** — `CreateFolder`, `SetSessionFolder`, `RenameFolder`,
-`SetFolderCollapsed`, `DeleteFolder`.
+`SetFolderCollapsed`, `DeleteFolder`, `SetProjectCollapsed`.
 
-Folders are one flat level per project, and the name *is* the id. The split
-is deliberate: a folder's own display state (collapse, manual position) lives
-in config under `Project.Folders`, while *membership* lives on each session as
-`Session.Folder`. So `RenameFolder` and `DeleteFolder` return a config
-snapshot but also rewrite every member session, and `SetSessionFolder` — which
-creates the folder on its first use — is the one session mutator that returns
-both a session and a config snapshot. A member pointing at a folder name that
-isn't in `Project.Folders` renders as if the metadata were zero-valued rather
-than disappearing, which is what keeps those two writes not needing to be one
-transaction.
+Folders are one flat level per project, and the name *is* the id (trimmed,
+and rejected if empty or carrying a control character — see
+`config.CleanFolderName`; validation is here rather than in a form handler
+because a form is one front end's business). The split is deliberate: a
+folder's own display state lives in config under `Project.Folders`, while
+*membership* lives on each session as `Session.Folder`. So `RenameFolder`
+and `DeleteFolder` return a config snapshot but also rewrite every member
+session, and `SetSessionFolder` — which creates the folder on its first use
+— is the one session mutator that returns both a session and a config
+snapshot. A member pointing at a folder name that isn't in `Project.Folders`
+renders as if the metadata were zero-valued rather than disappearing, which
+is what keeps those two writes not needing to be one transaction.
+
+What a folder does *not* carry is a position. A folder sits wherever its
+first member sits, and one with no members at all sorts last by name. An
+earlier version stored a per-folder order in the same units as
+`Session.Order`; because `ReorderSessions` renumbers only the sessions it is
+handed, the two number spaces drifted the moment anything was reordered
+while a folder was collapsed, and in a project nobody had manually reordered
+(every `Order` is 0 there) a collapsed folder rendered at the bottom of the
+list instead of where its members were. A derived anchor can't drift.
+
+`SetProjectCollapsed` is the same idea one level up: whether a project's own
+group is collapsed, for a client that renders projects as a tree.
+`config.Project.Collapsed` is served like any other config field. The TUI
+has no caller for it — it shows one project at a time — and that is fine:
+display state belongs with the rest of the state, not in one front end's
+private preferences.
+
+### Rows: the list layout, derived once
+
+`Snapshot.Rows` is `Sessions` laid out as display rows, keyed by project:
+each entry is a folder header or a session, in the order a client draws
+them. Headers carry their collapse state and their member counts for both
+the active and archived views; a session inside a collapsed folder is
+present but marked `hidden`, and one inside any folder names it, so a
+client can indent without joining back to the session.
+
+This exists for the same reason `Sessions` is served in order rather than
+sorted per client: grouping sessions under a folder, deciding where a
+header goes, and knowing what a collapsed folder is hiding are all
+derivations, and a second front end doing them in its own language is a
+second chance to disagree about what a project looks like. Clients walk
+`Rows` and render.
+
+A hidden row is still a row. Manual reorder sends back the project's
+*entire* order — hidden and archived rows included — because
+`Store.Reorder` numbers what it is handed `1..N`, so any session left out
+keeps a stale `Order` that then interleaves with the renumbered ones.
+`sessionview.Blocks`/`Reorder` are the in-process helpers for computing
+that; over the wire it is still just `ReorderSessions` with the full list.
 
 **Projects** — `AddProject`, `InitProjectAndAdd`, `AddPlainProject`,
 `UpdateProject`, `RemoveProject`, `MoveProject`.

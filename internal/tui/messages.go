@@ -146,9 +146,13 @@ type FolderRenamedMsg struct {
 }
 
 // FolderCollapsedSetMsg is the result of an async SetFolderCollapsed call.
+// FocusID, when set, is the session the cursor should land on afterwards —
+// how a jump into a collapsed folder (search) opens it and selects its
+// target in one step.
 type FolderCollapsedSetMsg struct {
 	Project, Name string
 	Collapsed     bool
+	FocusID       string
 	Err           error
 	Cfg           *config.Config
 }

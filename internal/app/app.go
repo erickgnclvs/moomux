@@ -536,6 +536,48 @@ func (a *App) Projects() []string {
 	return a.Cfg.OrderedProjectNames()
 }
 
+// SetProjectCollapsed persists whether a project's own group is collapsed
+// in a client that renders projects as collapsible groups. Nothing in the
+// TUI reads it (see config.Project.Collapsed); it exists so that state
+// lives with every other piece of display state instead of in one front
+// end's private preferences.
+func (a *App) SetProjectCollapsed(project string, collapsed bool) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
+		return fmt.Errorf("reload config: %w", err)
+	}
+	p, ok := a.Cfg.Projects[project]
+	if !ok {
+		return fmt.Errorf("unknown project %q", project)
+	}
+	prev := p.Collapsed
+	p.Collapsed = collapsed
+	a.Cfg.Projects[project] = p
+	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
+		p.Collapsed = prev
+		a.Cfg.Projects[project] = p
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
+}
+
+// ProjectFolders returns every project's folder display state, copied out
+// from under cfgMu so a caller can hold it while the config changes. Feeds
+// sessionview.BuildRows, which is where a folder's layout is decided for
+// every front end at once.
+func (a *App) ProjectFolders() map[string]map[string]config.FolderMeta {
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+	out := make(map[string]map[string]config.FolderMeta, len(a.Cfg.Projects))
+	for name, p := range a.Cfg.Projects {
+		if len(p.Folders) > 0 {
+			out[name] = maps.Clone(p.Folders)
+		}
+	}
+	return out
+}
+
 // MoveProject shifts the project with the given name by delta positions (-1
 // left, +1 right) in the manual project order and persists it. It's a no-op
 // if the move would go out of bounds.
@@ -1399,29 +1441,20 @@ func (a *App) refileSessions(project, from, to string) error {
 // Folders overlay's "n" (new) action. It's an error to create one that
 // already exists; use SetSessionFolder/RenameFolder to file sessions or
 // rename instead.
+//
+// A folder with no members renders last (see sessionview.BuildRows), so
+// there's nothing to position here: it moves into place on its own as soon
+// as the first session is filed into it.
 func (a *App) CreateFolder(project, name string) error {
-	if name == "" {
-		return fmt.Errorf("folder name required")
+	name, err := config.CleanFolderName(name)
+	if err != nil {
+		return err
 	}
 	return a.withFolders(project, func(folders map[string]config.FolderMeta) error {
 		if _, exists := folders[name]; exists {
 			return fmt.Errorf("folder %q already exists", name)
 		}
-		// Land the new folder after everything else currently in this
-		// project (top-level sessions and other folders alike) rather than
-		// at Order 0, which would sort it — misleadingly — to the very top.
-		var maxOrder int64
-		for _, s := range a.Store.ByProject(project) {
-			if s.Order > maxOrder {
-				maxOrder = s.Order
-			}
-		}
-		for _, meta := range folders {
-			if meta.Order > maxOrder {
-				maxOrder = meta.Order
-			}
-		}
-		folders[name] = config.FolderMeta{Order: maxOrder + 1}
+		folders[name] = config.FolderMeta{}
 		return nil
 	})
 }
@@ -1435,12 +1468,14 @@ func (a *App) SetSessionFolder(id, folder string) (session.Session, error) {
 		return session.Session{}, fmt.Errorf("unknown session %q", id)
 	}
 	if folder != "" {
-		err := a.withFolders(s.Project, func(folders map[string]config.FolderMeta) error {
+		clean, err := config.CleanFolderName(folder)
+		if err != nil {
+			return session.Session{}, err
+		}
+		folder = clean
+		err = a.withFolders(s.Project, func(folders map[string]config.FolderMeta) error {
 			if _, exists := folders[folder]; !exists {
-				// Anchor the new folder where s already sits so filing it
-				// away doesn't visibly relocate it; this only matters once
-				// the folder is later collapsed (see FolderMeta.Order).
-				folders[folder] = config.FolderMeta{Order: s.Order}
+				folders[folder] = config.FolderMeta{}
 			}
 			return nil
 		})
@@ -1458,13 +1493,14 @@ func (a *App) SetSessionFolder(id, folder string) (session.Session, error) {
 // RenameFolder renames a project's folder, updating every member session's
 // Folder field to match in the same pass.
 func (a *App) RenameFolder(project, oldName, newName string) error {
-	if newName == "" {
-		return fmt.Errorf("folder name required")
+	newName, err := config.CleanFolderName(newName)
+	if err != nil {
+		return err
 	}
 	if oldName == newName {
 		return nil
 	}
-	err := a.withFolders(project, func(folders map[string]config.FolderMeta) error {
+	err = a.withFolders(project, func(folders map[string]config.FolderMeta) error {
 		meta, ok := folders[oldName]
 		if !ok {
 			return fmt.Errorf("unknown folder %q", oldName)

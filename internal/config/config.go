@@ -4,6 +4,7 @@ package config
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io/fs"
 	"maps"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
 
@@ -68,20 +70,60 @@ type Project struct {
 	// still sits here inertly until renamed or deleted. One flat level only —
 	// a folder cannot contain another folder.
 	Folders map[string]FolderMeta `toml:"folders,omitempty" json:"folders,omitempty"`
+	// Collapsed hides this project's sessions in a client that lists
+	// several projects as collapsible groups — the same idea as
+	// FolderMeta.Collapsed, one level up. Display state, stored here
+	// because it is the user's choice and should survive a restart and be
+	// the same in every client, not per-window scratch state.
+	//
+	// The TUI has no use for it: it shows one project at a time, and
+	// multi-view already drops a project to a panel rather than a group. It
+	// is served for the front ends that do render projects as a tree.
+	Collapsed bool `toml:"collapsed,omitempty" json:"collapsed,omitempty"`
 }
 
 // FolderMeta is a project's per-folder display state.
+//
+// Deliberately not a position: a folder sits wherever its first member sits
+// (see sessionview.BuildRows), so there is no folder order to persist and
+// get out of step with session.Session.Order. An earlier version did carry
+// one, in the same units as Session.Order, and it drifted every time
+// Store.Reorder renumbered a subset of a project's sessions.
 type FolderMeta struct {
 	// Collapsed hides the folder's member sessions from the list, showing
 	// only its header line.
 	Collapsed bool `toml:"collapsed,omitempty" json:"collapsed,omitempty"`
-	// Order anchors the folder's header position among top-level sessions
-	// (compared directly against session.Session.Order — same units, same
-	// ascending-sorts-first convention, 0 = unset). An expanded folder's
-	// header instead tracks wherever its earliest member currently sits, so
-	// Order only matters once the folder is collapsed and loses that
-	// member-based anchor.
-	Order int64 `toml:"order,omitempty" json:"order,omitempty"`
+}
+
+// FolderNameMax caps a folder name at something that still renders as a
+// list row on a narrow terminal. Names are also the map key in
+// Project.Folders and the value of session.Session.Folder, so this is the
+// one place the limit belongs.
+const FolderNameMax = 64
+
+// CleanFolderName trims a folder name and rejects one that can't be
+// rendered as a single list row: empty/whitespace-only (indistinguishable
+// from "no folder", and unselectable once created), anything carrying a
+// control character (a newline turns one row into two, which is a layout
+// bug in every client, not just this one), or an over-long one.
+//
+// It lives here rather than in the TUI because the TUI is one of several
+// front ends — internal/ipc reaches the same mutators over the socket, so
+// trimming in a form handler protects nothing.
+func CleanFolderName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", errors.New("folder name required")
+	}
+	if len([]rune(name)) > FolderNameMax {
+		return "", fmt.Errorf("folder name too long (max %d characters)", FolderNameMax)
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return "", errors.New("folder name can't contain control characters")
+		}
+	}
+	return name, nil
 }
 
 func (p Project) IsPlain() bool { return p.Kind == "plain" }
