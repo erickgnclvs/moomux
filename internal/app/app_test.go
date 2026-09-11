@@ -3211,8 +3211,54 @@ func (f *fakeGHRunner) Run(dir string, args ...string) (string, error) {
 	return f.out, nil
 }
 
-func ghJSON(url, body string) string {
-	return `{"url":"` + url + `","title":"Fix the thing","body":"` + body + `","state":"OPEN","mergeable":"MERGEABLE","statusCheckRollup":[]}`
+func ghJSON(url, body string) string { return ghJSONState(url, body, "OPEN") }
+
+func ghJSONState(url, body, state string) string {
+	return `{"url":"` + url + `","title":"Fix the thing","body":"` + body + `","state":"` + state + `","mergeable":"MERGEABLE","statusCheckRollup":[]}`
+}
+
+// TestPRStatusBranchAdoptsOnlyOpenPRs: `gh pr view` matches a branch name
+// against closed and merged PRs too, so reusing a branch name resolves
+// whatever shipped under it last time. That must not get adopted; a PR
+// tagged by URL still reports its merged/closed state.
+func TestPRStatusBranchAdoptsOnlyOpenPRs(t *testing.T) {
+	const prURL = "https://github.com/example/repo/pull/3"
+	cases := []struct {
+		name      string
+		tagged    bool
+		state     string
+		wantOK    bool
+		wantStore string
+	}{
+		{name: "branch form, merged PR is not adopted", state: "MERGED"},
+		{name: "branch form, closed PR is not adopted", state: "CLOSED"},
+		{name: "branch form, open PR is adopted", state: "OPEN", wantOK: true, wantStore: prURL},
+		{name: "tagged PR still reports merged", tagged: true, state: "MERGED", wantOK: true, wantStore: prURL},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a, _, _ := newTestApp(t, gitProject("/repo"))
+			a.PR = &prstatus.Client{Runner: &fakeGHRunner{out: ghJSONState(prURL, "no ticket", tc.state)}}
+			s := session.Session{ID: "demo:a", Name: "a", Project: "demo", WorktreePath: "/wt/a"}
+			if tc.tagged {
+				s.PR = prURL
+			}
+			if err := a.Store.Put(s); err != nil {
+				t.Fatal(err)
+			}
+
+			info, ok := a.PRStatus(s.ID)
+			if ok != tc.wantOK {
+				t.Fatalf("PRStatus() = (%+v, %v), want ok=%v", info, ok, tc.wantOK)
+			}
+			if ok && info.State != tc.state {
+				t.Errorf("PRStatus() state = %q, want %q", info.State, tc.state)
+			}
+			if got, _ := a.Store.Get(s.ID); got.PR != tc.wantStore {
+				t.Errorf("session PR = %q, want %q", got.PR, tc.wantStore)
+			}
+		})
+	}
 }
 
 // TestPRStatusDiscoversUntaggedSession covers the auto-tagging path: a
