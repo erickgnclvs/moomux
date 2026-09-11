@@ -192,9 +192,12 @@ func (c *Client) CreateSession(req session.CreateRequest) (session.Session, stri
 	return *r.Session, r.Hint, err
 }
 
+// OpenSession is EnsureTmux over the wire: there is no OpenSession method
+// any more, because the core does not open terminals — a front end does
+// (see main.go's terminalBackend, which overrides this). It stays only so
+// Client satisfies tui.Backend and can be wrapped.
 func (c *Client) OpenSession(id string) (string, error) {
-	r, err := c.call("OpenSession", Args{ID: id})
-	return r.Hint, err
+	return c.EnsureTmux(id)
 }
 
 func (c *Client) EnsureTmux(id string) (string, error) {

@@ -26,92 +26,124 @@ func (f *fakeKittyRunner) Run(args ...string) (string, error) {
 	return out, err
 }
 
-const lsOneFocusedTab = `[{"tabs":[{"id":7,"is_focused":true},{"id":8,"is_focused":false}]}]`
+// lsWithForegroundPIDs is `kitten @ ls` output shaped like the real thing:
+// tab 8 holds the window whose foreground process is the tmux client.
+const lsWithForegroundPIDs = `[{"tabs":[
+	{"id":7,"windows":[{"foreground_processes":[{"pid":100}]}]},
+	{"id":8,"windows":[{"foreground_processes":[{"pid":222}]}]}
+]}]`
 
-func TestKittyOpenTabFocusesExistingTab(t *testing.T) {
-	fr := &fakeKittyRunner{}
-	c := &kittyClient{runner: fr}
-	newID, hint, err := c.OpenTab("7", "moomux-foo", "bar")
+// pidsOf builds the attached-client list from pids alone, for kitty, which
+// identifies a tab by the pids of its foreground processes.
+func pidsOf(pids ...string) []tmuxClient {
+	var cs []tmuxClient
+	for _, p := range pids {
+		cs = append(cs, tmuxClient{TTY: "/dev/ttys0", PID: p})
+	}
+	return cs
+}
+
+// The tab is found by matching tmux's #{client_pid} against the foreground
+// processes `kitten @ ls` reports — kitty exposes no tty, and its tab ids
+// restart from 1 with the process, so a remembered handle can point at a
+// stranger's tab after a kitty restart.
+func TestKittyOpenFindsExistingTabByClientPID(t *testing.T) {
+	fr := &fakeKittyRunner{outs: []string{lsWithForegroundPIDs, ""}}
+	c := &kittyClient{runner: fr, clients: func(string) []tmuxClient { return pidsOf("222") }}
+	hint, err := c.OpenSession("moomux-foo", "bar")
 	if err != nil {
 		t.Fatal(err)
-	}
-	if newID != "7" {
-		t.Fatalf("want unchanged tab id, got %q", newID)
 	}
 	if hint != "" {
 		t.Fatalf("want no hint, got %q", hint)
-	}
-	if len(fr.calls) != 1 {
-		t.Fatalf("want exactly one remote call, got %d", len(fr.calls))
-	}
-	assertContains(t, fr.calls[0], "focus-tab")
-	assertContains(t, fr.calls[0], "id:7")
-}
-
-func TestKittyOpenTabCreatesWhenTabGone(t *testing.T) {
-	fallback := &fakeExec{}
-	fr := &fakeKittyRunner{
-		errs: []error{errors.New("no matching tabs")},
-		outs: []string{"", "", lsOneFocusedTab},
-	}
-	c := &kittyClient{runner: fr, fallback: &windowOpener{binary: "kitty", args: kittyArgs, exec: fallback.Command}}
-	newID, hint, err := c.OpenTab("7", "moomux-foo", "bar")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if newID != "7" {
-		t.Fatalf("want new tab id from ls, got %q", newID)
-	}
-	if hint != "" {
-		t.Fatalf("want no hint, got %q", hint)
-	}
-	if len(fr.calls) != 3 {
-		t.Fatalf("want focus-tab, launch, ls calls, got %d: %v", len(fr.calls), fr.calls)
-	}
-	assertContains(t, fr.calls[1], "launch")
-	assertContains(t, fr.calls[1], "--type=tab")
-	assertContains(t, fr.calls[1], "=moomux-foo")
-	assertContains(t, fr.calls[2], "ls")
-	if fallback.binary != "" {
-		t.Fatalf("fallback should not run when launch succeeds, ran %q", fallback.binary)
-	}
-}
-
-func TestKittyOpenTabCreatesWhenNoTabIDGiven(t *testing.T) {
-	fr := &fakeKittyRunner{outs: []string{"", lsOneFocusedTab}}
-	c := &kittyClient{runner: fr}
-	newID, _, err := c.OpenTab("", "moomux-foo", "bar")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if newID != "7" {
-		t.Fatalf("want new tab id, got %q", newID)
 	}
 	if len(fr.calls) != 2 {
-		t.Fatalf("want launch+ls, no focus-tab attempt, got %d: %v", len(fr.calls), fr.calls)
+		t.Fatalf("want ls then focus-tab, got %d: %v", len(fr.calls), fr.calls)
 	}
+	assertContains(t, fr.calls[0], "ls")
+	assertContains(t, fr.calls[1], "focus-tab")
+	assertContains(t, fr.calls[1], "id:8")
 }
 
-func TestKittyOpenTabFallsBackWhenLaunchFails(t *testing.T) {
-	fallback := &fakeExec{}
-	fr := &fakeKittyRunner{errs: []error{errors.New("remote control disabled")}}
-	c := &kittyClient{runner: fr, fallback: &windowOpener{binary: "kitty", args: kittyArgs, exec: fallback.Command}}
-	newID, _, err := c.OpenTab("", "moomux-foo", "bar")
+// With nothing attached there is no tab to focus, so one is launched — and
+// only launched: kitty used to make a second `@ ls` call just to learn the
+// new tab's id, which nothing stores any more.
+func TestKittyOpenLaunchesWhenNothingAttached(t *testing.T) {
+	fr := &fakeKittyRunner{}
+	c := &kittyClient{runner: fr, clients: noTTYs}
+	if _, err := c.OpenSession("moomux-foo", "bar"); err != nil {
+		t.Fatal(err)
+	}
+	if len(fr.calls) != 1 {
+		t.Fatalf("want a single launch call, got %d: %v", len(fr.calls), fr.calls)
+	}
+	assertContains(t, fr.calls[0], "launch")
+}
+
+// tmux's attached client can be some other terminal, so a pid kitty doesn't
+// hold is a miss, not an error.
+func TestKittyOpenLaunchesWhenNoTabHoldsTheClient(t *testing.T) {
+	fr := &fakeKittyRunner{outs: []string{lsWithForegroundPIDs, ""}}
+	c := &kittyClient{runner: fr, clients: func(string) []tmuxClient { return pidsOf("999") }}
+	if _, err := c.OpenSession("moomux-foo", "bar"); err != nil {
+		t.Fatal(err)
+	}
+	assertContains(t, fr.calls[1], "launch")
+}
+
+func TestKittyFindTabDoesNotFocus(t *testing.T) {
+	fr := &fakeKittyRunner{outs: []string{lsWithForegroundPIDs}}
+	c := &kittyClient{runner: fr, clients: func(string) []tmuxClient { return pidsOf("222") }}
+	id, err := c.FindTab("moomux-foo")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if newID != "" {
-		t.Fatalf("want no tab id when falling back, got %q", newID)
+	if id != "8" {
+		t.Fatalf("want tab 8, got %q", id)
+	}
+	if len(fr.calls) != 1 {
+		t.Fatalf("want only an ls call, got %v", fr.calls)
+	}
+}
+
+func TestKittyFindTabSkipsLSWhenNothingAttached(t *testing.T) {
+	fr := &fakeKittyRunner{}
+	c := &kittyClient{runner: fr, clients: noTTYs}
+	id, err := c.FindTab("moomux-foo")
+	if err != nil || id != "" {
+		t.Fatalf("want empty id and no error, got %q / %v", id, err)
+	}
+	if len(fr.calls) != 0 {
+		t.Fatalf("want no remote call at all, got %v", fr.calls)
+	}
+}
+
+func TestKittyCloseTabIsBestEffort(t *testing.T) {
+	fr := &fakeKittyRunner{errs: []error{errors.New("no matching tabs")}}
+	c := &kittyClient{runner: fr}
+	if err := c.CloseTab("8"); err != nil {
+		t.Fatalf("an already-gone tab is not an error: %v", err)
+	}
+	assertContains(t, fr.calls[0], "close-tab")
+	assertContains(t, fr.calls[0], "id:8")
+}
+
+func TestKittyOpenFallsBackWhenLaunchFails(t *testing.T) {
+	fallback := &fakeExec{}
+	fr := &fakeKittyRunner{errs: []error{errors.New("remote control disabled")}}
+	c := &kittyClient{runner: fr, clients: noTTYs, fallback: &windowOpener{binary: "kitty", args: kittyArgs, exec: fallback.Command}}
+	if _, err := c.OpenSession("moomux-foo", "bar"); err != nil {
+		t.Fatal(err)
 	}
 	if fallback.binary != "kitty" {
 		t.Fatalf("expected fallback to kitty, got %q", fallback.binary)
 	}
 }
 
-func TestKittyOpenTabTitleAndSessionEscaping(t *testing.T) {
-	fr := &fakeKittyRunner{outs: []string{"", lsOneFocusedTab}}
-	c := &kittyClient{runner: fr}
-	if _, _, err := c.OpenTab("", "moomux-foo", "feat/bar"); err != nil {
+func TestKittyOpenTitleAndSessionEscaping(t *testing.T) {
+	fr := &fakeKittyRunner{}
+	c := &kittyClient{runner: fr, clients: noTTYs}
+	if _, err := c.OpenSession("moomux-foo", "feat/bar"); err != nil {
 		t.Fatal(err)
 	}
 	assertContains(t, fr.calls[0], "--tab-title=feat/bar")

@@ -22,13 +22,6 @@ import (
 	"github.com/erickgnclvs/moomux/internal/tmux"
 )
 
-// noopOpener stands in for terminal.Detect() so tests never try to actually
-// spawn/focus a terminal window, regardless of what terminal the test runs
-// under locally or in CI.
-type noopOpener struct{}
-
-func (noopOpener) OpenSession(tmuxSession, title string) (string, error) { return "", nil }
-
 // boolPtr is CreateSession's dangerous argument: non-nil forces the value
 // regardless of the project's own Dangerous setting.
 func boolPtr(b bool) *bool { return &b }
@@ -44,7 +37,6 @@ func newTestApp(t *testing.T) *app.App {
 		CfgPath:      filepath.Join(dir, "config.toml"),
 		Store:        &session.Store{Path: filepath.Join(dir, "sessions.json")},
 		Tmux:         tmux.New(),
-		Terminal:     noopOpener{},
 		Git:          gitwt.New(),
 		WorktreeRoot: filepath.Join(dir, "worktrees"),
 	}

@@ -87,8 +87,16 @@ diff tool (`diff_tool`, the `D` shortcut; `internal/tui/difftool.go`), which lau
 window on the viewer's own screen. Anything else that opens a window there, reads their
 clipboard, or shells out to something only they can see belongs on the same side. Adding it
 to `config.Config` with a `Set*` method instead gives you a setting that configures one host
-and runs on another. `docs/wire-protocol.md` has the longer version, including why the
-terminal opener lives in the core and isn't the precedent it looks like.
+and runs on another.
+
+The same split applies to what the front end *does*, not just what it stores. Terminals are the
+rest of that category — opening a window or tab, focusing one, closing one. `internal/app` does
+not import `internal/terminal` (`TestAppDoesNotDependOnTerminal` enforces it); every front end
+goes through `terminalBackend` in `main.go` instead: the local TUI, `moomux ui -socket`, and the
+`moomux park` worker. A `moomux serve` core started by launchd has no `TERM_PROGRAM` and no
+`$TMUX`, so a core answering "which emulator, which tab" would be answering for the wrong
+process. It used to, and the `browser.Remote()` guard it needed was the tell.
+`docs/wire-protocol.md` has the longer version.
 
 What stays a pull: `Sessions`, `ChangeSummary`, and the on-demand `WorktreeStatus` the delete
 dialog uses (it wants a freshly checked answer before a destructive action, and unlike

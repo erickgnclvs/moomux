@@ -23,7 +23,6 @@ import (
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/sessionview"
-	"github.com/erickgnclvs/moomux/internal/terminal"
 	"github.com/erickgnclvs/moomux/internal/tmux"
 	"github.com/erickgnclvs/moomux/internal/tmuxconf"
 	"github.com/erickgnclvs/moomux/internal/tui"
@@ -307,7 +306,6 @@ func newApp() (*app.App, error) {
 		CfgPath:      cfgPath,
 		Store:        store,
 		Tmux:         tmuxClient,
-		Terminal:     terminal.Detect(),
 		Git:          gitwt.New(),
 		PR:           prstatus.New(),
 		WorktreeRoot: app.WorktreeRootDefault(),
@@ -542,11 +540,19 @@ func runParkWorker(id string) error {
 		slog.Error("park-worker: load app failed", "id", id, "err", err)
 		return err
 	}
-	if err := a.KillTmux(id); err != nil {
+	if err := parkSession(a, id); err != nil {
 		slog.Error("park-worker: kill tmux failed", "id", id, "err", err)
 		return fmt.Errorf("park: %w", err)
 	}
 	return nil
+}
+
+// parkSession kills the session's tmux and closes the terminal tab it was
+// in. Through the wrapper, because the core does neither half of the tab
+// work (see terminalBackend) — split out from runParkWorker, which can't be
+// tested, so that the part that can be is.
+func parkSession(core tui.Backend, id string) error {
+	return newTerminalBackend(core).KillTmux(id)
 }
 
 // runReseed implements `moomux reseed`: re-run the worktree-create
@@ -628,9 +634,15 @@ func run() error {
 	return runProgram(cfg, a, a.AgentOptions(), buildSource(a, home))
 }
 
-// runProgram drives the TUI against any backend + view source, so the local
+// runProgram drives the TUI against any core + view source, so the local
 // (*app.App) path and the socket-backed (*ipc.Client) path share one setup.
-func runProgram(cfg *config.Config, b tui.Backend, agentOptions []config.AgentOption, src sessionview.Source) error {
+//
+// The core is wrapped here rather than by each caller: a TUI has a terminal
+// and the core does not open one (see terminalBackend), so there is no
+// correct way to run one unwrapped, and a wiring step that can be forgotten
+// at a call site shouldn't exist.
+func runProgram(cfg *config.Config, core tui.Backend, agentOptions []config.AgentOption, src sessionview.Source) error {
+	b := newTerminalBackend(core)
 	ctx, cancel := context.WithCancel(context.Background())
 	statusCh := make(chan sessionview.Snapshot, 4)
 	go src.Run(ctx, statusCh)
