@@ -2177,6 +2177,13 @@ func (a *App) PRStatus(id string) (prstatus.Info, bool) {
 	if err != nil {
 		return prstatus.Info{}, false
 	}
+	// gh matches a branch name against closed and merged PRs too, so a
+	// reused branch name resolves whatever shipped under it last time. Only
+	// an OPEN PR is worth adopting; a tagged PR (s.PR != "") still reports
+	// MERGED/CLOSED, which is the point of tagging it.
+	if s.PR == "" && pr.State != "OPEN" {
+		return prstatus.Info{}, false
+	}
 	// Only ever fill a blank field: a value someone set by hand (or a
 	// ticket deliberately re-pointed) outranks anything inferred here.
 	ticket := s.Ticket
