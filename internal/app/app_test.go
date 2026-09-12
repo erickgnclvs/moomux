@@ -205,9 +205,26 @@ func seedFolders(t *testing.T, a *App, names ...string) {
 	}
 }
 
+// TestNormalizeAgent pins the one place that knows about the "agy" alias:
+// everything below normalizeAgent (agentCmd, dangerousFlag,
+// reasoningEffortFlag, validateAgent, prompt.ForAgent) only ever sees
+// "antigravity", so none of them carries a second spelling.
+func TestNormalizeAgent(t *testing.T) {
+	for in, want := range map[string]string{
+		"agy": "antigravity", "antigravity": "antigravity", "claude": "claude", "": "",
+	} {
+		if got := normalizeAgent(in); got != want {
+			t.Errorf("normalizeAgent(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if err := validateAgent("agy"); err == nil {
+		t.Error("validateAgent(\"agy\") = nil; the alias must be normalized before it gets here")
+	}
+}
+
 func TestAgentCmd(t *testing.T) {
 	for agent, want := range map[string]string{
-		"codex": "codex", "opencode": "opencode", "claude": "claude", "": "claude", "other": "claude",
+		"codex": "codex", "opencode": "opencode", "claude": "claude", "antigravity": "agy", "": "claude", "other": "claude",
 	} {
 		if got := agentCmd(agent); got != want {
 			t.Errorf("agentCmd(%q) = %q, want %q", agent, got, want)
@@ -237,7 +254,7 @@ func TestAgentOptionsCoversEveryLaunchableAgent(t *testing.T) {
 			t.Errorf("%s: Models = %v, want it to start with \"default\"", o.Name, o.Models)
 		}
 	}
-	for _, agent := range []string{"claude", "codex", "opencode"} {
+	for _, agent := range []string{"claude", "codex", "opencode", "antigravity"} {
 		found := slices.ContainsFunc(opts, func(o config.AgentOption) bool { return o.Name == agent })
 		if !found {
 			t.Errorf("AgentOptions() is missing agent %q, which validateAgent still accepts", agent)
@@ -598,6 +615,7 @@ func TestCreateSessionDangerousAppendsAgentFlag(t *testing.T) {
 		{"claude", "claude --dangerously-skip-permissions"},
 		{"codex", "codex --yolo"},
 		{"opencode", "opencode --port 4096"}, // no flag: opencode has none to append
+		{"antigravity", "agy --dangerously-skip-permissions"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.agent, func(t *testing.T) {
@@ -721,6 +739,7 @@ func TestCreateSessionModelAppendsFlag(t *testing.T) {
 		{"claude", "sonnet", "claude --model sonnet"},
 		{"codex", "opus", "codex --model opus"},
 		{"opencode", "haiku", "opencode --port 4096 --model haiku"},
+		{"antigravity", "Gemini 3.8 Flash (High)", `agy --model 'Gemini 3.8 Flash (High)'`},
 		{"claude", "default", "claude"},
 		{"claude", "", "claude"},
 	}
@@ -749,18 +768,21 @@ func TestCreateSessionModelAppendsFlag(t *testing.T) {
 
 // TestCreateSessionThinkingAppendsCodexFlag guards reasoningEffortFlag: a
 // chosen thinking level is a real -c model_reasoning_effort flag for codex,
-// "default"/empty omits it, and claude/opencode never get the flag at all
-// (they have no such launch-time flag — see thinkingPromptPrefix in
-// internal/tui instead).
+// --effort for antigravity, "default"/empty omits it, and claude/opencode never
+// get the flag at all (they have no such launch-time flag — see
+// thinkingPromptPrefix in internal/tui instead).
 func TestCreateSessionThinkingAppendsCodexFlag(t *testing.T) {
 	cases := []struct {
 		agent    string
 		thinking string
 		wantCmd  string
 	}{
-		{"codex", "high", `codex -c model_reasoning_effort="high"`},
+		{"codex", "high", `codex -c 'model_reasoning_effort="high"'`},
 		{"codex", "default", "codex"},
 		{"codex", "", "codex"},
+		{"antigravity", "high", "agy --effort high"},
+		{"antigravity", "default", "agy"},
+		{"antigravity", "", "agy"},
 		{"claude", "high", "claude"},
 		{"opencode", "high", "opencode --port 4096"},
 	}
@@ -3524,4 +3546,128 @@ func TestFolderMutatorsHoldCfgLock(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+func TestAntigravityAgentSupport(t *testing.T) {
+	t.Run("CreateSession Normalizes Agy Alias", func(t *testing.T) {
+		a, git, tm := newTestApp(t, gitProject("/repo"))
+		tn := TmuxSessionName("demo:feat", "feat")
+		tm.out["list-panes -t ="+tn+": -F #{pane_id}"] = "%0\n"
+		noBranch(git, "feat")
+
+		s, _, err := a.createSession("demo", "feat", "agy", "", "", true, boolPtr(true), "", "", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Agent != "antigravity" {
+			t.Fatalf("session.Agent = %q, want antigravity", s.Agent)
+		}
+		if s.AgentName() != "antigravity" {
+			t.Fatalf("session.AgentName() = %q, want antigravity", s.AgentName())
+		}
+		wantCmd := "agy --dangerously-skip-permissions"
+		found := false
+		for _, c := range tm.calls {
+			if slices.Contains(c, wantCmd) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("no send-keys with %q; calls = %v", wantCmd, tm.calls)
+		}
+	})
+
+	t.Run("SetSessionAgent Normalizes Agy", func(t *testing.T) {
+		a, _, _ := newTestApp(t, gitProject("/repo"))
+		s := session.Session{ID: "demo:x", Project: "demo", Name: "x", Agent: "claude"}
+		_ = a.Store.Put(s)
+
+		updated, err := a.SetSessionAgent("demo:x", "agy", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if updated.Agent != "antigravity" {
+			t.Fatalf("updated.Agent = %q, want antigravity", updated.Agent)
+		}
+	})
+
+	t.Run("AddProject and UpdateProject Normalize Agy", func(t *testing.T) {
+		a, _, _ := newTestApp(t, nil)
+		repo := t.TempDir()
+		mustGit(t, repo, "init", "-b", "main")
+		mustGit(t, repo, "commit", "--allow-empty", "-m", "init")
+
+		_, err := a.AddProject("p1", config.Project{Repo: repo, Agent: "agy"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a.Cfg.Projects["p1"].Agent != "antigravity" {
+			t.Fatalf("AddProject Agent = %q, want antigravity", a.Cfg.Projects["p1"].Agent)
+		}
+
+		err = a.UpdateProject("p1", config.Project{Repo: repo, Agent: "agy"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a.Cfg.Projects["p1"].Agent != "antigravity" {
+			t.Fatalf("UpdateProject Agent = %q, want antigravity", a.Cfg.Projects["p1"].Agent)
+		}
+	})
+
+	t.Run("BuildAgentCmd omits effort when model is specified", func(t *testing.T) {
+		cmd := buildAgentCmd("antigravity", false, "Gemini 3.8 Flash (High)", "high")
+		want := `agy --model 'Gemini 3.8 Flash (High)'`
+		if cmd != want {
+			t.Fatalf("buildAgentCmd = %q, want %q", cmd, want)
+		}
+
+		cmd = buildAgentCmd("antigravity", true, "default", "high")
+		want = "agy --dangerously-skip-permissions --effort high"
+		if cmd != want {
+			t.Fatalf("buildAgentCmd = %q, want %q", cmd, want)
+		}
+	})
+}
+
+// TestModelFlagQuotesForTheShell pins that a user-supplied model name can't
+// reach the shell unquoted. buildAgentCmd's output is run by a shell in the
+// tmux pane, and model comes from `moomux spawn -model` or a project's
+// `model =` — so metacharacters must be neutralized, not just spaces.
+func TestModelFlagQuotesForTheShell(t *testing.T) {
+	for _, tc := range []struct{ model, want string }{
+		// Plain names stay bare, exactly as they always were.
+		{"sonnet", "--model sonnet"},
+		{"gpt-5.6-sol", "--model gpt-5.6-sol"},
+		{"", ""},
+		{"default", ""},
+		// A space alone was already handled; these are the ones %q got wrong.
+		{"Gemini 3.8 Flash (High)", `--model 'Gemini 3.8 Flash (High)'`},
+		// Parens with no space: %q left these bare and the pane died on a
+		// shell syntax error.
+		{"foo(bar)", `--model 'foo(bar)'`},
+		// $ and backticks expanded inside %q's double quotes.
+		{"a $HOME b", `--model 'a $HOME b'`},
+		{"a `id` b", "--model 'a `id` b'"},
+		{"a'b", `--model 'a'\''b'`},
+	} {
+		if got := modelFlag("claude", tc.model); got != tc.want {
+			t.Errorf("modelFlag(%q) = %q, want %q", tc.model, got, tc.want)
+		}
+	}
+	// The same guard covers the reasoning-effort flags, whose values are
+	// free text from `moomux spawn -thinking` and a project's config.
+	for _, tc := range []struct{ agent, thinking, want string }{
+		{"antigravity", "high", "--effort high"},
+		{"antigravity", "high; rm -rf /", `--effort 'high; rm -rf /'`},
+		// codex keeps TOML quotes around the value for its own -c parser,
+		// and the whole token is shell-quoted so `id` and $HOME stay literal
+		// — %q alone left both live in the pane's shell.
+		{"codex", "high", `-c 'model_reasoning_effort="high"'`},
+		{"codex", "a `id` $HOME b", "-c 'model_reasoning_effort=\"a `id` $HOME b\"'"},
+		{"codex", "it's", `-c 'model_reasoning_effort="it'\''s"'`},
+	} {
+		if got := reasoningEffortFlag(tc.agent, tc.thinking); got != tc.want {
+			t.Errorf("reasoningEffortFlag(%q, %q) = %q, want %q", tc.agent, tc.thinking, got, tc.want)
+		}
+	}
 }

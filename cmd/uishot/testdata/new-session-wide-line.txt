@@ -36,7 +36,7 @@
            │                                                                            │           
            │  > PR url (optional)                                                       │           
            │                                                                            │           
-           │  agent:  claude  [codex]  opencode                                         │           
+           │  agent:  claude  [codex]  opencode  antigravity                            │           
            │                                                                            │           
            │  model:  [default]  gpt-5.6-sol  gpt-5.6-terra  gpt-5.6-luna               │           
            │                                                                            │           

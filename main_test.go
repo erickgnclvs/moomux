@@ -5,13 +5,18 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/erickgnclvs/moomux/internal/app"
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/tmux"
+	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
 // explicitFlagOverride must tell an unset -dangerous apart from an
@@ -159,5 +164,113 @@ func TestOrNone(t *testing.T) {
 	}
 	if got := orNone("https://example.com/x"); got != "https://example.com/x" {
 		t.Fatalf("orNone did not pass through a non-empty value: %q", got)
+	}
+}
+
+// antigravityQuery pulls the real production query string out of
+// buildWatcher, so this test can't drift from what ships.
+func antigravityQuery(t *testing.T, home string) string {
+	t.Helper()
+	multi, ok := buildWatcher(home).(*watcher.MultiWatcher)
+	if !ok {
+		t.Fatalf("buildWatcher returned %T, want *watcher.MultiWatcher", buildWatcher(home))
+	}
+	for _, w := range multi.Watchers {
+		sq, ok := w.(*watcher.SQLiteWatcher)
+		if ok && strings.Contains(sq.DB, "conversation_summaries.db") {
+			return sq.Query
+		}
+	}
+	t.Fatal("no antigravity SQLiteWatcher in buildWatcher")
+	return ""
+}
+
+// TestAntigravityQueryGroupsPerWorktree runs the shipped Antigravity query
+// against a real SQLite database built from Antigravity's real schema.
+//
+// Two traps it pins, both of which produce a *plausible* result rather than
+// an error. First, json_each exposes its own `path` column, so aliasing the
+// worktree as "path" makes GROUP BY bind to json_each's constant "$" instead
+// of the alias — every worktree collapses into one group and the watcher
+// reports a single arbitrary path. Second, not_fully_idle is only ever
+// cleared by agy itself, so a session parked mid-turn leaves the row stuck at
+// 1; without a staleness bound that row reports "now" forever and the
+// watcher's ActiveAge decay can never mark the worktree idle.
+func TestAntigravityQueryGroupsPerWorktree(t *testing.T) {
+	sqlite3, err := exec.LookPath("sqlite3")
+	if err != nil {
+		t.Skip("sqlite3 not on PATH")
+	}
+	home := t.TempDir()
+	db := filepath.Join(home, "conversation_summaries.db")
+
+	const schema = `CREATE TABLE conversation_summaries (
+	  conversation_id text, last_modified_time datetime NOT NULL,
+	  workspace_uris text NOT NULL, not_fully_idle numeric NOT NULL DEFAULT false,
+	  killed numeric NOT NULL DEFAULT false, PRIMARY KEY (conversation_id));
+	INSERT INTO conversation_summaries VALUES
+	  -- Two conversations in one worktree: they must fold into one row.
+	  ('a', datetime('now','-3 hours'), '["file:///wt/one"]', 0, 0),
+	  ('b', datetime('now','-2 hours'), '["file:///wt/one"]', 0, 0),
+	  -- A second worktree, which must survive as its own row.
+	  ('c', datetime('now','-90 minutes'), '["file:///wt/two"]', 0, 0),
+	  -- Parked mid-turn hours ago: not_fully_idle stuck at 1, killed still 0.
+	  ('d', datetime('now','-4 hours'), '["file:///wt/stuck"]', 1, 0),
+	  -- Genuinely working right now.
+	  ('e', datetime('now'), '["file:///wt/live"]', 1, 0),
+	  -- Percent-escaped space in the URI, and a row with no workspace at all.
+	  ('f', datetime('now','-1 hours'), '["file:///wt/a%20b"]', 0, 0),
+	  ('g', datetime('now'), '', 0, 0);`
+	cmd := exec.Command(sqlite3, db)
+	cmd.Stdin = strings.NewReader(schema)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("seed db: %v\n%s", err, out)
+	}
+
+	out, err := exec.Command(sqlite3, "-separator", "\t", db, antigravityQuery(t, home)).Output()
+	if err != nil {
+		t.Fatalf("run query: %v", err)
+	}
+	got := map[string]int64{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		path, ms, ok := strings.Cut(line, "\t")
+		if !ok {
+			continue
+		}
+		n, err := strconv.ParseInt(ms, 10, 64)
+		if err != nil {
+			t.Fatalf("parse %q: %v", line, err)
+		}
+		got[path] = n
+	}
+
+	// The query returns workspace_uris verbatim; SQLiteWatcher.URIPaths does
+	// the percent-decoding (see TestSQLiteWatcherDecodesURIPaths).
+	wantPaths := []string{"file:///wt/one", "file:///wt/two", "file:///wt/stuck", "file:///wt/live", "file:///wt/a%20b"}
+	if len(got) != len(wantPaths) {
+		t.Fatalf("got %d worktrees %v, want %d %v", len(got), got, len(wantPaths), wantPaths)
+	}
+	for _, p := range wantPaths {
+		if _, ok := got[p]; !ok {
+			t.Fatalf("missing worktree %q in %v", p, got)
+		}
+	}
+
+	nowMs := time.Now().UnixMilli()
+	const activeAge = 10 * time.Second
+	fresh := func(p string) bool {
+		return time.Duration(nowMs-got[p])*time.Millisecond <= activeAge
+	}
+	// The stuck row must have decayed to its real last-modified time; only a
+	// genuinely current conversation may read as active.
+	if fresh("file:///wt/stuck") {
+		t.Errorf("/wt/stuck reports active (%d vs now %d): stale not_fully_idle row never decays", got["file:///wt/stuck"], nowMs)
+	}
+	if !fresh("file:///wt/live") {
+		t.Errorf("/wt/live reports idle (%d vs now %d): a working session must read as active", got["file:///wt/live"], nowMs)
+	}
+	// Folded worktree keeps the newer of its two conversations.
+	if got["file:///wt/one"] <= got["file:///wt/stuck"] {
+		t.Errorf("/wt/one = %d, want the newer of its two conversations", got["file:///wt/one"])
 	}
 }

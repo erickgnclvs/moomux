@@ -42,13 +42,13 @@ type Project struct {
 	Repo         string `toml:"repo" json:"repo"`
 	BranchPrefix string `toml:"branch_prefix,omitempty" json:"branch_prefix,omitempty"`
 	BaseBranch   string `toml:"base_branch,omitempty" json:"base_branch,omitempty"`
-	Agent        string `toml:"agent,omitempty" json:"agent,omitempty"` // "claude" (default), "codex", "opencode"
+	Agent        string `toml:"agent,omitempty" json:"agent,omitempty"` // "claude" (default), "codex", "opencode", "antigravity"
 	// Model is the default model for new sessions of this project, named as
 	// Agent's AgentOption.Models lists it. Empty means "not specified" —
 	// nothing is passed and the agent falls back to the user's own default.
 	Model string `toml:"model,omitempty" json:"model,omitempty"`
 	// Dangerous, when true, runs Agent with its permission-skipping flag
-	// (claude: --dangerously-skip-permissions, codex: --yolo); no-op for
+	// (claude/antigravity: --dangerously-skip-permissions, codex: --yolo); no-op for
 	// opencode. Applies as the default for new sessions of this project.
 	Dangerous bool `toml:"dangerous,omitempty" json:"dangerous,omitempty"`
 	// PromptAgent, when true, skips preselecting Agent as the default in the
@@ -198,6 +198,9 @@ func (c *Config) OrderedProjectNames() []string {
 func (p Project) AgentName() string {
 	if p.Agent == "" {
 		return "claude"
+	}
+	if p.Agent == "agy" {
+		return "antigravity"
 	}
 	return p.Agent
 }

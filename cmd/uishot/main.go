@@ -57,6 +57,15 @@ var screens = map[string][]string{
 	// opencode is a free-text input instead of the claude/codex selector —
 	// exercises that per-agent branch.
 	"new-session-model-opencode": {"n", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "right", "tab"},
+	// two "right" presses cycle to antigravity, then tab to model row.
+	"new-session-model-antigravity": {"n", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "right", "right", "tab"},
+	// One more tab lands on the thinking row, whose hint for antigravity says
+	// the effort flag only applies to model "default" — see newFormFieldHint.
+	"new-session-thinking-antigravity": {"n", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "right", "right", "tab", "tab"},
+	// Named model *and* a thinking level: the model row warns that the level
+	// is about to be dropped, which the thinking row's own hint can't say to
+	// someone who set the level first — see newFormAgyEffortDropped.
+	"new-session-agy-effort-dropped": {"n", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "right", "right", "tab", "right", "tab", "right", "shift+tab"},
 	// The form preselects the active project, so no "right" press is needed
 	// to pick one; 3 tabs from there lands on the first-prompt textarea (see
 	// newFormFieldCount) — both Enter and ctrl+j insert a newline there,

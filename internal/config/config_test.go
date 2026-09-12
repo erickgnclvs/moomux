@@ -222,12 +222,19 @@ func TestProjectAgentNameDefaultsToClaude(t *testing.T) {
 }
 
 func TestProjectAgentNameReturnsSetValue(t *testing.T) {
-	tests := []string{"codex", "opencode"}
+	tests := []string{"codex", "opencode", "antigravity"}
 	for _, agent := range tests {
 		p := Project{Agent: agent}
 		if got := p.AgentName(); got != agent {
 			t.Fatalf("expected %q, got %q", agent, got)
 		}
+	}
+}
+
+func TestProjectAgentNameAgyAlias(t *testing.T) {
+	p := Project{Agent: "agy"}
+	if got := p.AgentName(); got != "antigravity" {
+		t.Fatalf("expected antigravity, got %q", got)
 	}
 }
 

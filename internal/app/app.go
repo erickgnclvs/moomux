@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/erickgnclvs/moomux/internal/antigravity"
 	"github.com/erickgnclvs/moomux/internal/claudehook"
 	"github.com/erickgnclvs/moomux/internal/codexhook"
 	"github.com/erickgnclvs/moomux/internal/config"
@@ -166,12 +167,35 @@ var agentOptionsTable = []config.AgentOption{
 		Name:     "opencode",
 		Thinking: []string{"default", "think", "think hard", "think harder", "ultrathink"},
 	},
+	{
+		// Every agy model name bakes its reasoning effort in, which is why the
+		// Low/Medium/High variants are listed separately rather than left to
+		// the Thinking column: agy rejects --effort outright whenever --model
+		// is given, so Thinking here only reaches the user's own default model.
+		// Deliberately a slice of what `agy models` offers — the older 3.7/3.6
+		// Flash generations and the Claude/GPT-OSS entries are dropped.
+		Name:     "antigravity",
+		Models:   []string{"default", "Gemini 3.8 Flash (High)", "Gemini 3.8 Flash (Medium)", "Gemini 3.8 Flash (Low)", "Gemini 3.1 Pro (High)", "Gemini 3.1 Pro (Low)"},
+		Thinking: []string{"default", "low", "medium", "high"},
+	},
 }
 
 // AgentOptions returns agentOptionsTable. A pure static lookup today, but a
 // method (not just an exported var) so a caller — in-process or, via
 // internal/ipc, over the socket — never has to care which.
 func (a *App) AgentOptions() []config.AgentOption { return agentOptionsTable }
+
+// normalizeAgent folds the "agy" alias — the binary's name, and what a user
+// most often types — to "antigravity", the name moomux stores. Every entry
+// point that takes an agent name calls this, and Session.AgentName /
+// Project.AgentName fold anything already on disk, so nothing below this
+// line has to know the alias exists.
+func normalizeAgent(agent string) string {
+	if agent == "agy" {
+		return "antigravity"
+	}
+	return agent
+}
 
 // agentCmd returns the CLI binary name for the given agent.
 func agentCmd(agent string) string {
@@ -180,6 +204,8 @@ func agentCmd(agent string) string {
 		return "codex"
 	case "opencode":
 		return "opencode"
+	case "antigravity":
+		return "agy"
 	default:
 		return "claude"
 	}
@@ -191,7 +217,7 @@ func dangerousFlag(agent string) string {
 	switch agent {
 	case "codex":
 		return "--yolo"
-	case "claude":
+	case "claude", "antigravity":
 		return "--dangerously-skip-permissions"
 	default:
 		return ""
@@ -206,25 +232,55 @@ func modelFlag(agent, model string) string {
 	if model == "" || model == "default" {
 		return ""
 	}
-	return "--model " + model
+	return "--model " + shellQuote(model)
+}
+
+// shellQuote makes s safe to interpolate into the command string
+// buildAgentCmd hands to a shell, leaving names that need no quoting
+// (sonnet, gpt-5.6-sol) exactly as they were. Model and thinking values are
+// user-supplied — `moomux spawn -model`, a project's `model =` in
+// config.toml — so a name carrying a space, a quote, `$` or a backtick would
+// otherwise be re-interpreted by the shell, or kill the pane outright on a
+// syntax error. Go's %q is *Go* quoting, not shell quoting, and did neither
+// job: it left `$HOME` live inside the double quotes it emitted, and skipped
+// anything without a space entirely.
+func shellQuote(s string) string {
+	if s != "" && strings.IndexFunc(s, func(r rune) bool {
+		return !(r == '-' || r == '_' || r == '.' || r == '/' ||
+			(r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'))
+	}) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // reasoningEffortFlag returns codex's -c model_reasoning_effort="<value>"
-// flag, or "" if thinking is empty/"default" or agent isn't codex. Unlike
-// --model, this isn't assumed to generalize: claude has no CLI flag for
-// extended-thinking effort (it's driven by magic words in the prompt
-// instead, see thinkingPromptPrefix in internal/tui), and opencode's
-// reasoning-effort flag (--variant) only exists on its one-shot `run`
-// subcommand, not the interactive session moomux launches here.
+// or antigravity's --effort <value> flag, or "" if thinking is empty/"default"
+// or agent doesn't support reasoning-effort flags. Unlike --model, this isn't
+// assumed to generalize: claude has no CLI flag for extended-thinking effort
+// (it's driven by magic words in the prompt instead, see thinkingPromptPrefix
+// in internal/tui), and opencode's reasoning-effort flag (--variant) only exists
+// on its one-shot `run` subcommand, not the interactive session moomux launches
+// here.
 func reasoningEffortFlag(agent, thinking string) string {
-	if agent != "codex" || thinking == "" || thinking == "default" {
+	if thinking == "" || thinking == "default" {
 		return ""
 	}
-	return fmt.Sprintf("-c model_reasoning_effort=%q", thinking)
+	switch agent {
+	case "codex":
+		// %q is the *TOML* quoting codex's -c parser wants around the
+		// value; shellQuote then keeps that whole token from being
+		// re-read by the shell buildAgentCmd's output is typed into.
+		return "-c " + shellQuote(fmt.Sprintf("model_reasoning_effort=%q", thinking))
+	case "antigravity":
+		return "--effort " + shellQuote(thinking)
+	default:
+		return ""
+	}
 }
 
 // buildAgentCmd returns the shell command that launches agent in its tmux
-// pane, appending its dangerous flag, --model flag, and (codex only)
+// pane, appending its dangerous flag, --model flag, and (codex/antigravity)
 // reasoning-effort flag when requested and supported.
 func buildAgentCmd(agent string, dangerous bool, model, thinking string) string {
 	cmd := agentCmd(agent)
@@ -236,8 +292,23 @@ func buildAgentCmd(agent string, dangerous bool, model, thinking string) string 
 	if flag := modelFlag(agent, model); flag != "" {
 		cmd += " " + flag
 	}
-	if flag := reasoningEffortFlag(agent, thinking); flag != "" {
+	// Every agy model bakes its own effort into the model id, and agy hard-errors
+	// on --effort alongside --model. So --effort only applies to "default".
+	//
+	// The level is then dropped outright rather than falling back to a
+	// prompt prefix: FirstPrompt keys that fallback off reasoningEffortFlag
+	// being empty, which it isn't here. Warn, because the TUI's hint only
+	// covers the TUI — `moomux spawn -model X -thinking Y` would otherwise
+	// eat -thinking in silence, as would a project's configured `model =`.
+	effortOK := agent != "antigravity" || model == "" || model == "default"
+	flag := reasoningEffortFlag(agent, thinking)
+	switch {
+	case flag == "":
+	case effortOK:
 		cmd += " " + flag
+	default:
+		slog.Warn("thinking level ignored: agy rejects --effort alongside --model, and this model already carries its own effort",
+			"agent", agent, "model", model, "thinking", thinking)
 	}
 	return cmd
 }
@@ -328,20 +399,24 @@ var agentInstallers = []struct {
 		"codex":  codexhook.EnsureHooks,
 	}},
 	{"kill command", false, map[string]func(string) (bool, error){
-		"claude": claudehook.EnsureKillCommand,
-		"codex":  codexhook.EnsureKillCommand,
+		"claude":      claudehook.EnsureKillCommand,
+		"codex":       codexhook.EnsureKillCommand,
+		"antigravity": antigravity.EnsureKillCommand,
 	}},
 	{"tag command", false, map[string]func(string) (bool, error){
-		"claude": claudehook.EnsureTagCommand,
-		"codex":  codexhook.EnsureTagCommand,
+		"claude":      claudehook.EnsureTagCommand,
+		"codex":       codexhook.EnsureTagCommand,
+		"antigravity": antigravity.EnsureTagCommand,
 	}},
 	{"spawn command", false, map[string]func(string) (bool, error){
-		"claude": claudehook.EnsureSpawnCommand,
-		"codex":  codexhook.EnsureSpawnCommand,
+		"claude":      claudehook.EnsureSpawnCommand,
+		"codex":       codexhook.EnsureSpawnCommand,
+		"antigravity": antigravity.EnsureSpawnCommand,
 	}},
 	{"reseed command", false, map[string]func(string) (bool, error){
-		"claude": claudehook.EnsureReseedCommand,
-		"codex":  codexhook.EnsureReseedCommand,
+		"claude":      claudehook.EnsureReseedCommand,
+		"codex":       codexhook.EnsureReseedCommand,
+		"antigravity": antigravity.EnsureReseedCommand,
 	}},
 }
 
@@ -379,6 +454,32 @@ func installAgentSupport(agent string) string {
 	return hint
 }
 
+// agentTrusters maps an agent to the writer that pre-approves a directory in
+// its own config — the same per-agent table shape as agentInstallers.
+var agentTrusters = map[string]func(home, dir string) error{
+	"claude":      claudehook.TrustDirectory,
+	"antigravity": antigravity.TrustWorkspace,
+}
+
+// trustWorktree pre-approves wt in the agent's own config, so a brand-new
+// worktree doesn't land the pane on a "do you trust this folder?" prompt
+// instead of the agent. Advisory: a failure only warns, since the user can
+// still answer the prompt by hand.
+func trustWorktree(agent, wt string) {
+	trust, ok := agentTrusters[agent]
+	if !ok {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		slog.Warn("agent trust write failed", "agent", agent, "err", err)
+		return
+	}
+	if err := trust(home, wt); err != nil {
+		slog.Warn("agent trust write failed", "agent", agent, "path", wt, "err", err)
+	}
+}
+
 // InstallKnownCommands backfills custom commands for every agent referenced
 // by a configured project or existing session. It intentionally skips hook
 // installers: newly written hooks require an in-agent trust prompt, whose hint
@@ -400,7 +501,7 @@ func (a *App) InstallKnownCommands() {
 		slog.Warn("agent command install failed", "err", err)
 		return
 	}
-	for _, agent := range []string{"claude", "codex", "opencode"} {
+	for _, agent := range []string{"claude", "codex", "opencode", "antigravity"} {
 		if !agents[agent] {
 			continue
 		}
@@ -441,7 +542,7 @@ func (a *App) ReseedWorktree(s session.Session) []string {
 
 func validateAgent(agent string) error {
 	switch agent {
-	case "claude", "codex", "opencode":
+	case "claude", "codex", "opencode", "antigravity":
 		return nil
 	default:
 		return fmt.Errorf("unknown agent %q", agent)
@@ -852,6 +953,7 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 	if agent == "" {
 		agent = proj.AgentName()
 	}
+	agent = normalizeAgent(agent)
 	if model == "" && agent == proj.AgentName() {
 		// Unspecified: fall through to the project's default model. Gated on
 		// the agent matching, since a model name only means anything for the
@@ -954,13 +1056,7 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 		}
 	}
 	hooksHint := installAgentSupport(agent)
-	if agent == "claude" {
-		if home, err := os.UserHomeDir(); err != nil {
-			slog.Warn("claude trust write failed", "err", err)
-		} else if err := claudehook.TrustDirectory(home, wt); err != nil {
-			slog.Warn("claude trust write failed", "path", wt, "err", err)
-		}
-	}
+	trustWorktree(agent, wt)
 	cmd := buildAgentCmd(agent, dangerousVal, model, thinking)
 	agentPort := 0
 	if agent == "opencode" {
@@ -1685,6 +1781,8 @@ func (a *App) RenameSession(id, newName string) (session.Session, error) {
 }
 
 func (a *App) SetSessionAgent(id, agent string, dangerous bool) (session.Session, error) {
+	// Normalize first: validateAgent only knows the stored names.
+	agent = normalizeAgent(agent)
 	if err := validateAgent(agent); err != nil {
 		return session.Session{}, err
 	}
@@ -1716,6 +1814,7 @@ func (a *App) repairAgentSupport(s session.Session) string {
 	if _, ok := a.project(s.Project); !ok {
 		return ""
 	}
+	trustWorktree(s.AgentName(), s.WorktreePath)
 	return installAgentSupport(s.AgentName())
 }
 
@@ -1922,6 +2021,7 @@ func (a *App) validateProjectLocked(name string, p *config.Project) error {
 	// p.Agent == "" is a legitimate "use the default" value at rest (see
 	// AgentName), so validate the resolved name rather than the raw field —
 	// only a genuinely bogus value (e.g. a config typo) should be rejected.
+	p.Agent = normalizeAgent(p.Agent)
 	if err := validateAgent(p.AgentName()); err != nil {
 		return err
 	}
@@ -2011,6 +2111,7 @@ func (a *App) UpdateProject(name string, updated config.Project) error {
 	// updated.Agent == "" is a legitimate "use the default" value at rest
 	// (see AgentName), same as in validateProject — validate the resolved
 	// name rather than the raw field.
+	updated.Agent = normalizeAgent(updated.Agent)
 	if err := validateAgent(updated.AgentName()); err != nil {
 		return err
 	}

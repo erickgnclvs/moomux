@@ -89,3 +89,37 @@ func TestTrustDirectoryPreservesOtherProjectsAndFields(t *testing.T) {
 		t.Fatalf("existing field projectOnboardingSeenCount was dropped: %v", entry)
 	}
 }
+
+// TestTrustDirectoryNoRewriteWhenAlreadyTrusted pins the guard that keeps
+// OpenSession off ~/.claude.json's read-modify-write path: a live Claude Code
+// process rewrites that file constantly, so a redundant write here would
+// clobber whatever it wrote since we read it.
+func TestTrustDirectoryNoRewriteWhenAlreadyTrusted(t *testing.T) {
+	home := t.TempDir()
+	dir := "/repo/worktrees/feature-x"
+	if err := TrustDirectory(home, dir); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, ".claude.json")
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Something else (Claude itself) writes the file between opens.
+	const live = `{"projects":{"/repo/worktrees/feature-x":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true,"hasClaudeMdExternalIncludesApproved":true,"history":["a live edit"]}}}`
+	if err := os.WriteFile(path, []byte(live), before.Mode().Perm()); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := TrustDirectory(home, dir); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != live {
+		t.Fatalf("re-trust rewrote the file, losing the concurrent write:\n got %s\nwant %s", got, live)
+	}
+}

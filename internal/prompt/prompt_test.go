@@ -155,6 +155,11 @@ func TestForAgentDispatch(t *testing.T) {
 	if got := ForAgent(home, "codex", wt); got != "" {
 		t.Fatalf("codex: got %q", got)
 	}
+	if got := ForAgent(home, "antigravity", wt); got != "" {
+		t.Fatalf("antigravity: got %q", got)
+	}
+	// Deliberately no "agy" case: callers pass Session.AgentName(), which
+	// has already folded the alias, so ForAgent knows one spelling.
 }
 
 func TestFirstOpenCodeMissingDBLeavesNoStrayFile(t *testing.T) {
@@ -236,5 +241,83 @@ func TestCodexDBGlobs(t *testing.T) {
 	}
 	if runtime.GOOS == "darwin" && len(globs) != 2 {
 		t.Fatalf("darwin should add JetBrains glob: %v", globs)
+	}
+}
+
+func TestFirstAntigravity(t *testing.T) {
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 not installed")
+	}
+	home := t.TempDir()
+	dbDir := filepath.Join(home, ".gemini", "antigravity-cli")
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(dbDir, "conversation_summaries.db")
+
+	schema := `CREATE TABLE conversation_summaries (
+		conversation_id text PRIMARY KEY,
+		title text NOT NULL DEFAULT '',
+		preview text NOT NULL DEFAULT '',
+		last_modified_time datetime NOT NULL,
+		workspace_uris text NOT NULL
+	);`
+	if err := exec.Command("sqlite3", dbPath, schema).Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	wt := "/Users/test/projects/mywt"
+	insert := `
+	INSERT INTO conversation_summaries VALUES (
+		'c1', 'Title 1', 'First prompt from preview',
+		'2026-09-01 10:00:00+00:00',
+		'["file:///Users/test/projects/mywt"]'
+	);
+	INSERT INTO conversation_summaries VALUES (
+		'c2', 'Title 2', 'Second prompt later',
+		'2026-09-02 10:00:00+00:00',
+		'["file:///Users/test/projects/mywt"]'
+	);
+	`
+	if err := exec.Command("sqlite3", dbPath, insert).Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := FirstAntigravity(home, wt); got != "First prompt from preview" {
+		t.Fatalf("FirstAntigravity = %q, want %q", got, "First prompt from preview")
+	}
+
+	// Test fallback to title when preview is empty
+	wt2 := "/Users/test/projects/other"
+	insert2 := `
+	INSERT INTO conversation_summaries VALUES (
+		'c3', 'Fallback title prompt', '',
+		'2026-09-01 10:00:00+00:00',
+		'["file:///Users/test/projects/other"]'
+	);
+	`
+	if err := exec.Command("sqlite3", dbPath, insert2).Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := FirstAntigravity(home, wt2); got != "Fallback title prompt" {
+		t.Fatalf("FirstAntigravity fallback = %q, want %q", got, "Fallback title prompt")
+	}
+
+	// Percent-escaped URIs: agy escapes more than the space the old
+	// replace() chain decoded, so a path with a '#' in it found nothing.
+	wt3 := "/Users/test/pro jects/c#d"
+	insert3 := `
+	INSERT INTO conversation_summaries VALUES (
+		'c4', 'Escaped title', 'Escaped path prompt',
+		'2026-09-01 10:00:00+00:00',
+		'["file:///Users/test/pro%20jects/c%23d"]'
+	);
+	`
+	if err := exec.Command("sqlite3", dbPath, insert3).Run(); err != nil {
+		t.Fatal(err)
+	}
+	if got := FirstAntigravity(home, wt3); got != "Escaped path prompt" {
+		t.Fatalf("FirstAntigravity escaped = %q, want %q", got, "Escaped path prompt")
 	}
 }

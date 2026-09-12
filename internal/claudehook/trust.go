@@ -42,6 +42,17 @@ func TrustDirectory(home, dir string) error {
 	if entry == nil {
 		entry = map[string]any{}
 	}
+	// Already trusted: return without touching the file. This runs on every
+	// session open, not just at create, and ~/.claude.json is rewritten
+	// continuously by any live Claude Code process — so a read-modify-write
+	// here would hand back a snapshot taken moments earlier and drop
+	// whatever Claude wrote in between (see install_concurrent_test.go on
+	// why installers stay off the frequent path).
+	if entry["hasTrustDialogAccepted"] == true &&
+		entry["hasCompletedProjectOnboarding"] == true &&
+		entry["hasClaudeMdExternalIncludesApproved"] == true {
+		return nil
+	}
 	entry["hasTrustDialogAccepted"] = true
 	entry["hasCompletedProjectOnboarding"] = true
 	entry["hasClaudeMdExternalIncludesApproved"] = true
