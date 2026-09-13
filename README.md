@@ -211,6 +211,8 @@ moomux spawn -project <project> [-name <name>] [-agent claude|codex|opencode] \
 
 It's fire-and-forget: prints the new tmux session's name and exits immediately, without waiting for the agent or reporting anything back. Run `moomux spawn -h` for the full flag list, or `moomux --help` for top-level usage.
 
+For a feature that spans several repositories — one spawned session per repo, all of them having to agree with each other — see [Coordinating sessions across several repositories](docs/multi-repo-sessions.md).
+
 ## Userscripts
 
 Drop an executable script into `~/.config/moomux/userscripts/worktree-create/` and moomux runs it right after every new worktree is created (both from the TUI and `moomux spawn`), before the agent starts. Drop one into `~/.config/moomux/userscripts/worktree-delete/` and moomux runs it right before a worktree is removed (session delete), while the worktree still exists on disk. Scripts run in name-sorted order, each with a 30s timeout; a failing script only logs a warning and never blocks session creation or deletion.
