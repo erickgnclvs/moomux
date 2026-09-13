@@ -121,6 +121,57 @@ func TestGhosttyCloseTabDoesNotActivate(t *testing.T) {
 	}
 }
 
+func TestGhosttyFindTabMatchesByWindowTitle(t *testing.T) {
+	fr := &fakeRunner{out: "tab-9bc66d800"}
+	name := func(session string) string {
+		if session != "moomux-foo" {
+			t.Fatalf("unexpected session %q", session)
+		}
+		return "🚀 review-585"
+	}
+	c := &ghosttyClient{runner: fr, fallback: &fakeOpener{}, windowName: name}
+	id, err := c.FindTab("moomux-foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "tab-9bc66d800" {
+		t.Fatalf("got tab id %q", id)
+	}
+	if !strings.Contains(fr.script, `name of t is "🚀 review-585"`) {
+		t.Fatalf("missing title match: %s", fr.script)
+	}
+}
+
+func TestGhosttyFindTabReturnsEmptyWhenTitleNotFound(t *testing.T) {
+	fr := &fakeRunner{out: "notfound"}
+	c := &ghosttyClient{runner: fr, fallback: &fakeOpener{}, windowName: func(string) string { return "review-585" }}
+	id, err := c.FindTab("moomux-foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "" {
+		t.Fatalf("got tab id %q, want none", id)
+	}
+}
+
+// No tmux window name (session gone, or tmux unreachable) means nothing to
+// match against — FindTab must not run a script that would match every tab
+// with an empty title.
+func TestGhosttyFindTabSkipsScriptWhenNoWindowName(t *testing.T) {
+	fr := &fakeRunner{out: "tab-1"}
+	c := &ghosttyClient{runner: fr, fallback: &fakeOpener{}, windowName: func(string) string { return "" }}
+	id, err := c.FindTab("moomux-foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "" {
+		t.Fatalf("got tab id %q, want none", id)
+	}
+	if len(fr.scripts) != 0 {
+		t.Fatalf("expected no script run, got %v", fr.scripts)
+	}
+}
+
 func TestGhosttyEscapesTmuxSession(t *testing.T) {
 	fr := &fakeRunner{out: "tab-1"}
 	c := &ghosttyClient{runner: fr, fallback: &fakeOpener{}}

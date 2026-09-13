@@ -32,7 +32,8 @@ import (
 // Nothing here remembers which tab a session is in. Each terminal finds its
 // own (terminal.TabFinder), by joining tmux's attached-client list to what
 // it can report about its tabs — tty for iTerm2 and wezterm,
-// foreground-process pid for kitty. A remembered handle would survive
+// foreground-process pid for kitty, tab title for Ghostty (whose scripting
+// dictionary exposes neither tty nor pid). A remembered handle would survive
 // neither a restart of this process nor of the terminal, and kitty tab ids
 // and wezterm pane ids restart from zero, so a stale one names a stranger's
 // tab.

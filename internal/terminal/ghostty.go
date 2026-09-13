@@ -11,12 +11,12 @@ import (
 // the scripts don't depend on the app's display name.
 const ghosttyAppID = "com.mitchellh.ghostty"
 
-// ghosttyClient implements TabReopener/TabCloser for Ghostty on macOS via
-// its AppleScript dictionary (Ghostty 1.3+, `macos-applescript = true`,
-// which is the default). Ghostty still has no CLI flag for opening a tab in
-// an existing window (see ghosttyArgs), but the scripting suite exposes
-// `new tab in front window` plus stable tab ids that can be selected and
-// closed later — everything TabReopener/TabCloser need.
+// ghosttyClient implements TabReopener/TabCloser/TabFinder for Ghostty on
+// macOS via its AppleScript dictionary (Ghostty 1.3+, `macos-applescript =
+// true`, which is the default). Ghostty still has no CLI flag for opening a
+// tab in an existing window (see ghosttyArgs), but the scripting suite
+// exposes `new tab in front window` plus stable tab ids that can be selected
+// and closed later — everything TabReopener/TabCloser need.
 //
 // Every path falls back to fallback (a fresh ghostty window) when the
 // script fails, because AppleScript can be unavailable for reasons moomux
@@ -32,10 +32,20 @@ const ghosttyAppID = "com.mitchellh.ghostty"
 type ghosttyClient struct {
 	runner   scriptRunner
 	fallback TerminalOpener
+	// windowName reports a tmux session's current window name; injectable so
+	// tests don't need a live tmux server. Defaults to tmuxWindowName.
+	windowName func(tmuxSession string) string
 }
 
 func newGhosttyClient(fallback TerminalOpener) *ghosttyClient {
-	return &ghosttyClient{runner: execScriptRunner{}, fallback: fallback}
+	return &ghosttyClient{runner: execScriptRunner{}, fallback: fallback, windowName: tmuxWindowName}
+}
+
+func (c *ghosttyClient) windowNameFor(tmuxSession string) string {
+	if c.windowName == nil {
+		return tmuxWindowName(tmuxSession)
+	}
+	return c.windowName(tmuxSession)
 }
 
 func (c *ghosttyClient) OpenSession(tmuxSession, title string) (string, error) {
@@ -97,6 +107,56 @@ end tell`, ghosttyAppID, escapeAppleScript(cmd)))
 		return "", hint, ferr
 	}
 	return strings.TrimSpace(out), "", nil
+}
+
+// FindTab reports the id of the Ghostty tab whose title matches
+// tmuxSession's tmux window name — see terminal.TabFinder. Ghostty's
+// scripting dictionary exposes no tty or pid for a terminal surface, unlike
+// iTerm2/wezterm (tty) or kitty (foreground-process pid), so title is the
+// only join key it has. That works here because tmux continuously pushes
+// the window name as the terminal title (tmux.Client.ConfigureTitleTracking)
+// and a Ghostty tab's title follows its terminal's title — but it's a
+// narrower guarantee than a tty/pid join: two attached sessions that
+// happen to share a title at the same moment would be indistinguishable.
+func (c *ghosttyClient) FindTab(tmuxSession string) (string, error) {
+	name := c.windowNameFor(tmuxSession)
+	if name == "" {
+		return "", nil
+	}
+	out, err := c.runner.Run(fmt.Sprintf(`
+tell application id "%s"
+	repeat with w in windows
+		repeat with t in tabs of w
+			if name of t is "%s" then
+				return id of t
+			end if
+		end repeat
+	end repeat
+	return "notfound"
+end tell`, ghosttyAppID, escapeAppleScript(name)))
+	slog.Debug("ghostty: find tab by title result", "tmux_session", tmuxSession, "title", name, "out", out, "err", err)
+	if err != nil {
+		return "", nil
+	}
+	id := strings.TrimSpace(out)
+	if id == "notfound" {
+		return "", nil
+	}
+	return id, nil
+}
+
+// tmuxWindowName returns tmuxSession's current tmux window name — the exact
+// text tmux is continuously pushing as the terminal title (see
+// tmux.Client.ConfigureTitleTracking) — or "" if tmux can't be reached,
+// which FindTab treats the same as "no tab to find".
+func tmuxWindowName(tmuxSession string) string {
+	out, err := exec.Command("tmux", "display-message",
+		"-t", "="+tmuxSession, "-p", "#{window_name}").Output()
+	if err != nil {
+		slog.Debug("tmux window name lookup failed", "tmux_session", tmuxSession, "err", err)
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // CloseTab closes tabID's tab if it still exists; a missing tab is a no-op,

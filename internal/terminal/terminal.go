@@ -54,6 +54,9 @@ var (
 
 	_ TabCloser = (*weztermClient)(nil)
 	_ TabFinder = (*weztermClient)(nil)
+
+	_ TabCloser = (*ghosttyClient)(nil)
+	_ TabFinder = (*ghosttyClient)(nil)
 )
 
 // Detect returns the best TerminalOpener for the current environment by
