@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -9,6 +10,18 @@ import (
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/tui"
 )
+
+// TestMain clears the env that terminalBackend.open reads to decide the
+// user is somewhere else (see browser.Remote). A developer running the
+// suite over ssh, or from a Moshi window, would otherwise get the
+// attach-yourself hint instead of an opened terminal — a pass or fail
+// depending on how they happened to connect.
+func TestMain(m *testing.M) {
+	for _, k := range []string{"SSH_TTY", "MOSHI_CLIENT", "TMUX"} {
+		_ = os.Unsetenv(k)
+	}
+	os.Exit(m.Run())
+}
 
 // stubBackend records which core call an open went through. Everything else
 // on tui.Backend is unused here; the embedded nil interface would panic if
