@@ -156,9 +156,7 @@ func TestVisibleListPositionsCollapsedFolderAmongItsNeighbours(t *testing.T) {
 		{ID: "demo:z", Project: "demo", Name: "z"},
 	}}
 	m := newTestModel(be)
-	proj := m.cfg.Projects["demo"]
-	proj.Folders = map[string]config.FolderMeta{"grp": {Collapsed: true}}
-	m.cfg.Projects["demo"] = proj
+	m.cfg.Folders = map[string]config.FolderMeta{"grp": {Collapsed: true}}
 	be.cfg = *m.cfg
 	m.sessionsChanged()
 
@@ -253,9 +251,7 @@ func TestVisibleListHidesFoldersEmptyInCurrentView(t *testing.T) {
 		{ID: "demo:old", Project: "demo", Name: "old", Folder: "done", Archived: true},
 	}}
 	m := newTestModel(be)
-	proj := m.cfg.Projects["demo"]
-	proj.Folders = map[string]config.FolderMeta{"done": {}, "empty": {}}
-	m.cfg.Projects["demo"] = proj
+	m.cfg.Folders = map[string]config.FolderMeta{"done": {}, "empty": {}}
 	be.cfg = *m.cfg
 	m.sessionsChanged()
 

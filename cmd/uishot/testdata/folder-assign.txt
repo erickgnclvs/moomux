@@ -9,7 +9,7 @@
 │  folder:> auth                       │
 │                                      │
 │  blank removes it from any folder    │
-│  existing: auth, legacy              │
+│  existing: auth, legacy, scratch     │
 │                                      │
 │                                      │
 │  enter save  esc cancel              │
@@ -36,7 +36,7 @@
            │  folder:     > auth                                                        │           
            │                                                                            │           
            │  blank removes it from any folder                                          │           
-           │  existing: auth, legacy                                                    │           
+           │  existing: auth, legacy, scratch                                           │           
            │                                                                            │           
            │                                                                            │           
            │  enter save  esc cancel                                                    │           

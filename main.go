@@ -169,6 +169,23 @@ func checkDeps() error {
 // failure — cfg.TmuxSetupAsked/AutoTmuxAsked being lost here would reopen
 // the first-run prompts on every subsequent launch.
 func saveConfig(cfgPath string, cfg *config.Config) {
+	// Reload before writing, the same way every App mutator does: both
+	// callers reached here through a blocking stdin prompt, so cfg is
+	// whatever was on disk when moomux started plus these three flags.
+	// Saving that verbatim used to be a harmless last-writer-wins over a
+	// project definition or two; it would now also erase a whole global
+	// folder table another moomux process created while the prompt sat
+	// there waiting for an answer.
+	//
+	// Reload replaces the struct wholesale, so carry the flags across it —
+	// they are the only thing these callers changed in memory, and losing
+	// them is precisely the reopened-prompt bug this function exists to
+	// prevent.
+	asked, autoTmux, autoAsked := cfg.TmuxSetupAsked, cfg.AutoTmux, cfg.AutoTmuxAsked
+	if err := config.Reload(cfgPath, cfg); err != nil {
+		slog.Error("config reload failed, saving anyway", "path", cfgPath, "err", err)
+	}
+	cfg.TmuxSetupAsked, cfg.AutoTmux, cfg.AutoTmuxAsked = asked, autoTmux, autoAsked
 	if err := config.Save(cfgPath, cfg); err != nil {
 		slog.Error("config save failed", "path", cfgPath, "err", err)
 	}

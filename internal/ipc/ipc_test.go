@@ -36,6 +36,7 @@ type fakeBackend struct {
 	createErr error
 	renamed   session.Session
 
+	folderOrder       []string
 	projectCollapsed  []projectCollapsedCall
 	addProjectWarning string
 	addProjectErr     error
@@ -106,16 +107,32 @@ func (f *fakeBackend) ReorderSessions(ids []string) error {
 	f.reordered = ids
 	return nil
 }
-func (f *fakeBackend) MoveProject(string, int) error           { return nil }
-func (f *fakeBackend) CreateFolder(project, name string) error { return nil }
+func (f *fakeBackend) MoveProject(string, int) error  { return nil }
+func (f *fakeBackend) CreateFolder(name string) error { return nil }
 func (f *fakeBackend) SetSessionFolder(id, folder string) (session.Session, error) {
 	return session.Session{ID: id, Folder: folder}, nil
 }
-func (f *fakeBackend) RenameFolder(project, oldName, newName string) error { return nil }
-func (f *fakeBackend) SetFolderCollapsed(project, name string, collapsed bool) error {
+func (f *fakeBackend) RenameFolder(oldName, newName string) error           { return nil }
+func (f *fakeBackend) SetFolderCollapsed(name string, collapsed bool) error { return nil }
+func (f *fakeBackend) DeleteFolder(name string) error                       { return nil }
+
+// ReorderFolders writes the order back into the shared config the way App
+// does, so a round trip can assert both that the names arrived and that the
+// response's config snapshot carries the new positions.
+func (f *fakeBackend) ReorderFolders(names []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.folderOrder = names
+	for i, n := range names {
+		if f.cfg == nil {
+			break
+		}
+		meta := f.cfg.Folders[n]
+		meta.Order = int64(i + 1)
+		f.cfg.Folders[n] = meta
+	}
 	return nil
 }
-func (f *fakeBackend) DeleteFolder(project, name string) error { return nil }
 func (f *fakeBackend) SetProjectCollapsed(project string, collapsed bool) error {
 	f.projectCollapsed = append(f.projectCollapsed, projectCollapsedCall{project: project, on: collapsed})
 	return nil
@@ -197,6 +214,7 @@ func snapshotter(b *fakeBackend, cfg *config.Config) func() config.Config {
 		defer b.mu.Unlock()
 		c := *cfg
 		c.Projects = maps.Clone(cfg.Projects)
+		c.Folders = maps.Clone(cfg.Folders)
 		return c
 	}
 }
@@ -787,9 +805,13 @@ func TestMoveSessionShimRespectsFolders(t *testing.T) {
 		{ID: "demo:c", Project: "demo", Folder: "auth"},
 		{ID: "demo:b", Project: "demo"},
 	}}
-	cfg := &config.Config{Projects: map[string]config.Project{
-		"demo": {Folders: map[string]config.FolderMeta{"auth": {}}},
-	}}
+	// The folder map is global now: a per-project one reads nil after
+	// config.Load, so building the fixture there would hand the shim an
+	// empty map and let this test pass without testing anything.
+	cfg := &config.Config{
+		Projects: map[string]config.Project{"demo": {}},
+		Folders:  map[string]config.FolderMeta{"auth": {}},
+	}
 	c, _ := start(t, b, cfg, nil)
 
 	if _, err := c.call("MoveSession", Args{ID: "demo:b", Delta: -1}); err != nil {
@@ -797,6 +819,30 @@ func TestMoveSessionShimRespectsFolders(t *testing.T) {
 	}
 	if got := b.reordered; !slices.Equal(got, []string{"demo:b", "demo:a", "demo:c"}) {
 		t.Fatalf("ReorderSessions got %v, want [demo:b demo:a demo:c] — the whole folder hopped, not one member", got)
+	}
+}
+
+// TestReorderFoldersCrossesTheWire: the folder-first order is the one piece
+// of folder state no TUI caller exercises (the TUI stays project-first), so
+// the wire is the only thing that covers it — Args.Names reaching the
+// backend intact, and the post-mutation config snapshot coming back with
+// the new positions rather than needing a second Config round trip.
+func TestReorderFoldersCrossesTheWire(t *testing.T) {
+	b := &fakeBackend{}
+	cfg := &config.Config{Folders: map[string]config.FolderMeta{
+		"auth": {Order: 2}, "infra": {Order: 1},
+	}}
+	c, _ := start(t, b, cfg, nil)
+
+	if err := c.ReorderFolders([]string{"auth", "infra"}); err != nil {
+		t.Fatalf("ReorderFolders: %v", err)
+	}
+	if got := b.folderOrder; !slices.Equal(got, []string{"auth", "infra"}) {
+		t.Fatalf("backend got %v, want [auth infra]", got)
+	}
+	snap := c.ConfigSnapshot()
+	if snap.Folders["auth"].Order != 1 || snap.Folders["infra"].Order != 2 {
+		t.Fatalf("ConfigSnapshot folders = %+v, want auth=1 infra=2", snap.Folders)
 	}
 }
 

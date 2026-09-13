@@ -2,14 +2,14 @@
                                         
                                         
                                         
-                                        
 ╭──────────────────────────────────────╮
 │                                      │
 │  Delete folder?                      │
 │                                      │
 │  name: auth                          │
 │                                      │
-│  2 session(s) move back to top leve  │
+│  3 session(s) across 2 projects      │
+│  move back to top level.             │
 │  No session or worktree is deleted.  │
 │                                      │
 │  y to confirm   n/esc to cancel      │
@@ -30,18 +30,18 @@
                                                                                                     
                                                                                                     
                                                                                                     
-                             ╭────────────────────────────────────────╮                             
-                             │                                        │                             
-                             │  Delete folder?                        │                             
-                             │                                        │                             
-                             │  name: auth                            │                             
-                             │                                        │                             
-                             │  2 session(s) move back to top level.  │                             
-                             │  No session or worktree is deleted.    │                             
-                             │                                        │                             
-                             │  y to confirm   n/esc to cancel        │                             
-                             │                                        │                             
-                             ╰────────────────────────────────────────╯                             
+                    ╭──────────────────────────────────────────────────────────╮                    
+                    │                                                          │                    
+                    │  Delete folder?                                          │                    
+                    │                                                          │                    
+                    │  name: auth                                              │                    
+                    │                                                          │                    
+                    │  3 session(s) across 2 projects move back to top level.  │                    
+                    │  No session or worktree is deleted.                      │                    
+                    │                                                          │                    
+                    │  y to confirm   n/esc to cancel                          │                    
+                    │                                                          │                    
+                    ╰──────────────────────────────────────────────────────────╯                    
                                                                                                     
                                                                                                     
                                                                                                     

@@ -275,7 +275,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case msg.Session.Folder == "":
 			m.setFlash("info", "moved "+msg.Session.Name+" out of its folder")
-		case m.cfg.Projects[msg.Session.Project].Folders[msg.Session.Folder].Collapsed:
+		case m.cfg.Folders[msg.Session.Folder].Collapsed:
 			// It just disappeared from the list; say where it went rather
 			// than leaving that looking like a delete.
 			m.setFlash("info", "filed "+msg.Session.Name+" under "+msg.Session.Folder+" (collapsed — z or click to open)")
@@ -324,8 +324,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setFlash("info", "created folder "+msg.Name)
 		// Land the overlay cursor on the folder just created — only
 		// possible after applyFolderChange, since the name isn't in m.cfg
-		// (which currentProjectFolders reads) until the snapshot lands.
-		for i, n := range m.currentProjectFolders() {
+		// (which currentFolders reads) until the snapshot lands.
+		for i, n := range m.currentFolders() {
 			if n == msg.Name {
 				m.folderCursor = i
 			}
@@ -790,8 +790,8 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setFlash("info", "not in a folder — g files it into one")
 				return m, nil
 			}
-			collapsed := !m.cfg.Projects[s.Project].Folders[s.Folder].Collapsed
-			return m, m.setFolderCollapsedCmd(s.Project, s.Folder, collapsed, "")
+			collapsed := !m.cfg.Folders[s.Folder].Collapsed
+			return m, m.setFolderCollapsedCmd(s.Folder, collapsed, "")
 		}
 	case key.Matches(msg, m.keys.Folders):
 		m.folderCursor = 0
@@ -928,9 +928,9 @@ func (m *Model) handleListMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		// Not a ticket/PR icon — a tap on the row selects it (and, in
 		// ModeMultiView, picks that row's project as the focused panel).
-		if proj, folder, ok := m.folderHeaderAt(msg.X, msg.Y); ok {
-			collapsed := !m.cfg.Projects[proj].Folders[folder].Collapsed
-			return m, m.setFolderCollapsedCmd(proj, folder, collapsed, "")
+		if folder, ok := m.folderHeaderAt(msg.X, msg.Y); ok {
+			collapsed := !m.cfg.Folders[folder].Collapsed
+			return m, m.setFolderCollapsedCmd(folder, collapsed, "")
 		}
 		if id, ok := m.sessionRowAt(msg.X, msg.Y); ok {
 			if m.mode == ModeMultiView {
@@ -990,7 +990,7 @@ func (m *Model) moveSelected(delta int) (tea.Model, tea.Cmd) {
 	}
 	proj := m.projects[m.activeProj]
 	all := m.allSessions()
-	rows := sessionview.BuildRows(all, m.cfg.Projects[proj].Folders, proj)
+	rows := sessionview.BuildRows(all, m.cfg.Folders, proj)
 	filtered := make(map[string]bool, len(all))
 	for _, s := range all {
 		if s.Archived != m.showArchived {
@@ -1103,7 +1103,7 @@ func (m *Model) dispatchReorder(ids []string) tea.Cmd {
 
 // applyFolderChange lands a folder mutation's result: the fresh config
 // snapshot (folder names, order and collapse state all live in
-// Project.Folders, which m.cfg owns its own copy of) plus a session re-read,
+// Config.Folders, which m.cfg owns its own copy of) plus a session re-read,
 // because membership itself lives on each Session — sessionsChanged is what
 // drops the last streamed snapshot so the re-read actually sees the new
 // Folder fields instead of the pre-mutation ones.
@@ -1131,11 +1131,10 @@ func (m *Model) cfgSnapshotOnSuccess(err error) *config.Config {
 // setFolderCollapsedCmd persists a folder's collapse state. focusID, when
 // set, is the session the cursor should land on once the change applies —
 // used when expanding a folder in order to reach a member inside it.
-func (m *Model) setFolderCollapsedCmd(project, folder string, collapsed bool, focusID string) tea.Cmd {
+func (m *Model) setFolderCollapsedCmd(folder string, collapsed bool, focusID string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.backend.SetFolderCollapsed(project, folder, collapsed)
+		err := m.backend.SetFolderCollapsed(folder, collapsed)
 		return FolderCollapsedSetMsg{
-			Project:   project,
 			Name:      folder,
 			Collapsed: collapsed,
 			FocusID:   focusID,
@@ -1888,7 +1887,7 @@ func (m *Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// on whatever was selected before and acting on that instead.
 		expand := tea.Cmd(nil)
 		if !m.focusSession(s.ID) && s.Folder != "" {
-			expand = m.setFolderCollapsedCmd(s.Project, s.Folder, false, s.ID)
+			expand = m.setFolderCollapsedCmd(s.Folder, false, s.ID)
 		}
 		// Return to wherever search was opened from. If that's MultiView,
 		// fold the newly-focused session into that project's own panel

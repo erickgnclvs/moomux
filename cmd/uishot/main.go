@@ -73,11 +73,16 @@ var screens = map[string][]string{
 	"new-project": {"/", "n"},
 	"tag":         {"t"},
 	// "folders" shows the plain list with one expanded folder ("auth", 2
-	// members interleaved into the session list) and one collapsed folder
-	// ("legacy", header only) alongside loose sessions — see the "folders"
-	// case in renderScreen for the sample data. "folders-manage" opens the
-	// Folders (G) overlay on the same data; "folder-assign" opens the
-	// per-session assign form (g) with a session already filed under "auth".
+	// members in demo interleaved into the session list) and one collapsed
+	// folder ("legacy", header only) alongside loose sessions — see the
+	// "folders" case in renderScreen for the sample data. Folders are a
+	// global namespace, so that fixture also carries a memberless
+	// "scratch" and — for the three overlay scenarios, see the case for
+	// why not for "folders" itself — a member of "auth" in a second
+	// project, which is what makes "folder-delete" say 3 sessions where
+	// the overlay's project-filtered count says 2. "folders-manage" opens
+	// the Folders (G) overlay; "folder-assign" opens the per-session
+	// assign form (g) with a session already filed under "auth".
 	"folders":        {},
 	"folders-manage": {"G"},
 	"folder-delete":  {"G", "d"},
@@ -289,52 +294,43 @@ func (f *fakeBackend) KillTmux(id string) error                                {
 func (f *fakeBackend) SetSessionStatusTitle(id string, st watcher.State) error { return nil }
 func (f *fakeBackend) ReorderSessions(ids []string) error                      { return nil }
 func (f *fakeBackend) MoveProject(name string, delta int) error                { return nil }
-func (f *fakeBackend) CreateFolder(project, name string) error {
+func (f *fakeBackend) CreateFolder(name string) error {
 	if f.cfg == nil {
 		return nil
 	}
-	p := f.cfg.Projects[project]
-	if p.Folders == nil {
-		p.Folders = map[string]config.FolderMeta{}
+	if f.cfg.Folders == nil {
+		f.cfg.Folders = map[string]config.FolderMeta{}
 	}
-	if _, exists := p.Folders[name]; exists {
+	if _, exists := f.cfg.Folders[name]; exists {
 		return fmt.Errorf("folder %q already exists", name)
 	}
-	p.Folders[name] = config.FolderMeta{}
-	f.cfg.Projects[project] = p
+	f.cfg.Folders[name] = config.FolderMeta{}
 	return nil
 }
 func (f *fakeBackend) SetSessionFolder(id, folder string) (session.Session, error) {
 	return session.Session{}, nil
 }
-func (f *fakeBackend) RenameFolder(project, oldName, newName string) error { return nil }
-func (f *fakeBackend) SetFolderCollapsed(project, name string, collapsed bool) error {
+func (f *fakeBackend) RenameFolder(oldName, newName string) error { return nil }
+func (f *fakeBackend) SetFolderCollapsed(name string, collapsed bool) error {
 	if f.cfg == nil {
 		return nil
 	}
-	p := f.cfg.Projects[project]
-	if p.Folders == nil {
-		p.Folders = map[string]config.FolderMeta{}
+	if f.cfg.Folders == nil {
+		f.cfg.Folders = map[string]config.FolderMeta{}
 	}
-	meta := p.Folders[name]
+	meta := f.cfg.Folders[name]
 	meta.Collapsed = collapsed
-	p.Folders[name] = meta
-	f.cfg.Projects[project] = p
+	f.cfg.Folders[name] = meta
 	return nil
 }
-func (f *fakeBackend) DeleteFolder(project, name string) error                  { return nil }
+func (f *fakeBackend) DeleteFolder(name string) error                           { return nil }
+func (f *fakeBackend) ReorderFolders(names []string) error                      { return nil }
 func (f *fakeBackend) SetProjectCollapsed(project string, collapsed bool) error { return nil }
-func (f *fakeBackend) ProjectFolders() map[string]map[string]config.FolderMeta {
+func (f *fakeBackend) Folders() map[string]config.FolderMeta {
 	if f.cfg == nil {
 		return nil
 	}
-	out := map[string]map[string]config.FolderMeta{}
-	for name, p := range f.cfg.Projects {
-		if len(p.Folders) > 0 {
-			out[name] = p.Folders
-		}
-	}
-	return out
+	return f.cfg.Folders
 }
 func (f *fakeBackend) SetSessionTags(id, ticket, pr string) (session.Session, error) {
 	return session.Session{}, nil
@@ -369,7 +365,18 @@ func (f *fakeBackend) TmuxAliveAll() map[string]bool {
 func (f *fakeBackend) SuggestedProject() (string, string) { return (&app.App{}).SuggestedProject() }
 
 func (f *fakeBackend) Sessions() []session.Session { return f.sessions }
-func (f *fakeBackend) Projects() []string          { return nil }
+
+// Projects answers in the user's order, like the real core: it is what
+// sessionview keys Snapshot.Rows off (so a project whose sessions were all
+// deleted still gets rows) and the order BuildFolderRows lists its project
+// subheaders in. Returning nil here would leave both to the sample data's
+// map iteration.
+func (f *fakeBackend) Projects() []string {
+	if f.cfg == nil {
+		return nil
+	}
+	return f.cfg.OrderedProjectNames()
+}
 func (f *fakeBackend) AddProject(name string, p config.Project) (string, error) {
 	// The path warning is the core's now, so ask the real one rather than
 	// canning a string here — that's what the project-init-choice scenario
@@ -579,12 +586,32 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 			WorktreePath: "/tmp/demo/auth-logout", TmuxSession: "moomux-auth-logout",
 			CreatedAt: now, Agent: "claude", Folder: "auth",
 		})
-		p := cfg.Projects["demo"]
-		p.Folders = map[string]config.FolderMeta{
-			"auth":   {},
-			"legacy": {Collapsed: true},
+		if screenName != "folders" {
+			// "auth" spans two projects — the whole point of a global
+			// namespace, and what the delete dialog's global count is
+			// counting: this session is nowhere in demo's list but still
+			// moves back to top level when auth is deleted.
+			//
+			// Not in the plain "folders" list scenario, though: a second
+			// project with sessions makes ModeMultiView split into two
+			// stacked panels, and a stacked panel shows roughly one list
+			// row — which would cost that scenario the interleave it
+			// exists to show. The overlay scenarios cover the list
+			// completely, so nothing is lost by only spanning there.
+			sessions = append(sessions, session.Session{
+				ID: "spare:auth-tokens", Project: "spare", Name: "auth-tokens",
+				WorktreePath: "/tmp/spare/auth-tokens", TmuxSession: "moomux-auth-tokens",
+				CreatedAt: now, Agent: "claude", Folder: "auth",
+			})
 		}
-		cfg.Projects["demo"] = p
+		cfg.Folders = map[string]config.FolderMeta{
+			"auth":   {Order: 1},
+			"legacy": {Order: 2, Collapsed: true},
+			// A folder with no members anywhere: the overlay lists it as
+			// "scratch (0)" — created and not yet filed into — while no
+			// project's list grows a header for it.
+			"scratch": {Order: 3},
+		}
 	case "project-picker-emptied":
 		cfg = &config.Config{Projects: map[string]config.Project{
 			"solo": {Kind: "git", Repo: "/tmp/solo", BaseBranch: "main"},

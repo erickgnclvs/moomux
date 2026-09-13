@@ -181,6 +181,30 @@ func gitProject(repo string) map[string]config.Project {
 	}
 }
 
+// twoProjects is the fixture for anything about the global folder
+// namespace: one folder name has to be able to reach members in more than
+// one project for the behaviour to be visible at all.
+func twoProjects() map[string]config.Project {
+	return map[string]config.Project{
+		"demo":  {Kind: "git", Repo: "/repo", BaseBranch: "main"},
+		"other": {Kind: "git", Repo: "/other", BaseBranch: "main"},
+	}
+}
+
+// seedFolders writes names into the global folder table and persists it,
+// numbered in the order given. Through the config file, not just a.Cfg,
+// since every mutator reloads from disk before it writes.
+func seedFolders(t *testing.T, a *App, names ...string) {
+	t.Helper()
+	a.Cfg.Folders = map[string]config.FolderMeta{}
+	for i, name := range names {
+		a.Cfg.Folders[name] = config.FolderMeta{Order: int64(i + 1)}
+	}
+	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAgentCmd(t *testing.T) {
 	for agent, want := range map[string]string{
 		"codex": "codex", "opencode": "opencode", "claude": "claude", "": "claude", "other": "claude",
@@ -1548,27 +1572,30 @@ func TestReorderSessionsLeavesArchivedSessionsUntouched(t *testing.T) {
 	}
 }
 
-// TestCreateFolderStoresNoPosition pins the model down: a folder's place in
-// the list is its members' place (see sessionview.BuildRows), so creating
-// one must persist nothing but its existence. A stored position was the old
-// design, and it drifted out of step with session.Session.Order every time
-// Store.Reorder renumbered a subset of a project's sessions.
-func TestCreateFolderStoresNoPosition(t *testing.T) {
+// A folder does carry a position now — but only in the folder-first
+// view's own 1..N space (config.FolderMeta.Order), never interleaved with
+// session.Session.Order, which is what made the previous stored folder
+// order drift every time Store.Reorder renumbered a subset of a project's
+// sessions. Creating one puts it after every folder that already has a
+// place, so Order 0 stays reserved for "written before this existed".
+func TestCreateFolderPositionsLast(t *testing.T) {
 	a, _, _ := newTestApp(t, gitProject("/repo"))
 	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Order: 1})
 
-	if err := a.CreateFolder("demo", "fresh"); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
-		t.Fatal(err)
-	}
-	meta, ok := a.Cfg.Projects["demo"].Folders["fresh"]
-	if !ok {
-		t.Fatal("expected folder \"fresh\" to be created")
-	}
-	if meta != (config.FolderMeta{}) {
-		t.Fatalf("new folder meta = %+v, want the zero value (expanded, no stored position)", meta)
+	for i, name := range []string{"first", "second"} {
+		if err := a.CreateFolder(name); err != nil {
+			t.Fatal(err)
+		}
+		if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
+			t.Fatal(err)
+		}
+		meta, ok := a.Cfg.Folders[name]
+		if !ok {
+			t.Fatalf("expected folder %q to be created", name)
+		}
+		if want := int64(i + 1); meta.Order != want {
+			t.Fatalf("folder %q Order = %d, want %d", name, meta.Order, want)
+		}
 	}
 }
 
@@ -1582,24 +1609,24 @@ func TestFolderNamesAreValidatedAtTheCore(t *testing.T) {
 	// "" is not in this list: it is SetSessionFolder's own "put this back at
 	// top level", and CreateFolder rejects it on its own below.
 	for _, name := range []string{"   ", "a\nb", "with\ttab", strings.Repeat("x", config.FolderNameMax+1)} {
-		if err := a.CreateFolder("demo", name); err == nil {
+		if err := a.CreateFolder(name); err == nil {
 			t.Errorf("CreateFolder(%q) succeeded, want an error", name)
 		}
 		if _, err := a.SetSessionFolder("demo:a", name); err == nil {
 			t.Errorf("SetSessionFolder(%q) succeeded, want an error", name)
 		}
 	}
-	if err := a.CreateFolder("demo", ""); err == nil {
+	if err := a.CreateFolder(""); err == nil {
 		t.Error("CreateFolder(\"\") succeeded, want an error")
 	}
 
 	// Surrounding whitespace is trimmed rather than rejected, so " auth "
 	// and "auth" can't become two folders that look identical on screen.
-	if err := a.CreateFolder("demo", " auth "); err != nil {
+	if err := a.CreateFolder(" auth "); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := a.Cfg.Projects["demo"].Folders["auth"]; !ok {
-		t.Fatalf("expected the name to be trimmed to \"auth\", got %v", a.Cfg.Projects["demo"].Folders)
+	if _, ok := a.Cfg.Folders["auth"]; !ok {
+		t.Fatalf("expected the name to be trimmed to \"auth\", got %v", a.Cfg.Folders)
 	}
 	if _, err := a.SetSessionFolder("demo:a", " auth "); err != nil {
 		t.Fatal(err)
@@ -1609,13 +1636,85 @@ func TestFolderNamesAreValidatedAtTheCore(t *testing.T) {
 	}
 }
 
-func TestCreateFolderRejectsDuplicateName(t *testing.T) {
-	a, _, _ := newTestApp(t, gitProject("/repo"))
-	if err := a.CreateFolder("demo", "dup"); err != nil {
+// The folder namespace is global, so a name is taken even when its only
+// members live in another project — deliberately, since merging into that
+// folder is the whole point of the namespace. Nothing else would notice
+// the difference: with per-project folders this second call succeeded.
+func TestCreateFolderRejectsDuplicateNameAcrossProjects(t *testing.T) {
+	a, _, _ := newTestApp(t, twoProjects())
+	if err := a.CreateFolder("dup"); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.CreateFolder("demo", "dup"); err == nil {
+	if err := a.CreateFolder("dup"); err == nil {
 		t.Fatal("expected an error creating a folder that already exists")
+	}
+
+	// Same again, for a folder that exists only because a session of some
+	// other project was filed into it.
+	_ = a.Store.Put(session.Session{ID: "other:x", Project: "other", Name: "x"})
+	if _, err := a.SetSessionFolder("other:x", "auth"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.CreateFolder("auth"); err == nil {
+		t.Fatal("expected an error: \"auth\" already exists in the global namespace")
+	}
+}
+
+// A folder's members can span projects: filing a session into a folder
+// first used by another project joins them rather than making a second
+// folder that happens to share a string.
+func TestSetSessionFolderSpansProjects(t *testing.T) {
+	a, _, _ := newTestApp(t, twoProjects())
+	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a"})
+	_ = a.Store.Put(session.Session{ID: "other:b", Project: "other", Name: "b"})
+
+	if _, err := a.SetSessionFolder("demo:a", "auth"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.SetSessionFolder("other:b", "auth"); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.Cfg.Folders) != 1 {
+		t.Fatalf("folders = %v, want the single shared \"auth\"", a.Cfg.Folders)
+	}
+	if meta := a.Cfg.Folders["auth"]; meta.Order != 1 {
+		t.Fatalf("auth meta = %+v, want the Order from its first use kept", meta)
+	}
+	for _, id := range []string{"demo:a", "other:b"} {
+		if s, _ := a.Store.Get(id); s.Folder != "auth" {
+			t.Fatalf("%s filed under %q, want auth", id, s.Folder)
+		}
+	}
+}
+
+// ReorderFolders numbers what it is given 1..N and then keeps counting
+// through everything it wasn't given, so the result is always one complete
+// 1..N space — there is no Hidden flag at the folder level, so a client
+// showing a subset is showing a filtered view, not the whole list.
+func TestReorderFoldersNumbersNamedThenTheRest(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	for _, name := range []string{"a", "b", "c", "d"} {
+		if err := a.CreateFolder(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := a.ReorderFolders([]string{"c", "nope", "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
+		t.Fatal(err)
+	}
+	// c, a named first; then b and d after them, keeping the relative
+	// order they already had (b was 2, d was 4).
+	want := map[string]int64{"c": 1, "a": 2, "b": 3, "d": 4}
+	for name, order := range want {
+		if got := a.Cfg.Folders[name].Order; got != order {
+			t.Errorf("folder %q Order = %d, want %d (all: %v)", name, got, order, a.Cfg.Folders)
+		}
 	}
 }
 
@@ -1630,7 +1729,7 @@ func TestSetSessionFolderCreatesFolderOnFirstUse(t *testing.T) {
 	if got.Folder != "auth" {
 		t.Fatalf("session.Folder = %q, want auth", got.Folder)
 	}
-	if _, ok := a.Cfg.Projects["demo"].Folders["auth"]; !ok {
+	if _, ok := a.Cfg.Folders["auth"]; !ok {
 		t.Fatal("expected folder \"auth\" to be created")
 	}
 }
@@ -1652,20 +1751,15 @@ func TestRenameFolderUpdatesMembersAndRejectsCollision(t *testing.T) {
 	a, _, _ := newTestApp(t, gitProject("/repo"))
 	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Folder: "old"})
 	_ = a.Store.Put(session.Session{ID: "demo:b", Project: "demo", Name: "b", Folder: "other"})
-	p := a.Cfg.Projects["demo"]
-	p.Folders = map[string]config.FolderMeta{"old": {}, "other": {}}
-	a.Cfg.Projects["demo"] = p
-	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
-		t.Fatal(err)
-	}
+	seedFolders(t, a, "old", "other")
 
-	if err := a.RenameFolder("demo", "old", "new"); err != nil {
+	if err := a.RenameFolder("old", "new"); err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := a.Cfg.Projects["demo"].Folders["old"]; exists {
+	if _, exists := a.Cfg.Folders["old"]; exists {
 		t.Fatal("old folder name should no longer exist")
 	}
-	if _, exists := a.Cfg.Projects["demo"].Folders["new"]; !exists {
+	if _, exists := a.Cfg.Folders["new"]; !exists {
 		t.Fatal("expected folder \"new\" to exist")
 	}
 	member, ok := a.Store.Get("demo:a")
@@ -1677,54 +1771,50 @@ func TestRenameFolderUpdatesMembersAndRejectsCollision(t *testing.T) {
 		t.Fatalf("unrelated session's folder changed: %+v", other)
 	}
 
-	if err := a.RenameFolder("demo", "new", "other"); err == nil {
+	if err := a.RenameFolder("new", "other"); err == nil {
 		t.Fatal("expected an error renaming onto an existing folder name")
 	}
 }
 
 func TestSetFolderCollapsedPersists(t *testing.T) {
 	a, _, _ := newTestApp(t, gitProject("/repo"))
-	p := a.Cfg.Projects["demo"]
-	p.Folders = map[string]config.FolderMeta{"auth": {}}
-	a.Cfg.Projects["demo"] = p
-	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
-		t.Fatal(err)
-	}
+	seedFolders(t, a, "auth")
 
-	if err := a.SetFolderCollapsed("demo", "auth", true); err != nil {
+	if err := a.SetFolderCollapsed("auth", true); err != nil {
 		t.Fatal(err)
 	}
-	if !a.Cfg.Projects["demo"].Folders["auth"].Collapsed {
+	if !a.Cfg.Folders["auth"].Collapsed {
 		t.Fatal("expected auth folder to be collapsed")
 	}
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		t.Fatal(err)
 	}
-	if !a.Cfg.Projects["demo"].Folders["auth"].Collapsed {
+	if !a.Cfg.Folders["auth"].Collapsed {
 		t.Fatal("collapsed state did not persist to disk")
 	}
 }
 
-func TestDeleteFolderUnparentsMembers(t *testing.T) {
-	a, _, _ := newTestApp(t, gitProject("/repo"))
+// Deleting a folder un-parents its members wherever they are: membership
+// spans projects now, so stopping at the current one would leave sessions
+// filed under a folder that no longer exists.
+func TestDeleteFolderUnparentsMembersInEveryProject(t *testing.T) {
+	a, _, _ := newTestApp(t, twoProjects())
 	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Folder: "auth"})
+	_ = a.Store.Put(session.Session{ID: "other:a", Project: "other", Name: "a", Folder: "auth"})
 	_ = a.Store.Put(session.Session{ID: "demo:b", Project: "demo", Name: "b", Folder: "other"})
-	p := a.Cfg.Projects["demo"]
-	p.Folders = map[string]config.FolderMeta{"auth": {}, "other": {}}
-	a.Cfg.Projects["demo"] = p
-	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
-		t.Fatal(err)
-	}
+	seedFolders(t, a, "auth", "other")
 
-	if err := a.DeleteFolder("demo", "auth"); err != nil {
+	if err := a.DeleteFolder("auth"); err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := a.Cfg.Projects["demo"].Folders["auth"]; exists {
+	if _, exists := a.Cfg.Folders["auth"]; exists {
 		t.Fatal("expected auth folder to be deleted")
 	}
-	member, ok := a.Store.Get("demo:a")
-	if !ok || member.Folder != "" {
-		t.Fatalf("member session should be un-parented to top-level, got %+v", member)
+	for _, id := range []string{"demo:a", "other:a"} {
+		member, ok := a.Store.Get(id)
+		if !ok || member.Folder != "" {
+			t.Fatalf("%s should be un-parented to top-level, got %+v", id, member)
+		}
 	}
 	other, ok := a.Store.Get("demo:b")
 	if !ok || other.Folder != "other" {
@@ -2413,6 +2503,31 @@ func TestRemoveProject(t *testing.T) {
 	}
 	if _, ok := a.Cfg.Projects["demo"]; ok {
 		t.Fatal("project not removed")
+	}
+}
+
+// Folders outlive the project they were used in now, and RemoveProject
+// leaves them alone. It refuses while the project has any session left
+// (archived included), so by the time it runs the project is filed under
+// nothing — which means a "delete the folders that ended up memberless"
+// sweep would not be scoped to this project at all, it would take every
+// empty folder in the namespace, including one the user just created in
+// the overlay for a project they are not touching.
+func TestRemoveProjectKeepsFolders(t *testing.T) {
+	a, _, _ := newTestApp(t, twoProjects())
+	_ = a.Store.Put(session.Session{ID: "other:x", Project: "other", Name: "x", Folder: "shared"})
+	seedFolders(t, a, "shared", "stranded")
+
+	if err := a.RemoveProject("demo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"shared", "stranded"} {
+		if _, exists := a.Cfg.Folders[name]; !exists {
+			t.Fatalf("removing a project deleted folder %q: %v", name, a.Cfg.Folders)
+		}
 	}
 }
 
@@ -3356,12 +3471,12 @@ func TestPRStatusNoPRForBranch(t *testing.T) {
 func TestSetFolderCollapsedRejectsUnknownFolder(t *testing.T) {
 	a, _, _ := newTestApp(t, gitProject("/repo"))
 
-	if err := a.SetFolderCollapsed("demo", "nope", true); err == nil {
+	if err := a.SetFolderCollapsed("nope", true); err == nil {
 		t.Fatal("expected an error collapsing a folder that does not exist")
 	}
 	// Writing a zero-value FolderMeta for it would conjure the folder into
-	// existence at Order 0, i.e. pinned above every real session.
-	if _, exists := a.Cfg.Projects["demo"].Folders["nope"]; exists {
+	// existence, at an Order no creation path ever assigns.
+	if _, exists := a.Cfg.Folders["nope"]; exists {
 		t.Fatal("collapsing an unknown folder created it")
 	}
 }
@@ -3386,19 +3501,19 @@ func TestFolderMutatorsHoldCfgLock(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < 20; i++ {
 			name := fmt.Sprintf("f%d", i)
-			if err := a.CreateFolder("demo", name); err != nil {
+			if err := a.CreateFolder(name); err != nil {
 				t.Errorf("CreateFolder: %v", err)
 				return
 			}
-			if err := a.SetFolderCollapsed("demo", name, true); err != nil {
+			if err := a.SetFolderCollapsed(name, true); err != nil {
 				t.Errorf("SetFolderCollapsed: %v", err)
 				return
 			}
-			if err := a.RenameFolder("demo", name, name+"x"); err != nil {
+			if err := a.RenameFolder(name, name+"x"); err != nil {
 				t.Errorf("RenameFolder: %v", err)
 				return
 			}
-			if err := a.DeleteFolder("demo", name+"x"); err != nil {
+			if err := a.DeleteFolder(name + "x"); err != nil {
 				t.Errorf("DeleteFolder: %v", err)
 				return
 			}

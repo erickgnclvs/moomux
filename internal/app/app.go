@@ -6,6 +6,7 @@ package app
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -22,6 +23,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/layout"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/tmux"
 	"github.com/erickgnclvs/moomux/internal/userscript"
 	"github.com/erickgnclvs/moomux/internal/watcher"
@@ -561,20 +563,15 @@ func (a *App) SetProjectCollapsed(project string, collapsed bool) error {
 	return nil
 }
 
-// ProjectFolders returns every project's folder display state, copied out
-// from under cfgMu so a caller can hold it while the config changes. Feeds
-// sessionview.BuildRows, which is where a folder's layout is decided for
-// every front end at once.
-func (a *App) ProjectFolders() map[string]map[string]config.FolderMeta {
+// Folders returns the global folder table, copied out from under cfgMu so
+// a caller can hold it while the config changes. Feeds sessionview's
+// BuildRows and BuildFolderRows, which is where a folder's layout is
+// decided for every front end at once. nil when no folder has ever been
+// created — every reader treats that as "no folders", same as an empty map.
+func (a *App) Folders() map[string]config.FolderMeta {
 	a.cfgMu.RLock()
 	defer a.cfgMu.RUnlock()
-	out := make(map[string]map[string]config.FolderMeta, len(a.Cfg.Projects))
-	for name, p := range a.Cfg.Projects {
-		if len(p.Folders) > 0 {
-			out[name] = maps.Clone(p.Folders)
-		}
-	}
-	return out
+	return maps.Clone(a.Cfg.Folders)
 }
 
 // MoveProject shifts the project with the given name by delta positions (-1
@@ -1366,90 +1363,116 @@ func (a *App) SetSessionTags(id, ticket, pr string) (session.Session, error) {
 	return s, nil
 }
 
-// withFolders runs mutate against a copy of project's folder map and
+// withFolders runs mutate against a copy of the global folder map and
 // persists the result, following the same cfgMu -> reload -> mutate -> save
 // idiom as SetTheme and friends: the lock is what keeps a mutation from
 // racing the ConfigSnapshot reads every front end does, and the reload makes
 // the write land on top of whatever another process saved meanwhile. Mutating
-// a copy is what makes the rollback a single reassignment — the map inside
-// a.Cfg.Projects[project] is shared, so undoing an in-place key write would
-// otherwise mean replaying each individual change in reverse.
-func (a *App) withFolders(project string, mutate func(map[string]config.FolderMeta) error) error {
+// a copy is what makes the rollback a single reassignment — a.Cfg.Folders is
+// aliased by every ConfigSnapshot clone taken before now, so undoing an
+// in-place key write would otherwise mean replaying each change in reverse.
+func (a *App) withFolders(mutate func(map[string]config.FolderMeta) error) error {
 	a.cfgMu.Lock()
 	defer a.cfgMu.Unlock()
 	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
 		return fmt.Errorf("reload config: %w", err)
 	}
-	p, ok := a.Cfg.Projects[project]
-	if !ok {
-		return fmt.Errorf("unknown project %q", project)
-	}
-	prev := p.Folders
-	folders := maps.Clone(p.Folders)
+	prev := a.Cfg.Folders
+	folders := maps.Clone(a.Cfg.Folders)
 	if folders == nil {
+		// A config that never had a folder loads as nil, and maps.Clone
+		// keeps nil nil — the first folder ever created needs a real map.
 		folders = map[string]config.FolderMeta{}
 	}
 	if err := mutate(folders); err != nil {
 		return err
 	}
-	p.Folders = folders
-	a.Cfg.Projects[project] = p
+	a.Cfg.Folders = folders
 	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
-		p.Folders = prev
-		a.Cfg.Projects[project] = p
+		a.Cfg.Folders = prev
 		return fmt.Errorf("save config: %w", err)
 	}
 	return nil
 }
 
-// refileSessions points every session in project currently filed under from
-// at to ("" un-parents them back to top-level). Used by RenameFolder and
-// DeleteFolder to bring membership — which lives on each Session, not in the
-// folder map — in step with the config write they just made.
-//
-// ponytail: the config write and these store writes are two separate saves,
-// not one transaction — a crash between them leaves members pointing at a
-// name no longer in Project.Folders. That degrades gracefully (a missing
-// FolderMeta reads as a zero-value one everywhere), so it is left as is;
-// revisit with a combined write if orphaned folders show up in practice.
-func (a *App) refileSessions(project, from, to string) error {
-	for _, s := range a.Store.All() {
-		if s.Project == project && s.Folder == from {
-			s.Folder = to
-			if err := a.Store.Put(s); err != nil {
-				return fmt.Errorf("store: %w", err)
-			}
+// nextFolderOrder is the position a newly created folder takes: after every
+// folder that already has one. Both creation paths (CreateFolder and
+// SetSessionFolder's create-on-first-use) go through it, so a folder always
+// has a position, and Order 0 — which sorts last — only ever means "written
+// by a binary older than the global folder namespace".
+func nextFolderOrder(folders map[string]config.FolderMeta) int64 {
+	var highest int64
+	for _, meta := range folders {
+		if meta.Order > highest {
+			highest = meta.Order
 		}
 	}
-	return nil
+	return highest + 1
 }
 
-// CreateFolder adds an empty, expanded folder to project so it exists (and
-// can be filed into) before any session has been assigned to it — the
-// Folders overlay's "n" (new) action. It's an error to create one that
-// already exists; use SetSessionFolder/RenameFolder to file sessions or
-// rename instead.
+// refileSessions points every session currently filed under from at to ("" un-parents
+// them back to top-level), across every project — folders are a global
+// namespace, so one folder's members can live in several. Used by
+// RenameFolder and DeleteFolder to bring membership — which lives on each
+// Session, not in the folder map — in step with the config write they just
+// made.
 //
-// A folder with no members renders last (see sessionview.BuildRows), so
-// there's nothing to position here: it moves into place on its own as soon
-// as the first session is filed into it.
-func (a *App) CreateFolder(project, name string) error {
+// It keeps going after a failed Store.Put and joins the errors instead of
+// returning on the first. The blast radius of a half-finished retag is now
+// every project at once, and stopping early only leaves more sessions
+// pointing at a folder name that no longer exists.
+//
+// The config write and these store writes are two separate saves, not one
+// transaction — a crash between them leaves members pointing at a name no
+// longer in Config.Folders. That degrades gracefully (a missing FolderMeta
+// reads as a zero-value one everywhere), so it is left as is; revisit with a
+// combined write if orphaned folders show up in practice.
+func (a *App) refileSessions(from, to string) error {
+	var errs []error
+	for _, s := range a.Store.All() {
+		if s.Folder != from {
+			continue
+		}
+		s.Folder = to
+		if err := a.Store.Put(s); err != nil {
+			errs = append(errs, fmt.Errorf("store %s: %w", s.ID, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// CreateFolder adds an empty, expanded folder so it exists (and can be filed
+// into) before any session has been assigned to it — the Folders overlay's
+// "n" (new) action. It's an error to create one that already exists; use
+// SetSessionFolder/RenameFolder to file sessions or rename instead.
+//
+// The namespace is global, so this fails for a name whose only members live
+// in some other project. That is the point of the namespace: one name is one
+// folder everywhere, and the way to put a session next to that other
+// project's is to file it into the same folder, not to make a second one.
+//
+// The new folder goes last in the folder-first view (nextFolderOrder). It
+// has no place at all in the project-first view until something is filed
+// into it, which is where a folder still sits wherever its first member does.
+func (a *App) CreateFolder(name string) error {
 	name, err := config.CleanFolderName(name)
 	if err != nil {
 		return err
 	}
-	return a.withFolders(project, func(folders map[string]config.FolderMeta) error {
+	return a.withFolders(func(folders map[string]config.FolderMeta) error {
 		if _, exists := folders[name]; exists {
 			return fmt.Errorf("folder %q already exists", name)
 		}
-		folders[name] = config.FolderMeta{}
+		folders[name] = config.FolderMeta{Order: nextFolderOrder(folders)}
 		return nil
 	})
 }
 
-// SetSessionFolder files id under the named folder within its own project
-// ("" moves it back to top-level), creating the folder (expanded by default)
-// on its first use if it doesn't already exist in Project.Folders.
+// SetSessionFolder files id under the named folder ("" moves it back to
+// top-level), creating the folder (expanded, positioned last) on its first
+// use. Folder names are global, so this reaches across projects: filing a
+// session into "auth" joins it to whatever sessions of other projects are
+// already there, which is what a folder-first view groups on.
 func (a *App) SetSessionFolder(id, folder string) (session.Session, error) {
 	s, ok := a.Store.Get(id)
 	if !ok {
@@ -1461,9 +1484,9 @@ func (a *App) SetSessionFolder(id, folder string) (session.Session, error) {
 			return session.Session{}, err
 		}
 		folder = clean
-		err = a.withFolders(s.Project, func(folders map[string]config.FolderMeta) error {
+		err = a.withFolders(func(folders map[string]config.FolderMeta) error {
 			if _, exists := folders[folder]; !exists {
-				folders[folder] = config.FolderMeta{}
+				folders[folder] = config.FolderMeta{Order: nextFolderOrder(folders)}
 			}
 			return nil
 		})
@@ -1478,9 +1501,10 @@ func (a *App) SetSessionFolder(id, folder string) (session.Session, error) {
 	return s, nil
 }
 
-// RenameFolder renames a project's folder, updating every member session's
-// Folder field to match in the same pass.
-func (a *App) RenameFolder(project, oldName, newName string) error {
+// RenameFolder renames a folder, updating every member session's Folder
+// field to match in the same pass — in every project, since one folder's
+// members can span several.
+func (a *App) RenameFolder(oldName, newName string) error {
 	newName, err := config.CleanFolderName(newName)
 	if err != nil {
 		return err
@@ -1488,7 +1512,7 @@ func (a *App) RenameFolder(project, oldName, newName string) error {
 	if oldName == newName {
 		return nil
 	}
-	err = a.withFolders(project, func(folders map[string]config.FolderMeta) error {
+	err = a.withFolders(func(folders map[string]config.FolderMeta) error {
 		meta, ok := folders[oldName]
 		if !ok {
 			return fmt.Errorf("unknown folder %q", oldName)
@@ -1503,16 +1527,59 @@ func (a *App) RenameFolder(project, oldName, newName string) error {
 	if err != nil {
 		return err
 	}
-	return a.refileSessions(project, oldName, newName)
+	return a.refileSessions(oldName, newName)
+}
+
+// ReorderFolders persists names, verbatim, as the folder-first view's
+// top-level order, numbering them 1..N. Like ReorderSessions it takes a
+// resolved order rather than a session plus a delta — the client already
+// knows the order it is displaying — but unlike ReorderSessions that order
+// need not be complete.
+//
+// It keeps counting, numbering every folder *not* in names after them,
+// in the order they already sort in (Order ascending, 0 last, ties by name).
+// Three extra lines, and they make the call total: a folder has no Hidden
+// affordance the way a session does, so a client showing a subset is showing
+// its own filtered view, and renumbering only that subset would interleave
+// two disjoint 1..N spaces. Unknown names are skipped rather than rejected —
+// a reorder racing someone else's DeleteFolder shouldn't fail wholesale.
+func (a *App) ReorderFolders(names []string) error {
+	return a.withFolders(func(folders map[string]config.FolderMeta) error {
+		var order int64
+		placed := make(map[string]bool, len(folders))
+		place := func(name string) {
+			meta, ok := folders[name]
+			if !ok || placed[name] {
+				return // unknown folder, or a name listed twice
+			}
+			placed[name] = true
+			order++
+			meta.Order = order
+			folders[name] = meta
+		}
+		// Snapshot the existing order before the first pass renumbers it:
+		// the unnamed folders keep their relative order, not the shuffled
+		// one they'd sort into halfway through.
+		rest := sessionview.FolderOrder(folders)
+		for _, name := range names {
+			place(name)
+		}
+		for _, name := range rest {
+			place(name)
+		}
+		return nil
+	})
 }
 
 // SetFolderCollapsed persists a folder's collapsed/expanded display state.
-func (a *App) SetFolderCollapsed(project, name string, collapsed bool) error {
-	return a.withFolders(project, func(folders map[string]config.FolderMeta) error {
+func (a *App) SetFolderCollapsed(name string, collapsed bool) error {
+	return a.withFolders(func(folders map[string]config.FolderMeta) error {
 		meta, ok := folders[name]
 		if !ok {
 			// Writing a zero-value meta here would conjure the folder into
-			// existence at Order 0, i.e. pinned to the top of the list.
+			// existence out of nothing but a stale client's collapse
+			// keypress — at Order 0, which no creation path ever assigns.
+			// Creating a folder is CreateFolder's job.
 			return fmt.Errorf("unknown folder %q", name)
 		}
 		meta.Collapsed = collapsed
@@ -1522,16 +1589,17 @@ func (a *App) SetFolderCollapsed(project, name string, collapsed bool) error {
 }
 
 // DeleteFolder removes a folder definition and un-parents its member
-// sessions back to top-level (Session.Folder = "").
-func (a *App) DeleteFolder(project, name string) error {
-	err := a.withFolders(project, func(folders map[string]config.FolderMeta) error {
+// sessions back to top-level (Session.Folder = ""), in every project that
+// has members in it.
+func (a *App) DeleteFolder(name string) error {
+	err := a.withFolders(func(folders map[string]config.FolderMeta) error {
 		delete(folders, name)
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	return a.refileSessions(project, name, "")
+	return a.refileSessions(name, "")
 }
 
 // SessionForTmuxName finds the session running as tmux session tmuxName.
@@ -2096,6 +2164,14 @@ func (a *App) RemoveProject(name string) error {
 	}
 	saved := a.Cfg.Projects[name]
 	delete(a.Cfg.Projects, name)
+	// No folder cleanup here on purpose. The check above means this project
+	// has no sessions left, so it contributes nothing to which folders are
+	// memberless — a sweep would delete every globally-empty folder,
+	// including one the user just created in the overlay for a project they
+	// are not touching. A memberless folder costs nothing either: it draws
+	// no header (BuildRows emits one only where the folder has members in
+	// that project), it sits in the Folders overlay showing (0), and d
+	// deletes it there deliberately.
 	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
 		a.Cfg.Projects[name] = saved
 		return fmt.Errorf("save config: %w", err)

@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/session"
@@ -11,8 +13,8 @@ import (
 
 // TestFoldersOverlayNewCreatesFolder covers the Folders (G) overlay's "n"
 // action end to end: it must open the create form (not the assign/rename
-// one), and submitting a name must call backend.CreateFolder with the active
-// project rather than silently doing nothing.
+// one), and submitting a name must call backend.CreateFolder rather than
+// silently doing nothing.
 func TestFoldersOverlayNewCreatesFolder(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{
 		{ID: "demo:a", Project: "demo", Name: "a"},
@@ -40,8 +42,8 @@ func TestFoldersOverlayNewCreatesFolder(t *testing.T) {
 	if len(be.createFolderCalls) != 1 {
 		t.Fatalf("expected 1 CreateFolder call, got %d", len(be.createFolderCalls))
 	}
-	if got := be.createFolderCalls[0]; got.project != "demo" || got.name != "auth" {
-		t.Fatalf("CreateFolder called with %+v, want {demo auth}", got)
+	if got := be.createFolderCalls[0]; got.name != "auth" {
+		t.Fatalf("CreateFolder called with %+v, want {auth}", got)
 	}
 	if m.mode != ModeFolders {
 		t.Fatalf("expected to return to ModeFolders after submit, got %v", m.mode)
@@ -60,14 +62,11 @@ func TestCollapseFolderHidesMembers(t *testing.T) {
 		{ID: "demo:b", Project: "demo", Name: "b", Folder: "auth", Order: 2},
 	}}
 	m := newTestModel(be)
-	m.cfg.Projects["demo"] = config.Project{
-		Repo:    "/tmp/demo",
-		Folders: map[string]config.FolderMeta{"auth": {}},
-	}
-	be.cfg.Projects["demo"] = config.Project{
-		Repo:    "/tmp/demo",
-		Folders: map[string]config.FolderMeta{"auth": {}},
-	}
+	// Two separate maps on purpose: m.cfg is the Model's own clone, so a
+	// handler that skips the returned snapshot must not see the backend's
+	// write through a shared map.
+	m.cfg.Folders = map[string]config.FolderMeta{"auth": {}}
+	be.cfg.Folders = map[string]config.FolderMeta{"auth": {}}
 	m.refreshSessions()
 	if len(m.sessions) != 2 {
 		t.Fatalf("expected both sessions listed while expanded, got %d", len(m.sessions))
@@ -80,7 +79,7 @@ func TestCollapseFolderHidesMembers(t *testing.T) {
 	}
 	m.Update(cmd())
 
-	if !m.cfg.Projects["demo"].Folders["auth"].Collapsed {
+	if !m.cfg.Folders["auth"].Collapsed {
 		t.Fatal("m.cfg still reports the folder expanded — the mutation's Cfg snapshot was not applied")
 	}
 	// refreshSessions drops a collapsed folder's members from m.sessions
@@ -124,7 +123,7 @@ func TestAssignFolderRefreshesSessionMembership(t *testing.T) {
 	if m.sessions[0].Folder != "auth" {
 		t.Fatalf("session still reads Folder=%q — the stale session snapshot was not dropped", m.sessions[0].Folder)
 	}
-	if _, ok := m.cfg.Projects["demo"].Folders["auth"]; !ok {
+	if _, ok := m.cfg.Folders["auth"]; !ok {
 		t.Fatal("m.cfg is missing the folder created on first use — the Cfg snapshot was not applied")
 	}
 }
@@ -143,9 +142,7 @@ func TestMultiViewPanelAndCursorAgreeAboutCollapsedFolders(t *testing.T) {
 		{ID: "beta:z", Project: "beta", Name: "z"},
 	}}
 	m := newMultiProjectTestModel(be)
-	proj := m.cfg.Projects["alpha"]
-	proj.Folders = map[string]config.FolderMeta{"auth": {Collapsed: true}}
-	m.cfg.Projects["alpha"] = proj
+	m.cfg.Folders = map[string]config.FolderMeta{"auth": {Collapsed: true}}
 	be.cfg = *m.cfg
 	m.mode = ModeMultiView
 	m.sessionsChanged()
@@ -180,9 +177,7 @@ func TestSearchIntoCollapsedFolderExpandsAndSelects(t *testing.T) {
 		{ID: "demo:c", Project: "demo", Name: "c"},
 	}}
 	m := newTestModel(be)
-	proj := m.cfg.Projects["demo"]
-	proj.Folders = map[string]config.FolderMeta{"auth": {Collapsed: true}}
-	m.cfg.Projects["demo"] = proj
+	m.cfg.Folders = map[string]config.FolderMeta{"auth": {Collapsed: true}}
 	be.cfg = *m.cfg
 	m.sessionsChanged()
 	m.refreshSessions()
@@ -197,7 +192,7 @@ func TestSearchIntoCollapsedFolderExpandsAndSelects(t *testing.T) {
 	}
 	drainCmd(m, cmd)
 
-	if m.cfg.Projects["demo"].Folders["auth"].Collapsed {
+	if m.cfg.Folders["auth"].Collapsed {
 		t.Error("expected the target's folder to be expanded")
 	}
 	if got := m.sessions[m.cursor].ID; got != "demo:hidden" {
@@ -213,9 +208,7 @@ func TestClickingAFolderHeaderTogglesIt(t *testing.T) {
 		{ID: "demo:b", Project: "demo", Name: "b", Folder: "auth"},
 	}}
 	m := newTestModel(be)
-	proj := m.cfg.Projects["demo"]
-	proj.Folders = map[string]config.FolderMeta{"auth": {}}
-	m.cfg.Projects["demo"] = proj
+	m.cfg.Folders = map[string]config.FolderMeta{"auth": {}}
 	be.cfg = *m.cfg
 	m.sessionsChanged()
 	m.refreshSessions()
@@ -230,7 +223,7 @@ func TestClickingAFolderHeaderTogglesIt(t *testing.T) {
 		t.Fatal("expected clicking a folder header to dispatch a collapse")
 	}
 	drainCmd(m, cmd)
-	if !m.cfg.Projects["demo"].Folders["auth"].Collapsed {
+	if !m.cfg.Folders["auth"].Collapsed {
 		t.Error("expected the click to collapse the folder")
 	}
 }
@@ -240,9 +233,7 @@ func TestZCollapsesTheSelectedSessionsFolder(t *testing.T) {
 		{ID: "demo:a", Project: "demo", Name: "a", Folder: "auth"},
 	}}
 	m := newTestModel(be)
-	proj := m.cfg.Projects["demo"]
-	proj.Folders = map[string]config.FolderMeta{"auth": {}}
-	m.cfg.Projects["demo"] = proj
+	m.cfg.Folders = map[string]config.FolderMeta{"auth": {}}
 	be.cfg = *m.cfg
 	m.sessionsChanged()
 	m.refreshSessions()
@@ -252,7 +243,7 @@ func TestZCollapsesTheSelectedSessionsFolder(t *testing.T) {
 		t.Fatal("expected z to dispatch a collapse for the selected session's folder")
 	}
 	drainCmd(m, cmd)
-	if !m.cfg.Projects["demo"].Folders["auth"].Collapsed {
+	if !m.cfg.Folders["auth"].Collapsed {
 		t.Error("expected z to collapse the folder")
 	}
 }
@@ -264,9 +255,7 @@ func TestFolderDeleteAsksForConfirmation(t *testing.T) {
 		{ID: "demo:a", Project: "demo", Name: "a", Folder: "auth"},
 	}}
 	m := newTestModel(be)
-	proj := m.cfg.Projects["demo"]
-	proj.Folders = map[string]config.FolderMeta{"auth": {}}
-	m.cfg.Projects["demo"] = proj
+	m.cfg.Folders = map[string]config.FolderMeta{"auth": {}}
 	be.cfg = *m.cfg
 	m.sessionsChanged()
 	m.refreshSessions()
@@ -291,5 +280,129 @@ func TestFolderDeleteAsksForConfirmation(t *testing.T) {
 	cmd()
 	if len(be.deleteFolderCalls) != 1 {
 		t.Fatalf("expected 1 DeleteFolder call, got %d", len(be.deleteFolderCalls))
+	}
+}
+
+// TestDeleteFolderDialogCountsMembersEverywhere pins the one count in the
+// TUI that is deliberately unfiltered on both axes. App.DeleteFolder
+// un-parents through refileSessions, which walks the whole store ignoring
+// both project and archived state, so the dialog has to say the same
+// number whichever view the list is filtered to — a dialog reading "0
+// session(s) move back" while y silently clears three archived sessions is
+// the failure this pins.
+func TestDeleteFolderDialogCountsMembersEverywhere(t *testing.T) {
+	be := &fakeBackend{sessions: []session.Session{
+		{ID: "alpha:a", Project: "alpha", Name: "a", Folder: "auth"},
+		{ID: "beta:b", Project: "beta", Name: "b", Folder: "auth"},
+		{ID: "beta:c", Project: "beta", Name: "c", Folder: "auth", Archived: true},
+		{ID: "beta:d", Project: "beta", Name: "d"},
+	}}
+	m := newMultiProjectTestModel(be)
+	m.cfg.Folders = map[string]config.FolderMeta{"auth": {}}
+	be.cfg = *m.cfg
+	m.sessionsChanged()
+	m.refreshSessions()
+
+	m.folderDeleteName = "auth"
+	for _, archived := range []bool{false, true} {
+		m.showArchived = archived
+		m.refreshSessions()
+		if got := m.renderConfirmDeleteFolder(); !strings.Contains(got, "3 session(s)") {
+			t.Fatalf("showArchived=%v: dialog must count every member y un-parents:\n%s", archived, got)
+		}
+	}
+}
+
+// TestDeleteFolderDialogExplainsAnInvisibleFolder covers the starkest
+// version of the overlay/dialog count gap: every member of "auth" lives in
+// a project the user is not viewing, so the Folders overlay renders it as
+// (0) and an unqualified "2 session(s) move back" one keystroke later
+// reads as a bug rather than as the global namespace working.
+func TestDeleteFolderDialogExplainsAnInvisibleFolder(t *testing.T) {
+	be := &fakeBackend{sessions: []session.Session{
+		{ID: "alpha:a", Project: "alpha", Name: "a"},
+		{ID: "beta:b", Project: "beta", Name: "b", Folder: "auth"},
+		{ID: "beta:c", Project: "beta", Name: "c", Folder: "auth"},
+	}}
+	m := newMultiProjectTestModel(be)
+	m.cfg.Folders = map[string]config.FolderMeta{"auth": {}}
+	be.cfg = *m.cfg
+	m.sessionsChanged()
+	m.refreshSessions()
+	m.folderDeleteName = "auth"
+
+	if got := m.folderCounts(m.projects[m.activeProj])["auth"]; got != 0 {
+		t.Fatalf("precondition: active project should hold none of auth, got %d", got)
+	}
+	got := m.renderConfirmDeleteFolder()
+	if !strings.Contains(got, "2 session(s) across 1 project ") {
+		t.Fatalf("dialog should explain members the overlay counted as 0:\n%s", got)
+	}
+}
+
+// TestDeleteFolderDialogWrapsAtNarrowWidth pins the two things that make
+// the blast-radius line readable on a phone-width client: it names the
+// project spread (the Folders overlay one keystroke earlier counted only
+// the project on screen, so an unexplained jump from "auth (2)" to "3
+// session(s)" reads as a bug), and it wraps rather than clips — at 40
+// columns the un-wrapped line lost "level.", i.e. exactly the words that
+// say nothing is destroyed.
+func TestDeleteFolderDialogWrapsAtNarrowWidth(t *testing.T) {
+	be := &fakeBackend{sessions: []session.Session{
+		{ID: "alpha:a", Project: "alpha", Name: "a", Folder: "auth"},
+		{ID: "beta:b", Project: "beta", Name: "b", Folder: "auth"},
+	}}
+	m := newMultiProjectTestModel(be)
+	m.cfg.Folders = map[string]config.FolderMeta{"auth": {}}
+	be.cfg = *m.cfg
+	m.sessionsChanged()
+	m.refreshSessions()
+	m.width, m.height = 40, 20
+	m.folderDeleteName = "auth"
+
+	got := m.renderConfirmDeleteFolder()
+	if !strings.Contains(got, "across 2 projects") {
+		t.Fatalf("dialog should say where the extra members came from:\n%s", got)
+	}
+	if !strings.Contains(got, "top level.") {
+		t.Fatalf("dialog clipped mid-sentence instead of wrapping:\n%s", got)
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if w := lipgloss.Width(line); w > m.overlayWidth(formHintWidth) {
+			t.Fatalf("line %q is %d wide, over the %d-column overlay", line, w, m.overlayWidth(formHintWidth))
+		}
+	}
+}
+
+// TestCollapseIsGlobalAcrossProjects covers the other half of one flat
+// namespace: collapsing "auth" from one project's list collapses the same
+// folder everywhere, because there is only one of it now.
+func TestCollapseIsGlobalAcrossProjects(t *testing.T) {
+	be := &fakeBackend{sessions: []session.Session{
+		{ID: "alpha:a", Project: "alpha", Name: "a", Folder: "auth"},
+		{ID: "beta:b", Project: "beta", Name: "b", Folder: "auth"},
+	}}
+	m := newMultiProjectTestModel(be)
+	m.cfg.Folders = map[string]config.FolderMeta{"auth": {}}
+	be.cfg = *m.cfg
+	m.sessionsChanged()
+	m.refreshSessions()
+
+	// Collapse it from alpha's list (the z key acts on the selected
+	// session's folder).
+	_, cmd := m.Update(runeKey('z'))
+	if cmd == nil {
+		t.Fatal("expected z to dispatch a collapse")
+	}
+	drainCmd(m, cmd)
+
+	for _, proj := range []string{"alpha", "beta"} {
+		lines, sessions := m.visibleList(proj)
+		if len(sessions) != 0 {
+			t.Fatalf("%s: expected the collapsed folder's member hidden, got %+v", proj, sessions)
+		}
+		if len(lines) != 1 || !lines[0].row.Collapsed {
+			t.Fatalf("%s: expected one collapsed header, got %+v", proj, lines)
+		}
 	}
 }

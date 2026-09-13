@@ -73,15 +73,17 @@ type Backend interface {
 	// order (not a delta) — see internal/app.App.ReorderSessions's doc.
 	ReorderSessions(ids []string) error
 	MoveProject(name string, delta int) error
-	// CreateFolder adds an empty, expanded folder to project. Errors if one
-	// by that name already exists.
-	CreateFolder(project, name string) error
-	// SetSessionFolder files id under the named folder within its project
-	// ("" removes it from any folder), creating the folder on first use.
+	// CreateFolder adds an empty, expanded folder. Folders are one flat
+	// global namespace — the name is the id, across every project — so this
+	// errors if any project already has a folder by that name.
+	CreateFolder(name string) error
+	// SetSessionFolder files id under the named folder ("" removes it from
+	// any folder), creating the folder on first use. The folder need not
+	// have a member in id's project: a folder spans projects.
 	SetSessionFolder(id, folder string) (session.Session, error)
-	// RenameFolder renames a project's folder, updating every member
-	// session's Folder field to match.
-	RenameFolder(project, oldName, newName string) error
+	// RenameFolder renames a folder, updating every member session's Folder
+	// field to match — in every project, not just one.
+	RenameFolder(oldName, newName string) error
 	// SetProjectCollapsed persists whether a whole project's group is
 	// collapsed. Nothing in the TUI calls it — it shows one project at a
 	// time — but it is part of the same display state folders are, and
@@ -89,10 +91,18 @@ type Backend interface {
 	// internal/ipc (same arrangement as EnsureTmux above).
 	SetProjectCollapsed(project string, collapsed bool) error
 	// SetFolderCollapsed persists a folder's collapsed/expanded state.
-	SetFolderCollapsed(project, name string, collapsed bool) error
+	SetFolderCollapsed(name string, collapsed bool) error
 	// DeleteFolder removes a folder definition and un-parents its members
-	// back to top-level.
-	DeleteFolder(project, name string) error
+	// back to top-level, in every project the folder had members in.
+	DeleteFolder(name string) error
+	// ReorderFolders persists names, verbatim, as the folder-first view's
+	// top-level order; folders not named keep their relative order after
+	// them, so a caller need not send the complete list. Nothing in the TUI
+	// calls it — the TUI stays project-first, where a folder still sits
+	// where its first member sits — but it is the folder-level twin of
+	// ReorderSessions for front ends that group by folder
+	// (sessionview.BuildFolderRows).
+	ReorderFolders(names []string) error
 	Sessions() []session.Session
 	// SuggestedProject is the add-project form's name/repo prefill, from
 	// the core's own working directory — see app.SuggestedProject.
@@ -458,8 +468,8 @@ type Model struct {
 	folderDeleteName    string
 	folderFormSessionID string // set when folderFormKind == "assign"
 	folderFormOldName   string // set when folderFormKind == "rename"
-	// folderCursor indexes the active project's folder-name list (see
-	// currentProjectFolders) while ModeFolders is open.
+	// folderCursor indexes the global folder-name list (see
+	// currentFolders) while ModeFolders is open.
 	folderCursor int
 	// reorderInFlight is true while a dispatchReorder persist is running.
 	// reorderDirty means another reorder happened locally while it was in
@@ -591,10 +601,9 @@ type resolvedRowHit struct {
 // — so clicking one is how a folder gets collapsed or expanded without
 // opening the Folders overlay.
 type resolvedFolderHit struct {
-	project string
-	folder  string
-	y       int
-	x0, x1  int // half-open column range
+	folder string
+	y      int
+	x0, x1 int // half-open column range
 }
 
 // resolvedPanelHit records one ModeMultiView panel's full rendered
@@ -673,24 +682,23 @@ func (m *Model) updateLinkHits(header string, listHits, detailHits []linkHit, de
 			break
 		}
 		m.folderHits = append(m.folderHits, resolvedFolderHit{
-			project: m.projects[m.activeProj],
-			folder:  h.folder,
-			y:       listY + h.line,
-			x0:      listX,
-			x1:      listX + listWidth,
+			folder: h.folder,
+			y:      listY + h.line,
+			x0:     listX,
+			x1:     listX + listWidth,
 		})
 	}
 }
 
 // folderHeaderAt returns the folder header at absolute terminal
 // coordinates (x, y), if any — a click there toggles it.
-func (m *Model) folderHeaderAt(x, y int) (project, folder string, ok bool) {
+func (m *Model) folderHeaderAt(x, y int) (folder string, ok bool) {
 	for _, h := range m.folderHits {
 		if y == h.y && x >= h.x0 && x < h.x1 {
-			return h.project, h.folder, true
+			return h.folder, true
 		}
 	}
-	return "", "", false
+	return "", false
 }
 
 // sessionRowAt returns the session ID whose row contains absolute terminal

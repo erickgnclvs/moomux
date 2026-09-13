@@ -13,7 +13,8 @@ import (
 )
 
 type fakeCore struct {
-	folders map[string]map[string]config.FolderMeta
+	folders  map[string]config.FolderMeta
+	projects []string
 
 	mu       sync.Mutex
 	sessions []session.Session
@@ -29,10 +30,16 @@ type fakeCore struct {
 	gitDelay time.Duration
 }
 
-func (f *fakeCore) ProjectFolders() map[string]map[string]config.FolderMeta {
+func (f *fakeCore) Folders() map[string]config.FolderMeta {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.folders
+}
+
+func (f *fakeCore) Projects() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.projects...)
 }
 
 func (f *fakeCore) Sessions() []session.Session {

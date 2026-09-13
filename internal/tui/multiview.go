@@ -423,11 +423,10 @@ func (m *Model) renderMultiView() string {
 			}
 			for _, h := range headers {
 				m.folderHits = append(m.folderHits, resolvedFolderHit{
-					project: proj,
-					folder:  h.folder,
-					y:       panelY + h.line,
-					x0:      originX,
-					x1:      originX + w - 2,
+					folder: h.folder,
+					y:      panelY + h.line,
+					x0:     originX,
+					x1:     originX + w - 2,
 				})
 			}
 			// The panel's own full rectangle, border included (+2 in each

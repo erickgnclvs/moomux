@@ -16,7 +16,7 @@ the most important thing to understand about the protocol.
 
 **Pull — one request, one response, connection closes.** Used for the things
 a person *does*: create a session, rename one, add a project, change the
-theme. 28 methods, dispatched by name.
+theme. 36 methods, dispatched by name.
 
 **Push — the `Watch` stream.** Used for the things that *are true right now*:
 what every session is doing, what its worktree looks like, what order to show
@@ -163,7 +163,7 @@ anything.
 ```
 
 `Args` and `Result` are unions — each method fills the subset it needs. One
-union each beats 28 pairs of structs at this size; split them if the surface
+union each beats 36 pairs of structs at this size; split them if the surface
 doubles, or if two methods ever want the same field to mean different things.
 
 `code` names a sentinel error the client branches on, since `errors.Is` can't
@@ -237,29 +237,64 @@ in `ids` are untouched, and an id that no longer exists is skipped rather
 than failing the whole write.
 
 **Folders** — `CreateFolder`, `SetSessionFolder`, `RenameFolder`,
-`SetFolderCollapsed`, `DeleteFolder`, `SetProjectCollapsed`.
+`SetFolderCollapsed`, `DeleteFolder`, `ReorderFolders`,
+`SetProjectCollapsed`.
 
-Folders are one flat level per project, and the name *is* the id (trimmed,
-and rejected if empty or carrying a control character — see
-`config.CleanFolderName`; validation is here rather than in a form handler
-because a form is one front end's business). The split is deliberate: a
-folder's own display state lives in config under `Project.Folders`, while
-*membership* lives on each session as `Session.Folder`. So `RenameFolder`
-and `DeleteFolder` return a config snapshot but also rewrite every member
-session, and `SetSessionFolder` — which creates the folder on its first use
-— is the one session mutator that returns both a session and a config
-snapshot. A member pointing at a folder name that isn't in `Project.Folders`
-renders as if the metadata were zero-valued rather than disappearing, which
-is what keeps those two writes not needing to be one transaction.
+Folders are **one flat global namespace**, not one per project: the name
+*is* the id across every project (trimmed, and rejected if empty or
+carrying a control character — see `config.CleanFolderName`; validation is
+here rather than in a form handler because a form is one front end's
+business). None of these methods takes a project, and `CreateFolder`
+therefore refuses a name any project is already using. The old
+`projects.*.folders` table is a migration source only: `config.Load` folds
+it up into `config.folders` (merging identical names, AND-ing their
+collapsed flags) and clears it, so a client reading the per-project map
+sees nothing. That migration is destructive to old readers the moment a new
+binary saves, which is why there is no version handshake and no
+accepted-and-ignored `project` argument here.
 
-What a folder does *not* carry is a position. A folder sits wherever its
-first member sits, and one with no members at all sorts last by name. An
-earlier version stored a per-folder order in the same units as
-`Session.Order`; because `ReorderSessions` renumbers only the sessions it is
-handed, the two number spaces drifted the moment anything was reordered
-while a folder was collapsed, and in a project nobody had manually reordered
-(every `Order` is 0 there) a collapsed folder rendered at the bottom of the
-list instead of where its members were. A derived anchor can't drift.
+The split is otherwise unchanged: a folder's own display state lives in
+config under `Config.Folders`, while *membership* lives on each session as
+`Session.Folder` — a bare global name now, same JSON, wider scope. So
+`RenameFolder` and `DeleteFolder` return a config snapshot but also rewrite
+every member session, in every project, and `SetSessionFolder` — which
+creates the folder on its first use — is the one session mutator that
+returns both a session and a config snapshot. A member pointing at a folder
+name that isn't in `Config.Folders` renders as if the metadata were
+zero-valued rather than disappearing, which is what keeps those two writes
+not needing to be one transaction.
+
+A folder now *does* carry a position: `FolderMeta.Order`, set by
+`ReorderFolders(names)`, which takes the complete order and numbers it
+`1..N` — the same "the client sends the order it is displaying, the core
+never guesses one from a delta" contract as `ReorderSessions`. 0 means
+never positioned and sorts last; ties break by name.
+
+Unlike `ReorderSessions`, though, it is **total on its own**: it keeps
+counting past `names`, numbering every folder it wasn't handed after them
+in their existing relative order. A session left out of a reorder is
+normally a *hidden* row the client still knows about and still sends back,
+but there is no `Hidden` affordance at the folder level at all — a client
+showing a subset of folders is showing its own filtered view and has
+nothing to send for the rest. Renumbering only the named ones would leave
+two disjoint `1..N` spaces interleaved. Unknown names are skipped rather
+than rejected, so a reorder racing someone else's `DeleteFolder` doesn't
+fail wholesale.
+
+That position indexes **only the folder-first top level**
+(`Snapshot.FolderRows`). The project-first `Rows` still anchor a folder to
+its first member, and that is the point. An earlier version stored a
+per-folder order in the same units as `Session.Order`, and the two had to
+*interleave in one list*: a folder header and a loose session competed for
+the same slot in one project's rows, while `ReorderSessions` renumbered
+only the sessions it was handed. So they drifted the moment anything was
+reordered while a folder was collapsed, and in a project nobody had
+manually reordered (every `Order` is 0 there) a collapsed folder rendered
+at the bottom of the list instead of where its members were. Folder
+`Order` indexes a different *level of the tree* — folders against folders,
+in a list `Session.Order` has no entries in — so there is no shared list
+for the two spaces to drift apart inside of. That is the structural
+difference, not a tidier implementation of the same idea.
 
 `SetProjectCollapsed` is the same idea one level up: whether a project's own
 group is collapsed, for a client that renders projects as a tree.
@@ -283,6 +318,16 @@ header goes, and knowing what a collapsed folder is hiding are all
 derivations, and a second front end doing them in its own language is a
 second chance to disagree about what a project looks like. Clients walk
 `Rows` and render.
+
+`Snapshot.FolderRows` is the same layout turned inside out, for a client
+that groups by folder first: one global list (not keyed by project) of
+`folder` / `project` / `session` rows — folders in `Order`, a project
+subheader under each for every project with members there, and that
+project's members under it. Memberless folders live here, and only here: a
+project's `Rows` emit a header only for a folder with a member in that
+project, or every project would sprout a dead header for every folder in
+existence. Collapsing a folder marks its subheaders and sessions `hidden`,
+the same contract as `Rows`.
 
 A hidden row is still a row. Manual reorder sends back the project's
 *entire* order — hidden and archived rows included — because
@@ -421,8 +466,24 @@ nil. What changed:
 A version handshake would be cheap insurance against the next one; there
 isn't one today.
 
-So every struct here with a `json` tag is a contract: `sessionview.Snapshot`
-and `View`, `session.Session` and `CreateRequest`, `config.Config`,
+### The global folder namespace
+
+The folder reshape ([global-folders.md](global-folders.md)) is the second
+such break, and it breaks the same way: `projects.*.folders` doesn't error,
+it just decodes to nothing, so a user with folders sees none at all. There is no dual-write period — a new binary's first `Save` stops
+writing the old table — so this has to land in the same release window.
+
+| Was | Now |
+|---|---|
+| `config.projects.<name>.folders` — one table per project | `config.folders` — one global table keyed by name. The per-project field is `json:"-"` now and never reaches the wire again: it survives only as the source `config.Load` migrates out of `config.toml` and then nils |
+| a folder had no position | `config.folders.<name>.order` — int; 0 means never positioned and sorts last, ties by name |
+| — | `snapshot.folder_rows` — the folder-first layout (`kind` is `folder`/`project`/`session`), one global list alongside the project-keyed `rows` |
+| `CreateFolder`/`RenameFolder`/`SetFolderCollapsed`/`DeleteFolder` took a `project` | no `project` argument. `Args.project` still exists for other methods, so an old call **succeeds** and acts on the global folder — nothing errors, so check the call sites rather than waiting for one |
+| — | `ReorderFolders` with `Args.names`, the complete folder order |
+| `session.folder`, scoped to the session's project | same field, same tag, no Swift edit — but the name is global now, so `auth` is one folder across every project |
+
+So every struct here with a `json` tag is a contract: `sessionview.Snapshot`,
+`View`, `Row` and `FolderRow`, `session.Session` and `CreateRequest`, `config.Config`,
 `config.Project`, `config.AgentOption`, `config.Theme`, `prstatus.Info`, and
 the `Args`/`Result` unions. Check `Sources/Moomux/Core/Models.swift` by hand
 when you touch any of them.

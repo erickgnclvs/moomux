@@ -12,16 +12,17 @@ import (
 	"github.com/erickgnclvs/moomux/internal/sessionview"
 )
 
-// currentProjectFolders returns the active project's folder names,
-// alphabetically — the list ModeFolders navigates and m.folderCursor indexes.
-func (m *Model) currentProjectFolders() []string {
-	if len(m.projects) == 0 {
-		return nil
-	}
-	proj := m.projects[m.activeProj]
-	folders := m.cfg.Projects[proj].Folders
-	names := make([]string, 0, len(folders))
-	for name := range folders {
+// currentFolders returns every folder name, alphabetically — the list
+// ModeFolders navigates and m.folderCursor indexes.
+//
+// Folders are one flat global namespace, so this enumerates all of them
+// rather than the project in view. The overlay is the only place a folder is
+// created, renamed or deleted, and filtering it to the active project would
+// make a folder with no members here unreachable — including the one the
+// user just created, which by definition has none anywhere yet.
+func (m *Model) currentFolders() []string {
+	names := make([]string, 0, len(m.cfg.Folders))
+	for name := range m.cfg.Folders {
 		names = append(names, name)
 	}
 	sort.Strings(names)
@@ -52,25 +53,23 @@ func (m *Model) updateFolderForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return SessionFolderSetMsg{Session: s, Cfg: m.cfgSnapshotOnSuccess(err)}
 			}
 		case "rename":
-			if name == "" || len(m.projects) == 0 {
+			if name == "" {
 				return m, nil
 			}
-			proj := m.projects[m.activeProj]
 			old := m.folderFormOldName
 			m.mode = ModeFolders
 			return m, func() tea.Msg {
-				err := m.backend.RenameFolder(proj, old, name)
+				err := m.backend.RenameFolder(old, name)
 				return FolderRenamedMsg{OldName: old, NewName: name, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
 			}
 		case "create":
-			if name == "" || len(m.projects) == 0 {
+			if name == "" {
 				return m, nil
 			}
-			proj := m.projects[m.activeProj]
 			m.mode = ModeFolders
 			return m, func() tea.Msg {
-				err := m.backend.CreateFolder(proj, name)
-				return FolderCreatedMsg{Project: proj, Name: name, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
+				err := m.backend.CreateFolder(name)
+				return FolderCreatedMsg{Name: name, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
 			}
 		}
 		return m, nil
@@ -99,7 +98,7 @@ func (m *Model) renderFolderForm() string {
 		// Existing names, so filing into a folder that already exists is a
 		// matter of copying one rather than remembering it exactly: any
 		// typo here silently creates a second, near-identical folder.
-		if names := m.currentProjectFolders(); len(names) > 0 {
+		if names := m.currentFolders(); len(names) > 0 {
 			b.WriteString("\n")
 			b.WriteString(muteStyle.Render(truncate("existing: "+strings.Join(names, ", "), m.overlayWidth(formHintWidth))))
 		}
@@ -110,14 +109,40 @@ func (m *Model) renderFolderForm() string {
 // folderCounts is each folder's member count in the view the list is
 // currently showing, read off the same rows the list renders so the overlay
 // and the list headers can't disagree.
+//
+// The folder table is global now but this stays project-filtered: a global
+// count would print "auth (7)" in the overlay above a list showing two rows
+// under that header. A folder with no members in this project isn't in the
+// map at all, so the overlay renders it as "auth (0)".
 func (m *Model) folderCounts(proj string) map[string]int {
 	counts := map[string]int{}
-	for _, r := range sessionview.BuildRows(m.allSessions(), m.cfg.Projects[proj].Folders, proj) {
+	for _, r := range sessionview.BuildRows(m.allSessions(), m.cfg.Folders, proj) {
 		if r.IsFolder() {
 			counts[r.Folder] = m.memberCount(r)
 		}
 	}
 	return counts
+}
+
+// globalMemberCount is how many sessions are filed under name, and how many
+// distinct projects they span — across every project and across both views,
+// archived included.
+//
+// This is the one place both of folderCounts' filters are the wrong answer.
+// App.DeleteFolder un-parents through refileSessions, which walks the whole
+// store with no project filter and no archived filter, so a dialog that
+// counted the way a folder header counts would promise less than y does on
+// both axes: it would quote the active project's share, and it would quote
+// only the view the list happens to be filtered to.
+func (m *Model) globalMemberCount(name string) (sessions, projects int) {
+	seen := map[string]bool{}
+	for _, s := range m.allSessions() {
+		if s.Folder == name {
+			sessions++
+			seen[s.Project] = true
+		}
+	}
+	return sessions, len(seen)
 }
 
 // folderPickerRowMarker mirrors projectPickerRowMarker — see its doc.
@@ -128,15 +153,12 @@ const folderPickerRowMarker = "▸ "
 // renames it, d deletes it (un-parenting members back to top-level), n
 // creates a new empty one.
 func (m *Model) updateFolders(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	names := m.currentProjectFolders()
+	names := m.currentFolders()
 	switch {
 	case key.Matches(msg, m.keys.Cancel):
 		m.mode = m.sessionDialogReturn
 		return m, nil
 	case key.Matches(msg, m.keys.New):
-		if len(m.projects) == 0 {
-			return m, nil
-		}
 		m.mode = ModeFolderForm
 		m.folderFormKind = "create"
 		m.folderFormOldName = ""
@@ -153,14 +175,10 @@ func (m *Model) updateFolders(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.folderCursor = (m.folderCursor + 1) % len(names)
 		}
 	case key.Matches(msg, m.keys.Enter), key.Matches(msg, m.keys.Open):
-		if m.folderCursor < len(names) && len(m.projects) > 0 {
-			proj := m.projects[m.activeProj]
+		if m.folderCursor < len(names) {
 			name := names[m.folderCursor]
-			collapsed := !m.cfg.Projects[proj].Folders[name].Collapsed
-			return m, func() tea.Msg {
-				err := m.backend.SetFolderCollapsed(proj, name, collapsed)
-				return FolderCollapsedSetMsg{Project: proj, Name: name, Collapsed: collapsed, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
-			}
+			collapsed := !m.cfg.Folders[name].Collapsed
+			return m, m.setFolderCollapsedCmd(name, collapsed, "")
 		}
 	case key.Matches(msg, m.keys.EditSession):
 		if m.folderCursor < len(names) {
@@ -174,7 +192,7 @@ func (m *Model) updateFolders(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.Delete):
-		if m.folderCursor < len(names) && len(m.projects) > 0 {
+		if m.folderCursor < len(names) {
 			m.folderDeleteName = names[m.folderCursor]
 			m.mode = ModeConfirmDeleteFolder
 			m.resetOverlayViewport()
@@ -189,13 +207,18 @@ func (m *Model) renderFolders() string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("FOLDERS"))
 	b.WriteString("\n\n")
-	names := m.currentProjectFolders()
+	names := m.currentFolders()
 	if len(names) == 0 {
 		b.WriteString(muteStyle.Render("no folders yet — press n to create one, or g on a session to file it into one"))
 		return b.String()
 	}
-	proj := m.projects[m.activeProj]
-	counts := m.folderCounts(proj)
+	// Folders outlive the projects they were filled from, so the overlay
+	// opens with none configured; there are simply no per-project counts
+	// to show then.
+	counts := map[string]int{}
+	if len(m.projects) > 0 {
+		counts = m.folderCounts(m.projects[m.activeProj])
+	}
 	rowWidth := m.overlayWidth(formHintWidth) - 2
 	for i, name := range names {
 		selected := i == m.folderCursor
@@ -204,7 +227,7 @@ func (m *Model) renderFolders() string {
 			prefix = folderPickerRowMarker
 		}
 		glyph := "▾"
-		if m.cfg.Projects[proj].Folders[name].Collapsed {
+		if m.cfg.Folders[name].Collapsed {
 			glyph = "▸"
 		}
 		detail := fmt.Sprintf("%s (%d)", glyph, counts[name])
@@ -244,13 +267,12 @@ func (m *Model) updateConfirmDeleteFolder(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y":
 		name := m.folderDeleteName
 		m.mode = ModeFolders
-		if name == "" || len(m.projects) == 0 {
+		if name == "" {
 			return m, nil
 		}
-		proj := m.projects[m.activeProj]
 		return m, func() tea.Msg {
-			err := m.backend.DeleteFolder(proj, name)
-			return FolderDeletedMsg{Project: proj, Name: name, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
+			err := m.backend.DeleteFolder(name)
+			return FolderDeletedMsg{Name: name, Err: err, Cfg: m.cfgSnapshotOnSuccess(err)}
 		}
 	case "n", "esc":
 		m.mode = ModeFolders
@@ -260,18 +282,43 @@ func (m *Model) updateConfirmDeleteFolder(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) renderConfirmDeleteFolder() string {
 	name := m.folderDeleteName
-	count := 0
+	count, projects := m.globalMemberCount(name)
+	// wrapLines, not truncate and not lipgloss's Width: these two lines are
+	// the whole warning, so a narrow overlay has to wrap them rather than
+	// clip one mid-word (at 40 columns "move back to top level." lost its
+	// last word, which is the half that says nothing is destroyed). Width
+	// would do the wrapping but pads every line out to the cap, widening
+	// the box to 72 columns on a full-size terminal.
+	body := func(text string) string {
+		return muteStyle.Render(strings.Join(wrapLines(text, m.overlayWidth(formHintWidth)), "\n"))
+	}
+	// The Folders overlay one keystroke ago counted only the project being
+	// viewed, so whenever this global count differs from that one, say
+	// where the extra members came from rather than letting the number
+	// jump unexplained. The gate is that difference and not "spans more
+	// than one project": the starkest mismatch is a folder whose members
+	// all sit in some project the user is not looking at, where the
+	// overlay says (0) and this dialog would otherwise say 3.
+	local := 0
 	if len(m.projects) > 0 {
-		count = m.folderCounts(m.projects[m.activeProj])[name]
+		local = m.folderCounts(m.projects[m.activeProj])[name]
+	}
+	blast := fmt.Sprintf("%d session(s) move back to top level.", count)
+	if count != local {
+		noun := "projects"
+		if projects == 1 {
+			noun = "project"
+		}
+		blast = fmt.Sprintf("%d session(s) across %d %s move back to top level.", count, projects, noun)
 	}
 	var b strings.Builder
 	b.WriteString(dangerStyle.Render("Delete folder?"))
 	b.WriteString("\n\n")
 	b.WriteString(fmt.Sprintf("name: %s\n", name))
 	b.WriteString("\n")
-	b.WriteString(muteStyle.Render(fmt.Sprintf("%d session(s) move back to top level.", count)))
+	b.WriteString(body(blast))
 	b.WriteString("\n")
-	b.WriteString(muteStyle.Render("No session or worktree is deleted."))
+	b.WriteString(body("No session or worktree is deleted."))
 	b.WriteString("\n\n")
 	b.WriteString("y to confirm   n/esc to cancel")
 	return b.String()

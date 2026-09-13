@@ -56,6 +56,8 @@ type fakeBackend struct {
 	deleteFolderCalls []deleteFolderCall
 	deleteFolderErr   error
 
+	reorderFoldersCalls [][]string
+
 	createCalls []session.CreateRequest
 	createErr   error
 	createHint  string
@@ -175,7 +177,7 @@ type moveProjectCall struct {
 }
 
 type createFolderCall struct {
-	project, name string
+	name string
 }
 
 type setSessionFolderCall struct {
@@ -183,16 +185,16 @@ type setSessionFolderCall struct {
 }
 
 type renameFolderCall struct {
-	project, oldName, newName string
+	oldName, newName string
 }
 
 type setFolderCollapsedCall struct {
-	project, name string
-	collapsed     bool
+	name      string
+	collapsed bool
 }
 
 type deleteFolderCall struct {
-	project, name string
+	name string
 }
 
 func (f *fakeBackend) SuggestedProject() (string, string) { return "", "" }
@@ -392,35 +394,35 @@ func (f *fakeBackend) Sessions() []session.Session {
 // answers with the mutation applied — the real backend's folder state lives
 // in config, and a fake that only records the call can't catch a Model that
 // forgets to apply the returned snapshot.
-func (f *fakeBackend) CreateFolder(project, name string) error {
-	f.createFolderCalls = append(f.createFolderCalls, createFolderCall{project: project, name: name})
+func (f *fakeBackend) CreateFolder(name string) error {
+	f.createFolderCalls = append(f.createFolderCalls, createFolderCall{name: name})
 	if f.createFolderErr != nil {
 		return f.createFolderErr
 	}
-	f.setFolderMeta(project, name, config.FolderMeta{})
+	f.setFolderMeta(name, config.FolderMeta{})
 	return nil
 }
 
-// setFolderMeta writes one folder's metadata into f.cfg, allocating the
-// project's folder map on first use.
-func (f *fakeBackend) setFolderMeta(project, name string, meta config.FolderMeta) {
-	p := f.cfg.Projects[project]
-	if p.Folders == nil {
-		p.Folders = map[string]config.FolderMeta{}
+// setFolderMeta writes one folder's metadata into f.cfg's global folder
+// table, allocating it on first use.
+func (f *fakeBackend) setFolderMeta(name string, meta config.FolderMeta) {
+	if f.cfg.Folders == nil {
+		f.cfg.Folders = map[string]config.FolderMeta{}
 	}
-	p.Folders[name] = meta
-	f.cfg.Projects[project] = p
+	f.cfg.Folders[name] = meta
+}
+
+// ReorderFolders records the order it is handed; nothing in the TUI calls
+// it (the TUI stays project-first), it exists to satisfy Backend.
+func (f *fakeBackend) ReorderFolders(names []string) error {
+	f.reorderFoldersCalls = append(f.reorderFoldersCalls, names)
+	return nil
 }
 func (f *fakeBackend) SetSessionFolder(id, folder string) (session.Session, error) {
 	f.setSessionFolderCalls = append(f.setSessionFolderCalls, setSessionFolderCall{id: id, folder: folder})
 	if f.setSessionFolderErr == nil && folder != "" {
-		for _, s := range f.sessions {
-			if s.ID == id {
-				if _, exists := f.cfg.Projects[s.Project].Folders[folder]; !exists {
-					f.setFolderMeta(s.Project, folder, config.FolderMeta{})
-				}
-				break
-			}
+		if _, exists := f.cfg.Folders[folder]; !exists {
+			f.setFolderMeta(folder, config.FolderMeta{})
 		}
 	}
 	for i := range f.sessions {
@@ -431,43 +433,39 @@ func (f *fakeBackend) SetSessionFolder(id, folder string) (session.Session, erro
 	}
 	return session.Session{ID: id, Folder: folder}, f.setSessionFolderErr
 }
-func (f *fakeBackend) RenameFolder(project, oldName, newName string) error {
-	f.renameFolderCalls = append(f.renameFolderCalls, renameFolderCall{project: project, oldName: oldName, newName: newName})
+func (f *fakeBackend) RenameFolder(oldName, newName string) error {
+	f.renameFolderCalls = append(f.renameFolderCalls, renameFolderCall{oldName: oldName, newName: newName})
 	if f.renameFolderErr != nil {
 		return f.renameFolderErr
 	}
-	if meta, ok := f.cfg.Projects[project].Folders[oldName]; ok {
-		delete(f.cfg.Projects[project].Folders, oldName)
-		f.setFolderMeta(project, newName, meta)
+	if meta, ok := f.cfg.Folders[oldName]; ok {
+		delete(f.cfg.Folders, oldName)
+		f.setFolderMeta(newName, meta)
 	}
+	// Members are retagged in every project, the way App.RenameFolder does
+	// it now that the namespace is global.
 	for i := range f.sessions {
-		if f.sessions[i].Project == project && f.sessions[i].Folder == oldName {
+		if f.sessions[i].Folder == oldName {
 			f.sessions[i].Folder = newName
 		}
 	}
 	return nil
 }
-func (f *fakeBackend) SetFolderCollapsed(project, name string, collapsed bool) error {
-	f.setFolderCollapsedCalls = append(f.setFolderCollapsedCalls, setFolderCollapsedCall{project: project, name: name, collapsed: collapsed})
+func (f *fakeBackend) SetFolderCollapsed(name string, collapsed bool) error {
+	f.setFolderCollapsedCalls = append(f.setFolderCollapsedCalls, setFolderCollapsedCall{name: name, collapsed: collapsed})
 	if f.setFolderCollapsedErr != nil {
 		return f.setFolderCollapsedErr
 	}
-	meta := f.cfg.Projects[project].Folders[name]
+	meta := f.cfg.Folders[name]
 	meta.Collapsed = collapsed
-	f.setFolderMeta(project, name, meta)
+	f.setFolderMeta(name, meta)
 	return nil
 }
 
-// ProjectFolders satisfies sessionview.Core, so a fake backend can feed the
-// same row derivation the real core serves.
-func (f *fakeBackend) ProjectFolders() map[string]map[string]config.FolderMeta {
-	out := map[string]map[string]config.FolderMeta{}
-	for name, p := range f.cfg.Projects {
-		if len(p.Folders) > 0 {
-			out[name] = p.Folders
-		}
-	}
-	return out
+// Folders satisfies sessionview.Core, so a fake backend can feed the same
+// row derivation the real core serves.
+func (f *fakeBackend) Folders() map[string]config.FolderMeta {
+	return f.cfg.Folders
 }
 
 func (f *fakeBackend) SetProjectCollapsed(project string, collapsed bool) error {
@@ -479,14 +477,16 @@ func (f *fakeBackend) SetProjectCollapsed(project string, collapsed bool) error 
 	return nil
 }
 
-func (f *fakeBackend) DeleteFolder(project, name string) error {
-	f.deleteFolderCalls = append(f.deleteFolderCalls, deleteFolderCall{project: project, name: name})
+func (f *fakeBackend) DeleteFolder(name string) error {
+	f.deleteFolderCalls = append(f.deleteFolderCalls, deleteFolderCall{name: name})
 	if f.deleteFolderErr != nil {
 		return f.deleteFolderErr
 	}
-	delete(f.cfg.Projects[project].Folders, name)
+	delete(f.cfg.Folders, name)
+	// Un-parents members in every project, not just one — the blast radius
+	// the delete dialog's count has to speak for.
 	for i := range f.sessions {
-		if f.sessions[i].Project == project && f.sessions[i].Folder == name {
+		if f.sessions[i].Folder == name {
 			f.sessions[i].Folder = ""
 		}
 	}

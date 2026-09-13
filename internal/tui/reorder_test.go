@@ -287,9 +287,7 @@ func TestUpDownFollowVisualOrderAcrossNonAdjacentFolderMembers(t *testing.T) {
 		{ID: "demo:e", Project: "demo", Name: "e", Order: 5, Folder: "grp"},
 	}}
 	m := newTestModel(be)
-	proj := m.cfg.Projects["demo"]
-	proj.Folders = map[string]config.FolderMeta{"grp": {}}
-	m.cfg.Projects["demo"] = proj
+	m.cfg.Folders = map[string]config.FolderMeta{"grp": {}}
 	m.refreshSessions()
 
 	idOf := func(idx int) string { return m.sessions[idx].ID }
@@ -330,9 +328,7 @@ func TestMoveDownSwapsVisuallyAdjacentSessionAcrossNonAdjacentFolderMembers(t *t
 		{ID: "demo:e", Project: "demo", Name: "e", Order: 5, Folder: "grp"},
 	}}
 	m := newTestModel(be)
-	proj := m.cfg.Projects["demo"]
-	proj.Folders = map[string]config.FolderMeta{"grp": {}}
-	m.cfg.Projects["demo"] = proj
+	m.cfg.Folders = map[string]config.FolderMeta{"grp": {}}
 	m.refreshSessions()
 
 	// Put the cursor on "c" (visually followed by "e", not "d") and move it

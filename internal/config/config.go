@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -62,14 +63,14 @@ type Project struct {
 	// compact views (e.g. the all-projects session list). Empty means no
 	// glyph has been chosen — callers fall back to a deterministic pick.
 	Emoji string `toml:"emoji,omitempty" json:"emoji,omitempty"`
-	// Folders holds display state for this project's named, collapsible
-	// session groups, keyed by folder name (the name is also the id — a
-	// rename replaces the map key and updates every member's
-	// session.Session.Folder to match). Membership itself lives on each
-	// Session, not here; a folder with no members currently pointing at it
-	// still sits here inertly until renamed or deleted. One flat level only —
-	// a folder cannot contain another folder.
-	Folders map[string]FolderMeta `toml:"folders,omitempty" json:"folders,omitempty"`
+	// DEPRECATED: folders are a global namespace now (Config.Folders), not a
+	// per-project one. This field survives only as the migration source: the
+	// toml tag has to stay so Load can still read a pre-global config.toml,
+	// and Load nils it out on every project — after Load it is nil
+	// everywhere, nothing else reads or writes it, and Save never emits it
+	// again. json:"-" keeps it off the wire entirely, so no client can
+	// mistake an empty map here for "this project has no folders".
+	Folders map[string]FolderMeta `toml:"folders,omitempty" json:"-"`
 	// Collapsed hides this project's sessions in a client that lists
 	// several projects as collapsible groups — the same idea as
 	// FolderMeta.Collapsed, one level up. Display state, stored here
@@ -82,22 +83,34 @@ type Project struct {
 	Collapsed bool `toml:"collapsed,omitempty" json:"collapsed,omitempty"`
 }
 
-// FolderMeta is a project's per-folder display state.
-//
-// Deliberately not a position: a folder sits wherever its first member sits
-// (see sessionview.BuildRows), so there is no folder order to persist and
-// get out of step with session.Session.Order. An earlier version did carry
-// one, in the same units as Session.Order, and it drifted every time
-// Store.Reorder renumbered a subset of a project's sessions.
+// FolderMeta is one folder's display state, keyed by name in
+// Config.Folders.
 type FolderMeta struct {
 	// Collapsed hides the folder's member sessions from the list, showing
 	// only its header line.
 	Collapsed bool `toml:"collapsed,omitempty" json:"collapsed,omitempty"`
+	// Order is the folder's position in the FOLDER-FIRST view's top level,
+	// and nowhere else. 0 means "never positioned" and sorts last, after
+	// every numbered folder; ties (including all the zeroes) break by name,
+	// so a snapshot is byte-stable across two builds with no state change
+	// instead of riding Go's randomized map iteration.
+	//
+	// The project-first view does not read it: there a folder still sits
+	// wherever its first member sits (sessionview.BuildRows), which is the
+	// only anchor that makes sense once members span projects. Two number
+	// spaces, and this is why they cannot recreate the drift that deleted
+	// the previous stored folder order: that one shared Session.Order's
+	// units and had to interleave with it inside a single project's rows, so
+	// Store.Reorder renumbering a subset of sessions silently moved folders.
+	// This one indexes a different level of the tree, never interleaves with
+	// Session.Order, and is only ever written as a complete 1..N list by
+	// App.ReorderFolders rather than guessed from a delta.
+	Order int64 `toml:"order,omitempty" json:"order,omitempty"`
 }
 
 // FolderNameMax caps a folder name at something that still renders as a
 // list row on a narrow terminal. Names are also the map key in
-// Project.Folders and the value of session.Session.Folder, so this is the
+// Config.Folders and the value of session.Session.Folder, so this is the
 // one place the limit belongs.
 const FolderNameMax = 64
 
@@ -191,6 +204,17 @@ func (p Project) AgentName() string {
 
 type Config struct {
 	Projects map[string]Project `toml:"projects" json:"projects"`
+	// Folders is the global, flat folder namespace: display state keyed by
+	// folder name, which is also the folder's id (a rename replaces the key
+	// and updates every member's session.Session.Folder to match).
+	// Membership itself lives on each Session, not here, so a folder with no
+	// members anywhere still sits here inertly until renamed or deleted, and
+	// one folder's members can span several projects — which is the whole
+	// point, and what lets a client group by folder first and project
+	// second. One flat level only: a folder cannot contain another folder.
+	//
+	// Migrated once out of the per-project Project.Folders maps by Load.
+	Folders map[string]FolderMeta `toml:"folders,omitempty" json:"folders,omitempty"`
 	// Order is the user's manual project ordering (front-to-back). Names not
 	// listed here (new projects, or configs written before this existed)
 	// sort alphabetically after the ordered ones.
@@ -227,22 +251,29 @@ type Config struct {
 	// panel stays short even when a session has both a ticket and a PR
 	// attached. pr status (merged/CI state) is left alone either way.
 	CompactDetail bool `toml:"compact_detail,omitempty" json:"compact_detail,omitempty"`
+	// preFolders is the raw config.toml as it was on disk when Load's
+	// per-project folder migration fired, and is empty otherwise. Save
+	// writes it once to <path>.pre-folders (see Save for why the backup
+	// can't be taken in Load). Unexported deliberately: both BurntSushi/toml
+	// and encoding/json skip unexported fields, so it never reaches the file
+	// or the wire, while still riding the value copy in Clone and surviving
+	// Reload's *cfg = *fresh.
+	preFolders []byte
 }
 
-// Clone returns a copy of c safe to use independently of the original —
-// Projects and Order are copied so mutating one doesn't affect the other.
 // Clone copies c deeply enough that the copy shares no mutable state with
 // the original — ConfigSnapshot hands the result to other goroutines, so a
-// map left aliased here is a data race there. Project is a value type, but
-// its Folders map is not: cloning only c.Projects would leave every copy
-// sharing one folder map with App.Cfg's.
+// map left aliased here is a data race there. That is every map and slice
+// field: Projects, Order, and Folders (cloning only the Config would leave
+// every copy sharing one folder map with App.Cfg's).
+//
+// The per-project Folders maps used to need the same treatment, walked one
+// by one; folders live in a single global map now and Load nils the
+// per-project ones, so there is nothing left in a Project value to alias.
 func (c Config) Clone() Config {
 	c.Projects = maps.Clone(c.Projects)
-	for name, p := range c.Projects {
-		p.Folders = maps.Clone(p.Folders)
-		c.Projects[name] = p
-	}
 	c.Order = slices.Clone(c.Order)
+	c.Folders = maps.Clone(c.Folders)
 	return c
 }
 
@@ -261,11 +292,74 @@ func Load(path string) (*Config, error) {
 	if cfg.Projects == nil {
 		cfg.Projects = map[string]Project{}
 	}
+	migrated := migrateFolders(cfg)
 	for k, p := range cfg.Projects {
 		p.Repo = ExpandHome(p.Repo)
+		// Project.Folders is a migration source, never a live field: leave
+		// it populated and Save would keep rewriting a second, stale copy of
+		// the folder table for some future reader to disagree with.
+		p.Folders = nil
 		cfg.Projects[k] = p
 	}
+	if migrated {
+		// Only stashed, not written: Load is a pure read. Save spends this.
+		cfg.preFolders = data
+	}
 	return cfg, nil
+}
+
+// migrateFolders folds the pre-global, per-project folder maps up into the
+// one global cfg.Folders namespace, and reports whether it did anything.
+// Identical names across projects merge into a single folder: members keep
+// their own project, so a folder-first view renders "auth › repoA / repoB",
+// which is the view this whole namespace change is for.
+//
+// It is pure — no I/O, no wall clock, no map-iteration order — because Load
+// is pure and because the Order it assigns has to come out the same on every
+// machine that reads the same config.toml.
+func migrateFolders(cfg *Config) bool {
+	// cfg.Folders == nil is the whole trigger: once the top-level table
+	// exists it is authoritative, and an empty one is a real answer ("the
+	// user deleted their last folder"), not an unmigrated config.
+	if cfg.Folders != nil {
+		return false
+	}
+	projects := make([]string, 0, len(cfg.Projects))
+	for name, p := range cfg.Projects {
+		if len(p.Folders) > 0 {
+			projects = append(projects, name)
+		}
+	}
+	if len(projects) == 0 {
+		return false
+	}
+	sort.Strings(projects)
+
+	folders := make(map[string]FolderMeta)
+	var order int64
+	for _, pname := range projects {
+		src := cfg.Projects[pname].Folders
+		for _, fname := range slices.Sorted(maps.Keys(src)) {
+			if cur, ok := folders[fname]; ok {
+				// Collapsed merges as AND — collapsed only if every
+				// contributing project had it collapsed, since OR would hide
+				// sessions the user never chose to hide. It deliberately
+				// isn't membership-weighted ("collapsed if most of its
+				// sessions were"): config has no access to the session
+				// store, so the member counts simply aren't reachable here.
+				cur.Collapsed = cur.Collapsed && src[fname].Collapsed
+				folders[fname] = cur
+				continue
+			}
+			// Walking projects and names in sorted order makes Order a
+			// function of the file alone, so two processes migrating the
+			// same config.toml agree on the folder order.
+			order++
+			folders[fname] = FolderMeta{Collapsed: src[fname].Collapsed, Order: order}
+		}
+	}
+	cfg.Folders = folders
+	return true
 }
 
 // Reload re-reads path and overwrites cfg's fields in place — same
@@ -292,6 +386,36 @@ func Save(path string, cfg *Config) error {
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(cfg); err != nil {
 		return err
+	}
+	// The first save after Load's folder migration is the write that makes
+	// the merge irreversible — projects.*.folders stops being emitted at
+	// all — so keep the pre-migration file beside it. The backup belongs
+	// here and not in Load because Load runs at every process start and
+	// before every mutation: a backup taken there is spent by a process that
+	// merely starts and never writes, after which a week of old-binary use
+	// can pass and the genuinely destructive write finds it already taken.
+	if len(cfg.preFolders) > 0 {
+		bak := path + ".pre-folders"
+		_, statErr := os.Stat(bak)
+		switch {
+		case statErr != nil && !errors.Is(statErr, fs.ErrNotExist):
+			// Anything other than "not there" — EACCES, an I/O error, a
+			// dangling symlink — means we cannot tell whether a backup
+			// exists, and falling through to the destructive write without
+			// saying so is the silent case this whole block exists to avoid.
+			slog.Warn("pre-migration folder backup skipped", "path", bak, "err", statErr)
+		case errors.Is(statErr, fs.ErrNotExist):
+			// atomicfile, never os.WriteFile: this is the user's only copy
+			// of their pre-migration state, and a truncate-in-place write
+			// that dies mid-way leaves it zero-length. Two processes racing
+			// the Stat both write identical bytes atomically, which is
+			// harmless. Best-effort — a failed backup must not block the
+			// save — but loud, because a silent one is indistinguishable
+			// from a backup that was never needed.
+			if err := atomicfile.Write(bak, cfg.preFolders, 0o644); err != nil {
+				slog.Warn("pre-migration folder backup failed", "path", bak, "err", err)
+			}
+		}
 	}
 	return atomicfile.Write(path, buf.Bytes(), 0o644)
 }
