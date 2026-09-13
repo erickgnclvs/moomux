@@ -1,8 +1,6 @@
 package sessionview
 
 import (
-	"sort"
-
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/session"
 )
@@ -57,9 +55,16 @@ func (r Row) IsFolder() bool { return r.ID == "" }
 // apart the moment anything was reordered while a folder was collapsed. A
 // derived anchor cannot drift.
 //
-// Folders with no members at all (just created, or emptied) have nothing to
-// anchor to and go last, by name — they move into place as soon as
-// something is filed into them.
+// folders is the global folder table, so most of it has nothing to do with
+// this project: a header is emitted only for a folder with at least one
+// member here. A memberless folder gets no header at all — not here, and
+// not in any other project either. That is a change from when folders were
+// per-project and a memberless one went last, by name: with one global
+// namespace that rule would stamp a dead header onto every project's rows,
+// for every folder in existence, forever. Nothing would even render it —
+// the TUI's visibleList skips a zero-count header and its Folders overlay
+// enumerates config directly — so the folder-first layout (BuildFolderRows)
+// is where a memberless folder belongs, and it is listed there.
 //
 // sessions must already be in display order (Snapshot.Sessions is); this
 // only groups, it never sorts. Sessions from other projects are ignored,
@@ -108,19 +113,6 @@ func BuildRows(sessions []session.Session, folders map[string]config.FolderMeta,
 				rows = append(rows, Row{ID: member.ID, Folder: s.Folder, Hidden: collapsed})
 			}
 		}
-	}
-
-	// Memberless folders: nothing anchors them, so they sit at the end in a
-	// stable order rather than wherever a map iteration put them.
-	var empty []string
-	for name := range folders {
-		if !seen[name] {
-			empty = append(empty, name)
-		}
-	}
-	sort.Strings(empty)
-	for _, name := range empty {
-		rows = append(rows, header(name))
 	}
 	return rows
 }

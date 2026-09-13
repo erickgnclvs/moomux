@@ -290,7 +290,7 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		return s.mutResult(b.MoveProject(a.Name, a.Delta))
 
 	case "CreateFolder":
-		return s.mutResult(b.CreateFolder(a.Project, a.Name))
+		return s.mutResult(b.CreateFolder(a.Name))
 	case "SetSessionFolder":
 		// Unlike the other session Set*/Rename methods (sessionResult),
 		// this one can also create a folder — a config mutation — on its
@@ -301,11 +301,13 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		res.Session = &sess
 		return res, err
 	case "RenameFolder":
-		return s.mutResult(b.RenameFolder(a.Project, a.Name, a.NewName))
+		return s.mutResult(b.RenameFolder(a.Name, a.NewName))
 	case "SetFolderCollapsed":
-		return s.mutResult(b.SetFolderCollapsed(a.Project, a.Name, a.On))
+		return s.mutResult(b.SetFolderCollapsed(a.Name, a.On))
 	case "DeleteFolder":
-		return s.mutResult(b.DeleteFolder(a.Project, a.Name))
+		return s.mutResult(b.DeleteFolder(a.Name))
+	case "ReorderFolders":
+		return s.mutResult(b.ReorderFolders(a.Names))
 	case "SetProjectCollapsed":
 		return s.mutResult(b.SetProjectCollapsed(a.Project, a.On))
 
@@ -367,7 +369,11 @@ func (s *Server) moveSession(b tui.Backend, id string, delta int) error {
 	var folders map[string]config.FolderMeta
 	if s.Config != nil {
 		cfg := s.Config()
-		folders = cfg.Projects[project].Folders
+		// Folders are one global namespace now; cfg.Projects[*].Folders is
+		// the migration source and reads nil after config.Load, so a lookup
+		// there would silently hand BuildRows an empty map and let this
+		// shim drop a session into the middle of a folder again.
+		folders = cfg.Folders
 	}
 	ids, ok := sessionview.Reorder(sessionview.BuildRows(sessions, folders, project), id, delta, nil)
 	if !ok {

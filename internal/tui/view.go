@@ -229,7 +229,7 @@ func (m *Model) focusedOverlayLine(content string) int {
 	case ModeFolderForm:
 		return lineContaining(content, m.folderForm.input.View())
 	case ModeFolders:
-		names := m.currentProjectFolders()
+		names := m.currentFolders()
 		if m.folderCursor < len(names) {
 			return lineContaining(content, folderPickerRowMarker+names[m.folderCursor])
 		}

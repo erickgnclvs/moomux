@@ -46,7 +46,7 @@ func (m *Model) visibleList(proj string) ([]listLine, []session.Session) {
 	}
 	var lines []listLine
 	var sessions []session.Session
-	for _, r := range sessionview.BuildRows(all, m.cfg.Projects[proj].Folders, proj) {
+	for _, r := range sessionview.BuildRows(all, m.cfg.Folders, proj) {
 		if r.IsFolder() {
 			if m.memberCount(r) == 0 {
 				continue

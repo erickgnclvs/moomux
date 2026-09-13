@@ -81,9 +81,15 @@ type Snapshot struct {
 	// renders one project at a time (a panel, or the whole list). Same
 	// reasoning as Sessions' order: grouping is derived once here instead of
 	// once per front end. See BuildRows.
-	Rows     map[string][]Row `json:"rows,omitempty"`
-	PollTime time.Time        `json:"poll_time"`
-	Err      string           `json:"err,omitempty"`
+	Rows map[string][]Row `json:"rows,omitempty"`
+	// FolderRows is the same sessions laid out folder-first — folder,
+	// then project, then session — for a client that groups that way. One
+	// global list rather than a map keyed by anything: folders are a global
+	// namespace now, and the whole point of the layout is that a folder's
+	// members span projects. See BuildFolderRows.
+	FolderRows []FolderRow `json:"folder_rows,omitempty"`
+	PollTime   time.Time   `json:"poll_time"`
+	Err        string      `json:"err,omitempty"`
 }
 
 // Source is a stream of Snapshots. Implemented by Watcher (the real thing,
@@ -102,9 +108,16 @@ type Source interface {
 // satisfies it.
 type Core interface {
 	Sessions() []session.Session
-	// ProjectFolders is each project's folder display state, by project
-	// name — the other half of what BuildRows needs.
-	ProjectFolders() map[string]map[string]config.FolderMeta
+	// Projects is every project the user has, in their display order.
+	// Required, not a convenience: it is the only thing that knows about a
+	// project whose sessions have all been deleted (folders used to hang
+	// off the project and answered that, and don't any more), so without it
+	// such a project silently drops out of Snapshot.Rows. It is also the
+	// order BuildFolderRows puts its project subheaders in.
+	Projects() []string
+	// Folders is the global folder table — the other half of what
+	// BuildRows and BuildFolderRows need. nil when no folder exists.
+	Folders() map[string]config.FolderMeta
 	TmuxAliveAll() map[string]bool
 	WorktreeStatus(id string) (dirty, unpushed, ok bool)
 	PRStatus(id string) (prstatus.Info, bool)
@@ -419,13 +432,23 @@ func (w *Watcher) build() (Snapshot, map[string]watcher.State) {
 
 	w.prune(sessions, live)
 
-	folders := w.Core.ProjectFolders()
-	rows := make(map[string][]Row, len(folders))
-	for project := range projectsOf(ordered, folders) {
-		rows[project] = BuildRows(ordered, folders[project], project)
+	folders := w.Core.Folders()
+	projects := w.Core.Projects()
+	known := projectsOf(ordered, projects)
+	rows := make(map[string][]Row, len(known))
+	for project := range known {
+		rows[project] = BuildRows(ordered, folders, project)
 	}
 
-	return Snapshot{Sessions: ordered, Views: views, Rows: rows, PollTime: time.Now(), Err: w.lastErr}, changedTitles
+	snap := Snapshot{
+		Sessions:   ordered,
+		Views:      views,
+		Rows:       rows,
+		FolderRows: BuildFolderRows(ordered, folders, projects),
+		PollTime:   time.Now(),
+		Err:        w.lastErr,
+	}
+	return snap, changedTitles
 }
 
 // prune drops per-session bookkeeping for sessions that no longer exist.
@@ -659,16 +682,19 @@ func Once(core Core, home string, states map[string]watcher.State) Snapshot {
 	return snap
 }
 
-// projectsOf is every project worth building rows for: one with a session,
-// plus one with only folders (a project whose sessions were all deleted
-// still has its folders, and a client showing it should still see them).
-func projectsOf(sessions []session.Session, folders map[string]map[string]config.FolderMeta) map[string]struct{} {
-	out := make(map[string]struct{}, len(folders))
+// projectsOf is every project worth building rows for: every project the
+// user has, plus any a session claims that the config somehow doesn't list.
+// The second half is belt and braces; the first is what stops a project
+// whose sessions were all deleted from vanishing out of Snapshot.Rows —
+// that used to be answered by "projects that have folders", which folders
+// moving to a global namespace made unanswerable.
+func projectsOf(sessions []session.Session, projects []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(projects))
+	for _, p := range projects {
+		out[p] = struct{}{}
+	}
 	for _, s := range sessions {
 		out[s.Project] = struct{}{}
-	}
-	for p := range folders {
-		out[p] = struct{}{}
 	}
 	return out
 }

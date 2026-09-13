@@ -118,7 +118,8 @@ type SessionsReorderedMsg struct {
 	Err error
 }
 
-// Every folder mutation lives in config (Project.Folders), so each of these
+// Every folder mutation lives in config (Config.Folders — one flat global
+// namespace, not per project), so each of these
 // carries a fresh Cfg snapshot for Update() to apply via *m.cfg = *Cfg, the
 // same as ProjectAddedMsg and friends — m.cfg is the model's own clone, so
 // without it the write lands on disk and the list keeps rendering the old
@@ -133,9 +134,9 @@ type SessionFolderSetMsg struct {
 
 // FolderCreatedMsg is the result of an async CreateFolder call.
 type FolderCreatedMsg struct {
-	Project, Name string
-	Err           error
-	Cfg           *config.Config
+	Name string
+	Err  error
+	Cfg  *config.Config
 }
 
 // FolderRenamedMsg is the result of an async RenameFolder call.
@@ -150,18 +151,18 @@ type FolderRenamedMsg struct {
 // how a jump into a collapsed folder (search) opens it and selects its
 // target in one step.
 type FolderCollapsedSetMsg struct {
-	Project, Name string
-	Collapsed     bool
-	FocusID       string
-	Err           error
-	Cfg           *config.Config
+	Name      string
+	Collapsed bool
+	FocusID   string
+	Err       error
+	Cfg       *config.Config
 }
 
 // FolderDeletedMsg is the result of an async DeleteFolder call.
 type FolderDeletedMsg struct {
-	Project, Name string
-	Err           error
-	Cfg           *config.Config
+	Name string
+	Err  error
+	Cfg  *config.Config
 }
 
 // ProjectAddedMsg is the result of an async project-add flow. Kind

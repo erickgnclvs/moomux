@@ -256,8 +256,8 @@ func (c *Client) MoveProject(name string, delta int) error {
 	return c.mut("MoveProject", Args{Name: name, Delta: delta})
 }
 
-func (c *Client) CreateFolder(project, name string) error {
-	return c.mut("CreateFolder", Args{Project: project, Name: name})
+func (c *Client) CreateFolder(name string) error {
+	return c.mut("CreateFolder", Args{Name: name})
 }
 
 // SetSessionFolder can create a new folder on its first use (mutating
@@ -278,16 +278,23 @@ func (c *Client) SetSessionFolder(id, folder string) (session.Session, error) {
 	return *r.Session, err
 }
 
-func (c *Client) RenameFolder(project, oldName, newName string) error {
-	return c.mut("RenameFolder", Args{Project: project, Name: oldName, NewName: newName})
+func (c *Client) RenameFolder(oldName, newName string) error {
+	return c.mut("RenameFolder", Args{Name: oldName, NewName: newName})
 }
 
-func (c *Client) SetFolderCollapsed(project, name string, collapsed bool) error {
-	return c.mut("SetFolderCollapsed", Args{Project: project, Name: name, On: collapsed})
+func (c *Client) SetFolderCollapsed(name string, collapsed bool) error {
+	return c.mut("SetFolderCollapsed", Args{Name: name, On: collapsed})
 }
 
-func (c *Client) DeleteFolder(project, name string) error {
-	return c.mut("DeleteFolder", Args{Project: project, Name: name})
+func (c *Client) DeleteFolder(name string) error {
+	return c.mut("DeleteFolder", Args{Name: name})
+}
+
+// ReorderFolders persists the folder-first view's top-level order. mut, not
+// err0: it writes FolderMeta.Order in config, so the response's config
+// snapshot is what keeps ConfigSnapshot from serving the pre-move order.
+func (c *Client) ReorderFolders(names []string) error {
+	return c.mut("ReorderFolders", Args{Names: names})
 }
 
 // SetProjectCollapsed persists a project group's own collapsed state, for

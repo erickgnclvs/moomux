@@ -84,20 +84,33 @@ func TestBuildRowsCountsMembersPerView(t *testing.T) {
 	}
 }
 
-func TestBuildRowsMemberlessFoldersGoLastByName(t *testing.T) {
-	rows := BuildRows([]session.Session{rowSess("a", "")}, folderMetas("zed", "auth"), "demo")
-	if got, want := layout(rows), "a [auth] [zed]"; got != want {
-		t.Errorf("layout = %q, want %q", got, want)
-	}
-}
-
-func TestBuildRowsIgnoresOtherProjects(t *testing.T) {
-	rows := BuildRows([]session.Session{
+// The header rule, now that folders is one global table shared by every
+// project: a header belongs to the project that actually has members in
+// the folder, and nowhere else. Before this, a folder map was the
+// project's own, so "every folder in the map gets a header" was the same
+// sentence — applied globally it would print a dead header per folder per
+// project.
+func TestBuildRowsHeaderOnlyWhereTheFolderHasMembers(t *testing.T) {
+	sessions := []session.Session{
 		rowSess("a", ""),
 		{ID: "other:x", Project: "other", Folder: "auth"},
-	}, folderMetas("auth"), "demo")
-	if got, want := layout(rows), "a [auth]"; got != want {
-		t.Errorf("layout = %q, want %q", got, want)
+	}
+	folders := folderMetas("auth", "zed")
+	if got, want := layout(BuildRows(sessions, folders, "demo")), "a"; got != want {
+		t.Errorf("demo layout = %q, want %q — auth has no member here", got, want)
+	}
+	if got, want := layout(BuildRows(sessions, folders, "other")), "[auth] other:x"; got != want {
+		t.Errorf("other layout = %q, want %q", got, want)
+	}
+	// zed has no members anywhere. It is reachable through the Folders
+	// overlay and through FolderRows; it must not squat a row in a project
+	// list that would never draw it.
+	for _, project := range []string{"demo", "other"} {
+		for _, r := range BuildRows(sessions, folders, project) {
+			if r.Folder == "zed" {
+				t.Errorf("memberless folder emitted a row in %q", project)
+			}
+		}
 	}
 }
 
@@ -207,8 +220,9 @@ func TestBuildServesRowsPerProject(t *testing.T) {
 			{ID: "demo:b", Project: "demo", Folder: "auth"},
 			{ID: "other:z", Project: "other"},
 		},
-		alive:   map[string]bool{},
-		folders: map[string]map[string]config.FolderMeta{"demo": {"auth": {Collapsed: true}}},
+		alive:    map[string]bool{},
+		projects: []string{"demo", "other"},
+		folders:  map[string]config.FolderMeta{"auth": {Collapsed: true}},
 	}
 	w := newWatcher(core)
 	snap, _ := w.build()
@@ -218,5 +232,21 @@ func TestBuildServesRowsPerProject(t *testing.T) {
 	}
 	if got, want := layout(snap.Rows["other"]), "other:z"; got != want {
 		t.Errorf("other rows = %q, want %q", got, want)
+	}
+}
+
+// A project whose sessions have all been deleted still exists, and a client
+// showing it still needs a (empty) row list for it. That used to fall out
+// of "projects that have folders"; with folders global, Core.Projects is
+// the only thing that knows, which is why it is on the interface.
+func TestBuildServesRowsForAProjectWithNoSessions(t *testing.T) {
+	core := &fakeCore{
+		sessions: []session.Session{{ID: "demo:a", Project: "demo"}},
+		alive:    map[string]bool{},
+		projects: []string{"demo", "emptied"},
+	}
+	snap, _ := newWatcher(core).build()
+	if _, ok := snap.Rows["emptied"]; !ok {
+		t.Errorf("Rows = %v, want an entry for the sessionless project", snap.Rows)
 	}
 }

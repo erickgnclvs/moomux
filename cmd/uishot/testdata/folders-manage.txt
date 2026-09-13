@@ -3,13 +3,13 @@
                                         
                                         
                                         
-                                        
 ╭──────────────────────────────────────╮
 │                                      │
 │  FOLDERS                             │
 │                                      │
 │   ▸ auth                     ▾ (2)   │
 │     legacy                   ▸ (1)   │
+│     scratch                  ▾ (0)   │
 │                                      │
 │  esc close  enter toggle             │
 │                                      │
@@ -30,13 +30,13 @@
                                                                                                     
                                                                                                     
                                                                                                     
-                                                                                                    
            ╭────────────────────────────────────────────────────────────────────────────╮           
            │                                                                            │           
            │  FOLDERS                                                                   │           
            │                                                                            │           
            │   ▸ auth                                                           ▾ (2)   │           
            │     legacy                                                         ▸ (1)   │           
+           │     scratch                                                        ▾ (0)   │           
            │                                                                            │           
            │  ↑↓ select  enter collapse/expand  n new  e rename  d delete  esc close    │           
            │                                                                            │           
