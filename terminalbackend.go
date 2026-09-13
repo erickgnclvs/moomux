@@ -38,11 +38,23 @@ import (
 // tab.
 type terminalBackend struct {
 	tui.Backend
+	// term is an injected opener for tests. Production leaves it nil and
+	// resolves through opener() on every use: moomux normally runs inside
+	// a long-lived tmux session and outlives the window it was launched
+	// from, so an answer cached at startup names an emulator that has
+	// since been detached, replaced, or reattached from another machine.
 	term terminal.TerminalOpener
 }
 
 func newTerminalBackend(b tui.Backend) *terminalBackend {
-	return &terminalBackend{Backend: b, term: terminal.Detect()}
+	return &terminalBackend{Backend: b}
+}
+
+func (t *terminalBackend) opener() terminal.TerminalOpener {
+	if t.term != nil {
+		return t.term
+	}
+	return terminal.Detect()
 }
 
 // CreateSession opens the new session's terminal here, after the core has
@@ -78,14 +90,17 @@ func (t *terminalBackend) OpenSession(id string) (string, error) {
 // Errors are folded into the hint rather than returned: the tmux session is
 // up either way, so the user needs a way in, not a failure.
 func (t *terminalBackend) open(s session.Session) string {
-	if browser.Remote() {
+	if browser.Remote() && !terminal.LocalClient() {
 		// This client is itself somebody's SSH window: the emulator that
 		// could open a tab is a third machine. Same reasoning as the core
 		// used to apply to itself — but now it's the process that actually
-		// knows.
+		// knows. LocalClient overrides it when a real emulator on this
+		// machine is attached to our tmux session right now — browser's
+		// signals come from a process environment that was frozen when
+		// the pane was created and can be hours stale.
 		return fmt.Sprintf("tmux attach -t %s", s.TmuxSession)
 	}
-	hint, err := t.term.OpenSession(s.TmuxSession, s.Name)
+	hint, err := t.opener().OpenSession(s.TmuxSession, s.Name)
 	if err != nil {
 		slog.Error("open terminal failed", "id", s.ID, "err", err)
 		return fmt.Sprintf("couldn't open a terminal (%v) — attach yourself: tmux attach -t %s", err, s.TmuxSession)
@@ -122,7 +137,7 @@ func (t *terminalBackend) DeleteSession(id string) (string, error) {
 // Best-effort: a session that parked or deleted fine shouldn't report
 // failure because a tab the user already closed wouldn't close.
 func (t *terminalBackend) closeTab(id, tabID string) {
-	closer, ok := t.term.(terminal.TabCloser)
+	closer, ok := t.opener().(terminal.TabCloser)
 	if !ok || tabID == "" {
 		return
 	}
@@ -135,7 +150,7 @@ func (t *terminalBackend) closeTab(id, tabID string) {
 // can't address tabs or has none for it. Must be called while the session's
 // tmux is still alive — see KillTmux.
 func (t *terminalBackend) resolveTab(id string) string {
-	finder, ok := t.term.(terminal.TabFinder)
+	finder, ok := t.opener().(terminal.TabFinder)
 	if !ok {
 		return ""
 	}

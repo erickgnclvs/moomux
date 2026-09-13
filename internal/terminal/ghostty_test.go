@@ -8,6 +8,7 @@ import (
 )
 
 func TestGhosttyOpenSessionOpensTabInFrontWindow(t *testing.T) {
+	withGhosttyTabStore(t, nil)
 	fr := &fakeRunner{out: "tab-1"}
 	fb := &fakeOpener{}
 	c := &ghosttyClient{runner: fr, fallback: fb}
@@ -32,6 +33,7 @@ func TestGhosttyOpenSessionOpensTabInFrontWindow(t *testing.T) {
 // --norc`, so a Dock-launched Ghostty has the bare system PATH and a plain
 // "tmux" is not found on a Homebrew install.
 func TestGhosttyRunsTmuxByAbsolutePath(t *testing.T) {
+	withGhosttyTabStore(t, nil)
 	fr := &fakeRunner{out: "tab-1"}
 	c := &ghosttyClient{runner: fr, fallback: &fakeOpener{}}
 	if _, err := c.OpenSession("moomux-foo", "bar"); err != nil {
@@ -129,5 +131,75 @@ func TestGhosttyEscapesTmuxSession(t *testing.T) {
 	}
 	if !strings.Contains(fr.script, `attach -t '=moomux-foo\"; do shell script \"rm'`) {
 		t.Fatalf("tmux session not escaped: %s", fr.script)
+	}
+}
+
+// withGhosttyTabStore replaces the tmux-backed tab memory with an in-map
+// one, so these tests neither need a tmux server nor touch a real session's
+// environment.
+func withGhosttyTabStore(t *testing.T, seed map[string]string) map[string]string {
+	t.Helper()
+	store := map[string]string{}
+	for k, v := range seed {
+		store[k] = v
+	}
+	origGet, origSet := ghosttyStoredTab, ghosttyRememberTab
+	t.Cleanup(func() { ghosttyStoredTab, ghosttyRememberTab = origGet, origSet })
+	ghosttyStoredTab = func(s string) string { return store[s] }
+	ghosttyRememberTab = func(s, id string) { store[s] = id }
+	return store
+}
+
+// Opening a session twice must land in the tab it already has, not pile up
+// a new one on every press.
+func TestGhosttyOpenSessionReusesRememberedTab(t *testing.T) {
+	store := withGhosttyTabStore(t, nil)
+
+	fr := &fakeRunner{out: "tab-1"}
+	c := &ghosttyClient{runner: fr, fallback: &fakeOpener{}}
+	if _, err := c.OpenSession("moomux-foo", "bar"); err != nil {
+		t.Fatal(err)
+	}
+	if store["moomux-foo"] != "tab-1" {
+		t.Fatalf("tab id not remembered: %v", store)
+	}
+
+	fr = &fakeRunner{out: "found"}
+	c = &ghosttyClient{runner: fr, fallback: &fakeOpener{}}
+	if _, err := c.OpenSession("moomux-foo", "bar"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(fr.script, "new tab") {
+		t.Fatalf("opened a second tab instead of selecting tab-1: %s", fr.script)
+	}
+	if !strings.Contains(fr.script, "tab-1") {
+		t.Fatalf("didn't select the remembered tab: %s", fr.script)
+	}
+}
+
+// A remembered tab the user has since closed (or that a Ghostty restart
+// invalidated) must fall through to a fresh tab, and the new id replace it.
+func TestGhosttyOpenSessionReplacesStaleTab(t *testing.T) {
+	store := withGhosttyTabStore(t, map[string]string{"moomux-foo": "tab-gone"})
+
+	fr := &fakeRunner{out: "notfound", outs: []string{"tab-2"}}
+	c := &ghosttyClient{runner: fr, fallback: &fakeOpener{}}
+	if _, err := c.OpenSession("moomux-foo", "bar"); err != nil {
+		t.Fatal(err)
+	}
+	if store["moomux-foo"] != "tab-2" {
+		t.Fatalf("stale id not replaced: %v", store)
+	}
+}
+
+func TestGhosttyFindTabReturnsRememberedTab(t *testing.T) {
+	withGhosttyTabStore(t, map[string]string{"moomux-foo": "tab-7"})
+	c := &ghosttyClient{runner: &fakeRunner{}, fallback: &fakeOpener{}}
+	got, err := c.FindTab("moomux-foo")
+	if err != nil || got != "tab-7" {
+		t.Fatalf("got (%q, %v)", got, err)
+	}
+	if got, _ := c.FindTab("moomux-other"); got != "" {
+		t.Fatalf("want no tab for an unknown session, got %q", got)
 	}
 }

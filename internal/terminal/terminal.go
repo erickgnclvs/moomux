@@ -54,6 +54,9 @@ var (
 
 	_ TabCloser = (*weztermClient)(nil)
 	_ TabFinder = (*weztermClient)(nil)
+
+	_ TabCloser = (*ghosttyClient)(nil)
+	_ TabFinder = (*ghosttyClient)(nil)
 )
 
 // Detect returns the best TerminalOpener for the current environment by
@@ -120,6 +123,18 @@ func Detect() TerminalOpener {
 	default:
 		return fallback()
 	}
+}
+
+// LocalClient reports whether a terminal emulator on *this* machine is
+// hosting one of the tmux clients attached right now. It exists because
+// the env vars that say "you are remote" (SSH_TTY, MOSHI_CLIENT) are
+// frozen into moomux's process at pane creation and never move again:
+// moomux usually runs inside a long-lived tmux session, so a process
+// started during a mosh connection still claims to be remote hours later,
+// when the human is sitting at a local window. The attached client's
+// ancestry is the answer that updates.
+func LocalClient() bool {
+	return os.Getenv("TMUX") != "" && detectFromProcessTree() != nil
 }
 
 // fallback is used when no terminal emulator was identified by env vars. If
