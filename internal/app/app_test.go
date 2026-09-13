@@ -3595,7 +3595,10 @@ func TestAntigravityAgentSupport(t *testing.T) {
 		a, _, _ := newTestApp(t, nil)
 		repo := t.TempDir()
 		mustGit(t, repo, "init", "-b", "main")
-		mustGit(t, repo, "commit", "--allow-empty", "-m", "init")
+		// -c user.* scopes the identity to this commit, like gitwt.Create
+		// does: a CI runner has no global git identity configured.
+		mustGit(t, repo, "-c", "user.name=moomux", "-c", "user.email=moomux@localhost",
+			"commit", "--allow-empty", "-m", "init")
 
 		_, err := a.AddProject("p1", config.Project{Repo: repo, Agent: "agy"})
 		if err != nil {
