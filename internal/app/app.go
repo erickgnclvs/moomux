@@ -563,17 +563,6 @@ func (a *App) SetProjectCollapsed(project string, collapsed bool) error {
 	return nil
 }
 
-// Folders returns the global folder table, copied out from under cfgMu so
-// a caller can hold it while the config changes. Feeds sessionview's
-// BuildRows and BuildFolderRows, which is where a folder's layout is
-// decided for every front end at once. nil when no folder has ever been
-// created — every reader treats that as "no folders", same as an empty map.
-func (a *App) Folders() map[string]config.FolderMeta {
-	a.cfgMu.RLock()
-	defer a.cfgMu.RUnlock()
-	return maps.Clone(a.Cfg.Folders)
-}
-
 // MoveProject shifts the project with the given name by delta positions (-1
 // left, +1 right) in the manual project order and persists it. It's a no-op
 // if the move would go out of bounds.

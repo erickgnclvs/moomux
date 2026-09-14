@@ -371,8 +371,13 @@ func newTagForm(ticket, pr string) tagForm {
 }
 
 type Model struct {
-	cfg     *config.Config
-	backend Backend
+	cfg *config.Config
+	// cfgAppliedAt is when this front end last applied a config snapshot
+	// from one of its own mutations. The snapshot stream also carries a
+	// config (sessionview.Snapshot.Cfg), and one built before that write
+	// must not be allowed to land on top of it — see applyStreamedCfg.
+	cfgAppliedAt time.Time
+	backend      Backend
 	// agentOptions is the core's agent/model/thinking-level tables, fetched
 	// once at startup (see New) — the single source every form's agent,
 	// model and thinking selectors read from instead of a copy of their own.

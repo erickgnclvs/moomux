@@ -22,6 +22,14 @@ import (
 // place — already joined, labelled and status-checked by the core.
 type Client struct {
 	Socket string
+	// Timeout bounds one pull call end to end (dial, write, read) when
+	// non-zero; zero means no deadline, which is the right default for the
+	// TUI's own client since CreateSession legitimately takes as long as a
+	// `git worktree add` plus an agent launch. Set it for probes, where a
+	// serve that is listening but wedged has to be told apart from a
+	// healthy one. Does not touch Run/stream — a snapshot stream is
+	// supposed to stay open and idle between ticks.
+	Timeout time.Duration
 
 	nudgeOnce sync.Once
 	nudgeCh   chan struct{}
@@ -55,6 +63,14 @@ func (c *Client) call(method string, a Args) (Result, error) {
 		return Result{}, err
 	}
 	defer conn.Close()
+	if c.Timeout > 0 {
+		// One deadline for the whole exchange, not per-syscall: the failure
+		// being bounded here is a server that accepts and then never
+		// answers, which a write deadline alone would sail straight past.
+		if err := conn.SetDeadline(time.Now().Add(c.Timeout)); err != nil {
+			return Result{}, err
+		}
+	}
 	if err := json.NewEncoder(conn).Encode(request{Method: method, Args: a}); err != nil {
 		return Result{}, err
 	}
