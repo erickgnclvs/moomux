@@ -2,7 +2,7 @@
 ╭──────────────────────────────────────╮
 │                                      │
 │                                      │
-│  agent:  claude  codex  [opencode]   │
+│  agent:  ‹ [opencode] ›              │
 │                                      │
 │  model:  > model (optional, e.g. an  │
 │                                      │
@@ -36,7 +36,7 @@
            │                                                                            │           
            │  > PR url (optional)                                                       │           
            │                                                                            │           
-           │  agent:  claude  codex  [opencode]                                         │           
+           │  agent:  claude  codex  [opencode]  antigravity                            │           
            │                                                                            │           
            │  model:  > model (optional, e.g. anthropic/claud…                          │           
            │                                                                            │           

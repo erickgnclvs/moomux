@@ -23,8 +23,8 @@ type Session struct {
 	WorktreePath string    `json:"worktree_path"`
 	TmuxSession  string    `json:"tmux_session"`
 	CreatedAt    time.Time `json:"created_at"`
-	Agent        string    `json:"agent,omitempty"`       // "claude", "codex", "opencode"; empty = "claude"
-	Dangerous    bool      `json:"dangerous,omitempty"`   // run Agent with its permission-skipping flag (claude: --dangerously-skip-permissions, codex: --yolo); no-op for opencode
+	Agent        string    `json:"agent,omitempty"`       // "claude", "codex", "opencode", "antigravity"; empty = "claude"
+	Dangerous    bool      `json:"dangerous,omitempty"`   // run Agent with its permission-skipping flag (claude/antigravity: --dangerously-skip-permissions, codex: --yolo); no-op for opencode
 	AgentPort    int       `json:"agent_port,omitempty"`  // HTTP port for OpenCode API; 0 = not applicable
 	Ticket       string    `json:"ticket,omitempty"`      // ticket URL (e.g. Asana, Jira, Linear)
 	PR           string    `json:"pr,omitempty"`          // pull request URL (e.g. GitHub, GitLab)
@@ -79,6 +79,9 @@ type CreateRequest struct {
 func (s Session) AgentName() string {
 	if s.Agent == "" {
 		return "claude"
+	}
+	if s.Agent == "agy" {
+		return "antigravity"
 	}
 	return s.Agent
 }

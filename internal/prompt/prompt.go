@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -75,9 +76,41 @@ func ForAgent(home, agent, worktreePath string) string {
 		return FirstOpenCode(home, worktreePath)
 	case "codex":
 		return FirstCodex(home, worktreePath)
+	case "antigravity":
+		return FirstAntigravity(home, worktreePath)
 	default:
 		return First(home, worktreePath)
 	}
+}
+
+// FirstAntigravity returns a first user prompt for an Antigravity session by
+// querying ~/.gemini/antigravity-cli/conversation_summaries.db.
+//
+// Approximate by construction: conversation_summaries records no creation
+// time, so this orders by last_modified_time and takes the least recently
+// touched conversation. With two conversations in one worktree, resuming the
+// older one reorders them and the recovered prompt changes. last_user_input_time
+// has the same problem; there is no column that pins the original.
+func FirstAntigravity(home, worktreePath string) string {
+	dbPath := filepath.Join(home, ".gemini", "antigravity-cli", "conversation_summaries.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		return ""
+	}
+	// workspace_uris holds percent-escaped file:// URIs. Matching the
+	// escaped spelling built here — rather than decoding in SQL, which only
+	// ever covered %20 — keeps paths with a '#', '%' or '?' in them working.
+	uris := []string{
+		sqlQuote("file://" + (&url.URL{Path: worktreePath}).EscapedPath()),
+		sqlQuote("file://" + worktreePath),
+	}
+	query := `SELECT COALESCE(NULLIF(c.preview, ''), c.title)
+FROM conversation_summaries c, json_each(c.workspace_uris) j
+WHERE json_valid(c.workspace_uris)
+  AND j.value IN (` + strings.Join(uris, ", ") + `)
+  AND COALESCE(NULLIF(c.preview, ''), c.title) != ''
+ORDER BY c.last_modified_time ASC
+LIMIT 1`
+	return sqliteQuery(dbPath, query)
 }
 
 // FirstOpenCode returns the first user text prompt for an OpenCode session

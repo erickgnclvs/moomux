@@ -224,3 +224,38 @@ func TestSQLiteWatcherMarkerDirWithoutDB(t *testing.T) {
 		t.Fatal("no snapshot received")
 	}
 }
+
+// TestSQLiteWatcherDecodesURIPaths pins the URIPaths decode: Antigravity
+// stores a workspace as a percent-escaped file:// URI, and a session is
+// matched by plain worktree path everywhere else, so a row that still reads
+// "file:///wt/a%20b" matches nothing and the session shows no state. The
+// escapes are deliberately more than %20 — decoding used to live in the SQL
+// as a replace() chain that only covered the space.
+func TestSQLiteWatcherDecodesURIPaths(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "sqlite3")
+	script := "#!/bin/sh\n" +
+		"printf 'file:///wt/a%%20b\\t1\\nfile:///wt/c%%23d\\t2\\n/wt/plain\\t3\\n'\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	w := &SQLiteWatcher{DB: "irrelevant.db", Query: "SELECT 1", URIPaths: true}
+	rows, err := w.queryCached(context.Background(), "irrelevant.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int64{"/wt/a b": 1, "/wt/c#d": 2, "/wt/plain": 3}
+	if len(rows) != len(want) {
+		t.Fatalf("got %v, want %v", rows, want)
+	}
+	for p, ms := range want {
+		if rows[p] != ms {
+			t.Errorf("rows[%q] = %d, want %d (got %v)", p, rows[p], ms, rows)
+		}
+	}
+}

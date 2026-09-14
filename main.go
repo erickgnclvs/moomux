@@ -39,7 +39,7 @@ var (
 )
 
 func printUsage() {
-	fmt.Println(`moomux manages Claude Code / codex / opencode sessions across git worktrees.
+	fmt.Println(`moomux manages Claude Code / codex / opencode / antigravity sessions across git worktrees.
 
 Usage:
   moomux            Launch the interactive TUI.
@@ -377,10 +377,10 @@ func runSpawn(args []string) error {
 	fs := flag.NewFlagSet("spawn", flag.ExitOnError)
 	project := fs.String("project", "", "project name (required; run -list to see configured projects)")
 	name := fs.String("name", "", "session name (derived from -branch if omitted)")
-	agent := fs.String("agent", "", "agent override (claude, codex, opencode)")
+	agent := fs.String("agent", "", "agent override (claude, codex, opencode, antigravity; \"agy\" is accepted as an alias)")
 	model := fs.String("model", "", "model override, passed to the agent as --model (e.g. sonnet, opus, haiku)")
-	thinking := fs.String("thinking", "", "thinking/reasoning level: for codex, a real -c model_reasoning_effort value (minimal, low, medium, high, xhigh); for claude/opencode, a phrase prepended to -prompt (e.g. think, think hard, ultrathink) — no effect there without -prompt")
-	dangerous := fs.Bool("dangerous", false, "run the agent with its permission-skipping flag (claude: --dangerously-skip-permissions, codex: --yolo)")
+	thinking := fs.String("thinking", "", "thinking/reasoning level: for codex, a real -c model_reasoning_effort value (minimal, low, medium, high, xhigh); for antigravity, --effort (low, medium, high), which agy accepts only when no -model is given; for claude/opencode, a phrase prepended to -prompt (e.g. think, think hard, ultrathink) — no effect there without -prompt")
+	dangerous := fs.Bool("dangerous", false, "run the agent with its permission-skipping flag (claude/antigravity: --dangerously-skip-permissions, codex: --yolo)")
 	branch := fs.String("branch", "", "existing branch to check out, instead of creating a new one")
 	ticket := fs.String("ticket", "", "ticket URL to attach to the session")
 	prompt := fs.String("prompt", "", "initial prompt to type into the new session's agent pane")
@@ -842,6 +842,44 @@ func buildWatcher(home string) watcher.Watcher {
 		&watcher.SQLiteWatcher{
 			DB:    filepath.Join(home, ".local", "share", "opencode", "opencode.db"),
 			Query: "SELECT directory, MAX(time_updated) FROM session GROUP BY directory",
+		},
+		// Antigravity: activity tracked in SQLite DB (~/.gemini/antigravity-cli/conversation_summaries.db).
+		//
+		// No MarkerDir, so agy sessions only ever reach Working or Done —
+		// never NeedsInput. Antigravity's hooks.json has exactly five events
+		// (PreToolUse, PostToolUse, PreInvocation, PostInvocation, Stop) and
+		// none of them fires when it puts an approval prompt on screen: the
+		// prompt is raised *after* PreToolUse handlers return, and a handler
+		// can only decide whether to ask, not observe that asking happened.
+		// Nothing in conversation_summaries distinguishes it either —
+		// not_fully_idle and status read the same mid-turn as at rest.
+		//
+		// Stop would close the gap the wrong way, for the reason
+		// claudehook.EnsureHooksInstalled and codexhook.EnsureHooks both
+		// spell out: it fires at the end of every turn, and NeedsInput
+		// outranks Done in the watcher's max-merge, so every finished agy
+		// session would sit at needs-input until its next message. Tried and
+		// reverted twice already; left as a known gap rather than a third
+		// time.
+		&watcher.SQLiteWatcher{
+			DB: filepath.Join(home, ".gemini", "antigravity-cli", "conversation_summaries.db"),
+			// URIPaths: workspace_uris holds file:// URIs, percent-escaped;
+			// SQLiteWatcher decodes them (see its field comment).
+			//
+			// The alias is "wt", not "path": json_each exposes its own `path`
+			// column (the JSON path, always "$"), and GROUP BY binds to that
+			// in preference to a SELECT alias — collapsing every worktree
+			// into one group, so the watcher reported a single arbitrary path
+			// carrying the MAX over all agy conversations.
+			//
+			// The active branch is bounded to the last 10 minutes because
+			// not_fully_idle is only ever cleared by agy itself: parking a
+			// busy session kills tmux mid-turn, leaving the row stuck at 1
+			// (killed stays 0). Unbounded, such a row reports "now" forever
+			// and ActiveAge decay — every other watcher's safety net — can
+			// never fire for that worktree.
+			URIPaths: true,
+			Query:    "SELECT j.value AS wt, MAX(CASE WHEN c.not_fully_idle = 1 AND c.killed = 0 AND CAST(strftime('%s', substr(c.last_modified_time, 1, 19)) AS INTEGER) > CAST(strftime('%s', 'now') AS INTEGER) - 600 THEN CAST(strftime('%s', 'now') AS INTEGER) * 1000 ELSE CAST(strftime('%s', substr(c.last_modified_time, 1, 19)) AS INTEGER) * 1000 END) AS updated_ms FROM conversation_summaries c, json_each(c.workspace_uris) j WHERE json_valid(c.workspace_uris) GROUP BY wt",
 		},
 	}}
 }

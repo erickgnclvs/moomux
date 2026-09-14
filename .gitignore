@@ -6,3 +6,5 @@
 *.test
 *.out
 .DS_Store
+.moomux-panes.toml
+.wt-seed-env-*.log

@@ -323,12 +323,19 @@ func TestSessionAgentNameDefaultsToClaude(t *testing.T) {
 }
 
 func TestSessionAgentNameReturnsSetValue(t *testing.T) {
-	tests := []string{"codex", "opencode"}
+	tests := []string{"codex", "opencode", "antigravity"}
 	for _, agent := range tests {
 		s := Session{Agent: agent}
 		if got := s.AgentName(); got != agent {
 			t.Fatalf("expected %q, got %q", agent, got)
 		}
+	}
+}
+
+func TestSessionAgentNameAgyAlias(t *testing.T) {
+	s := Session{Agent: "agy"}
+	if got := s.AgentName(); got != "antigravity" {
+		t.Fatalf("expected antigravity, got %q", got)
 	}
 }
 

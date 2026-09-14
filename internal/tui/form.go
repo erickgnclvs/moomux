@@ -308,10 +308,43 @@ func (m *Model) renderNewFormModelSelector() string {
 // -c model_reasoning_effort flag) than for claude/opencode (a phrase
 // prepended to the first prompt).
 func (m *Model) newFormFieldHint() string {
-	if m.newFormFocus == newFormThinkingFocus && m.newFormAgentIdx >= 0 && m.agentNames()[m.newFormAgentIdx] == "codex" {
-		return "optional — passed to codex as -c model_reasoning_effort; \"default\" omits it"
+	agent := ""
+	if m.newFormAgentIdx >= 0 {
+		agent = m.agentNames()[m.newFormAgentIdx]
+	}
+	switch m.newFormFocus {
+	case newFormThinkingFocus:
+		switch agent {
+		case "codex":
+			return "optional — passed to codex as -c model_reasoning_effort; \"default\" omits it"
+		case "antigravity":
+			// agy refuses --effort alongside --model, and every named model
+			// already carries its own effort — so this only reaches the
+			// user's own default model.
+			return "only with model \"default\" — agy models bake in their effort"
+		}
+	case newFormModelFocus:
+		// The thinking row's own hint explains this, but only to someone
+		// standing on it: picking the level first and the model second would
+		// otherwise drop the level with nothing on screen saying so.
+		if agent == "antigravity" && m.newFormAgyEffortDropped() {
+			return "named model — the thinking level above will be ignored"
+		}
 	}
 	return newFormFieldHints[m.newFormFocus]
+}
+
+// newFormAgyEffortDropped reports whether the form's current model/thinking
+// pair is the one buildAgentCmd drops the effort flag for: a named agy model
+// carries its own effort, and agy rejects --effort alongside --model.
+func (m *Model) newFormAgyEffortDropped() bool {
+	agent := "antigravity"
+	models, thinks := m.modelNamesFor(agent), m.thinkingNamesFor(agent)
+	if m.newFormModelIdx < 0 || m.newFormModelIdx >= len(models) ||
+		m.newFormThinkingIdx < 0 || m.newFormThinkingIdx >= len(thinks) {
+		return false
+	}
+	return models[m.newFormModelIdx] != "default" && thinks[m.newFormThinkingIdx] != "default"
 }
 
 func (m *Model) renderNewFormThinkingSelector() string {

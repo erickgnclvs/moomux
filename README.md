@@ -12,7 +12,7 @@
                 ||     ||
 ```
 
-A TUI for managing [Claude Code](https://claude.com/claude-code) agent sessions across git worktrees. Creates a worktree + branch, starts a tmux session, launches the session's agent (`claude`, `codex`, or `opencode`), and opens a terminal tab — all in one keypress. Single Go binary, no daemon.
+A TUI for managing [Claude Code](https://claude.com/claude-code) agent sessions across git worktrees. Creates a worktree + branch, starts a tmux session, launches the session's agent (`claude`, `codex`, `opencode`, or `antigravity`), and opens a terminal tab — all in one keypress. Single Go binary, no daemon.
 
 ## Install
 
@@ -38,7 +38,7 @@ Requires `tmux`, `git`, and `claude` on `$PATH`.
 
 Each session is a tmux window split into two panes, both in the worktree directory:
 
-- **Left (~2/3 width)** — the agent (`claude`, `codex`, or `opencode`)
+- **Left (~2/3 width)** — the agent (`claude`, `codex`, `opencode`, or `antigravity`)
 - **Right (~1/3 width)** — a plain shell, for `git`, tests, etc. alongside the agent
 
 It's a regular tmux window, so regular tmux pane controls apply — mouse click/drag to switch panes or resize (mouse mode is on by default), or the usual prefix keys:
@@ -178,11 +178,11 @@ Press `?` at any time on the list screen to open a command palette with every ke
 
 ### Running moomux commands from inside Claude or Codex
 
-Moomux installs commands for parking the current session, tagging it, spawning delegated work, and re-running its worktree setup. It backfills commands for every agent referenced by a configured project or existing session whenever moomux starts, and checks again whenever a session is created or opened. In Claude Code, invoke `/kill`, `/tag`, `/spawn`, or `/reseed`. In current Codex versions, invoke `$kill`, `$tag`, `$spawn`, or `$reseed` (or use `/skills` to select one). Codex skills are installed under `~/.agents/skills/`; restart an already-running Codex session once if a newly installed skill does not appear.
+Moomux installs commands for parking the current session, tagging it, spawning delegated work, and re-running its worktree setup. It backfills commands for every agent referenced by a configured project or existing session whenever moomux starts, and checks again whenever a session is created or opened. In Claude Code, invoke `/kill`, `/tag`, `/spawn`, or `/reseed`. In current Codex versions, invoke `$kill`, `$tag`, `$spawn`, or `$reseed` (or use `/skills` to select one). Codex skills are installed under `~/.agents/skills/`; restart an already-running Codex session once if a newly installed skill does not appear. In Antigravity, invoke `/kill`, `/tag`, `/spawn`, or `/reseed` too — these are installed as skills under `~/.gemini/config/skills/`, which is what Antigravity exposes as slash commands (its `workflows/` are deprecated).
 
 `$kill` parks the session (stops its tmux session and closes its terminal tab) without switching back to the moomux list. Despite the name, it is the same as pressing `x`, not `d`: the worktree, branch, and moomux list entry are kept, so the session can be reopened later.
 
-For compatibility, moomux also keeps installing legacy Codex custom prompts under `~/.codex/prompts/`. Older Codex CLI versions may expose those as `/prompts:kill`, `/prompts:tag`, `/prompts:spawn`, and `/prompts:reseed`. Codex skills and prompts instruct the agent to run the corresponding `moomux` CLI command; Claude Code commands can execute it directly. opencode sessions have no equivalent yet — use the moomux list.
+For compatibility, moomux also keeps installing legacy Codex custom prompts under `~/.codex/prompts/`. Older Codex CLI versions may expose those as `/prompts:kill`, `/prompts:tag`, `/prompts:spawn`, and `/prompts:reseed`. Codex and Antigravity skills instruct the agent to run the corresponding `moomux` CLI command; Claude Code commands can execute it directly. opencode sessions have no equivalent yet — use the moomux list.
 
 The chorded keys have plain-letter alternates for keyboards that can't send modifier+special-key chords (mobile terminal clients, terminals without `extended-keys`): `K`/`J` reorder session, `H`/`L` reorder project, `[`/`]` switch project.
 
@@ -205,7 +205,7 @@ The session's worktree path is appended as the last argument, and the command is
 `moomux spawn` creates a session non-interactively — no TUI, just a worktree + tmux session + agent, same as pressing `n` — and optionally types an initial prompt into the agent's pane. Useful for one agent to delegate a sub-task to a fresh session of its own, or for any script/automation:
 
 ```bash
-moomux spawn -project <project> [-name <name>] [-agent claude|codex|opencode] \
+moomux spawn -project <project> [-name <name>] [-agent claude|codex|opencode|antigravity] \
   [-branch <existing-branch>] [-ticket <url>] [-prompt "<initial task>"]
 ```
 

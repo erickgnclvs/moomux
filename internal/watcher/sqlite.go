@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,6 +41,12 @@ type SQLiteWatcher struct {
 	// last-snapshot-wins semantics mean combining them across separate
 	// snapshots would let whichever tick lands last clobber the other.
 	MarkerDir string
+	// URIPaths says the first column is a file:// URI rather than a plain
+	// path, so each row's key is percent-decoded before use. Agents that
+	// store a workspace as a URI (Antigravity's workspace_uris) escape at
+	// least spaces; doing the decode here rather than with replace() in the
+	// query covers every escape instead of the one anybody remembered.
+	URIPaths bool
 
 	markerScanner dirScanner
 
@@ -94,6 +101,23 @@ func (w *SQLiteWatcher) queryCached(ctx context.Context, dbPath string) (map[str
 	rows, err := querySQLite(ctx, dbPath, w.Query)
 	if err != nil {
 		return nil, err
+	}
+	if w.URIPaths {
+		decoded := make(map[string]int64, len(rows))
+		for p, ms := range rows {
+			path, err := url.PathUnescape(strings.TrimPrefix(p, "file://"))
+			if err != nil {
+				// Not a URI after all — keep the raw value rather than
+				// dropping the row; a path that matches no session is
+				// harmless, a missing one loses a live state.
+				path = p
+			}
+			// Max-merge: two spellings can decode to the same path.
+			if prev, ok := decoded[path]; !ok || ms > prev {
+				decoded[path] = ms
+			}
+		}
+		rows = decoded
 	}
 
 	w.rowsMu.Lock()

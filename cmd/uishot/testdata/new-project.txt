@@ -36,7 +36,7 @@
            │  base branch:   > base branch (default:…                                   │           
            │  branch prefix: > branch prefix (option…                                   │           
            │  emoji:         [auto]  🐙  🦊  🚀  🔥  🌊  🍀  ⚡  🎯  🐝  🦉  🐄         │           
-           │  agent:         [claude]  codex  opencode  ask each time                   │           
+           │  agent:         [claude]  codex  opencode  antigravity  ask each time      │           
            │  model:         [default]  sonnet  opus  fable                             │           
            │  dangerous:     [off]                                                      │           
            │  worktrees:     [on]                                                       │           
