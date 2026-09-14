@@ -416,7 +416,14 @@ func view(id string, st watcher.State) map[string]sessionview.View {
 // included, so a front end renders it rather than re-deriving it.
 func TestWatchStreams(t *testing.T) {
 	snaps := []sessionview.Snapshot{
-		{Views: view("moomux:a", watcher.Working), PollTime: time.Now()},
+		{
+			Views:    view("moomux:a", watcher.Working),
+			PollTime: time.Now(),
+			// The served config is how a second front end learns about a
+			// project the first one added; it has to cross the wire with
+			// everything else on the snapshot.
+			Cfg: &config.Config{Projects: map[string]config.Project{"demo": {Repo: "/tmp/demo"}}, Theme: "gruvbox"},
+		},
 		{Views: view("moomux:a", watcher.NeedsInput), PollTime: time.Now(), Err: "sqlite locked"},
 	}
 	c, _ := start(t, &fakeBackend{}, &config.Config{}, &fakeWatcher{snaps: snaps})
@@ -434,6 +441,14 @@ func TestWatchStreams(t *testing.T) {
 			}
 			if got.Err != want.Err {
 				t.Fatalf("snapshot %d err = %q, want %q", i, got.Err, want.Err)
+			}
+			if want.Cfg != nil {
+				if got.Cfg == nil {
+					t.Fatalf("snapshot %d lost its config on the wire", i)
+				}
+				if got.Cfg.Theme != want.Cfg.Theme || got.Cfg.Projects["demo"].Repo != want.Cfg.Projects["demo"].Repo {
+					t.Fatalf("snapshot %d cfg = %+v, want %+v", i, *got.Cfg, *want.Cfg)
+				}
 			}
 		case <-ctx.Done():
 			t.Fatalf("timed out waiting for snapshot %d", i)

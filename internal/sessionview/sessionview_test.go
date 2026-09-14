@@ -2,6 +2,7 @@ package sessionview
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -30,16 +31,24 @@ type fakeCore struct {
 	gitDelay time.Duration
 }
 
-func (f *fakeCore) Folders() map[string]config.FolderMeta {
+// ConfigSnapshot rebuilds the fake's folder table and project order into
+// the config the real core serves, since that is the single thing the
+// Watcher reads both from now.
+func (f *fakeCore) ConfigSnapshot() config.Config {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.folders
-}
-
-func (f *fakeCore) Projects() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.projects...)
+	cfg := config.Config{
+		Projects: make(map[string]config.Project, len(f.projects)),
+		// Cloned, like the real App.ConfigSnapshot: the whole Snapshot.Cfg
+		// design rests on the Watcher being able to hold this while the
+		// core mutates, so the fake must not hand out a live map.
+		Folders: maps.Clone(f.folders),
+		Order:   append([]string(nil), f.projects...),
+	}
+	for _, name := range f.projects {
+		cfg.Projects[name] = config.Project{}
+	}
+	return cfg
 }
 
 func (f *fakeCore) Sessions() []session.Session {
@@ -673,5 +682,29 @@ func TestPromptRescannedWhenAgentChanges(t *testing.T) {
 	snap, _ := w.build()
 	if got := snap.Views["demo:a"].Prompt; got == "from the claude log" {
 		t.Errorf("Prompt = %q, want the other agent's log not to be shown", got)
+	}
+}
+
+// TestSnapshotCarriesConfig: config is served, not just used. A front end
+// that only ever saw the config changes it made itself went stale the moment
+// a second front end added a project or renamed a folder, and stayed stale
+// until it restarted — so the config rides the stream like everything else
+// a client renders.
+func TestSnapshotCarriesConfig(t *testing.T) {
+	core := &fakeCore{
+		sessions: []session.Session{sess("demo:a", "/wt/a")},
+		projects: []string{"demo", "other"},
+		folders:  map[string]config.FolderMeta{"shipping": {Collapsed: true}},
+	}
+	snap := Once(core, "", nil)
+
+	if snap.Cfg == nil {
+		t.Fatal("snapshot served no config")
+	}
+	if got := snap.Cfg.OrderedProjectNames(); len(got) != 2 || got[0] != "demo" || got[1] != "other" {
+		t.Errorf("served projects = %v, want [demo other]", got)
+	}
+	if !snap.Cfg.Folders["shipping"].Collapsed {
+		t.Errorf("served folders = %+v, want shipping collapsed", snap.Cfg.Folders)
 	}
 }
