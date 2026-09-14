@@ -60,6 +60,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// dot, drop every git badge and PR status, and reorder the list, as
 		// if the core had told us all that. Keep rendering the last real
 		// answer instead; the flash is what says it's stale.
+		m.applyStreamedCfg(msg.Snap)
 		mergedNote := ""
 		if msg.Snap.Views != nil {
 			mergedNote = newlyMergedFlash(m.views, msg.Snap.Views, msg.Snap.Sessions)
@@ -142,9 +143,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CreateFailedMsg:
-		if msg.Cfg != nil {
-			*m.cfg = *msg.Cfg
-		}
+		m.applyCfg(msg.Cfg)
 		m.busy = false
 		m.flash, m.flashKind = "", ""
 		m.mode = ModeNewForm
@@ -153,9 +152,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case SessionCreatedMsg:
-		if msg.Cfg != nil {
-			*m.cfg = *msg.Cfg
-		}
+		m.applyCfg(msg.Cfg)
 		m.busy = false
 		text := "created " + msg.Session.Name
 		if msg.Hint != "" {
@@ -348,9 +345,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ProjectAddedMsg:
-		if msg.Cfg != nil {
-			*m.cfg = *msg.Cfg
-		}
+		m.applyCfg(msg.Cfg)
 		switch msg.Kind {
 		case "add":
 			if msg.Err == nil {
@@ -392,9 +387,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setError(msg.Err)
 			return m, nil
 		}
-		if msg.Cfg != nil {
-			*m.cfg = *msg.Cfg
-		}
+		m.applyCfg(msg.Cfg)
 		// Re-anchor by name rather than index on both cursors: the active
 		// project (which may not be the one that just moved, when the
 		// reorder came from the picker) and, while the picker is open, its
@@ -429,9 +422,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.projForm.err = msg.Err.Error()
 			return m, nil
 		}
-		if msg.Cfg != nil {
-			*m.cfg = *msg.Cfg
-		}
+		m.applyCfg(msg.Cfg)
 		m.activateProject(msg.Name)
 		m.mode = m.projectDialogReturn
 		m.setFlash("info", "updated project "+msg.Name)
@@ -443,9 +434,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setFlash("error", msg.Err.Error())
 			return m, nil
 		}
-		if msg.Cfg != nil {
-			*m.cfg = *msg.Cfg
-		}
+		m.applyCfg(msg.Cfg)
 		m.refreshProjects()
 		m.cursor = 0
 		m.sessionsChanged()
@@ -455,9 +444,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ThemeSetMsg:
-		if msg.Cfg != nil {
-			*m.cfg = *msg.Cfg
-		}
+		m.applyCfg(msg.Cfg)
 		m.setFlash("info", "theme saved: "+msg.Theme+" / "+appearanceLabel(msg.Appearance))
 		return m, nil
 
@@ -1108,11 +1095,71 @@ func (m *Model) dispatchReorder(ids []string) tea.Cmd {
 // drops the last streamed snapshot so the re-read actually sees the new
 // Folder fields instead of the pre-mutation ones.
 func (m *Model) applyFolderChange(cfg *config.Config) {
-	if cfg != nil {
-		*m.cfg = *cfg
-	}
+	m.applyCfg(cfg)
 	m.sessionsChanged()
 	m.refreshSessionsAndSync()
+}
+
+// applyCfg lands a config snapshot this front end's own mutation produced.
+// It stamps cfgAppliedAt as well as copying, because the snapshot stream
+// carries a config too (see applyStreamedCfg): a snapshot built moments
+// before the write would otherwise arrive just after it and revert what the
+// user just did, for a whole poll interval.
+func (m *Model) applyCfg(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	*m.cfg = *cfg
+	m.cfgAppliedAt = time.Now()
+}
+
+// applyStreamedCfg lands the config the core serves on every snapshot, so
+// changes made by another front end — a project added in the Mac app, a
+// theme switched in a second `moomux ui`, a folder renamed by either — show
+// up here instead of waiting for a restart. Skips a snapshot built before
+// our own last mutation, which would be reporting the config as it was
+// before that write.
+func (m *Model) applyStreamedCfg(snap sessionview.Snapshot) {
+	if snap.Cfg == nil || snap.PollTime.Before(m.cfgAppliedAt) {
+		return
+	}
+	theme, appearance := m.cfg.Theme, m.cfg.Appearance
+	// m.activeProj and m.pickerCursor are indexes into m.projects, and the
+	// list we are about to replace may have had a project added or removed
+	// anywhere in it. Re-anchor by name, the same way ProjectMovedMsg does:
+	// clamping alone (all refreshProjects does) silently moves the user to a
+	// different project with no keypress when an earlier one disappears.
+	activeName, pickerName := m.projectAt(m.activeProj), m.projectAt(m.pickerCursor)
+	*m.cfg = *snap.Cfg
+	m.refreshProjects()
+	if i := indexOfProject(m.projects, activeName); i >= 0 {
+		m.activeProj = i
+	}
+	if i := indexOfProject(m.projects, pickerName); i >= 0 {
+		m.pickerCursor = i
+	}
+	// Theme is global lipgloss state, not something View re-reads from
+	// m.cfg, so it has to be pushed — but only on an actual change.
+	if m.cfg.Theme != theme {
+		applyTheme(m.cfg.Theme)
+	}
+	// Appearance, same, with one exception: "" means auto-detect, and
+	// applyAppearance resolves that by asking the terminal for its
+	// background (OSC 11). Doing that from here would put a query on the tty
+	// underneath a running bubbletea program, racing its input reader for
+	// the reply. An explicit light/dark needs no query, so push those and
+	// leave a remote switch *to* auto for the next start.
+	if m.cfg.Appearance != appearance && m.cfg.Appearance != "" {
+		applyAppearance(m.cfg.Appearance)
+	}
+}
+
+// projectAt is m.projects[i] for an index that may be stale or out of range.
+func (m *Model) projectAt(i int) string {
+	if i < 0 || i >= len(m.projects) {
+		return ""
+	}
+	return m.projects[i]
 }
 
 // cfgSnapshotOnSuccess returns a fresh ConfigSnapshot for a mutation Msg's
@@ -2099,6 +2146,12 @@ func (m *Model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // (ipc.Client.mut) is ever moved into a Cmd to stop it freezing the UI over a
 // slow connection, this direct write becomes racy too and needs the same
 // Msg.Cfg treatment as the rest.
+//
+// It does still have to stamp cfgAppliedAt, because the snapshot stream
+// writes m.cfg as well now (see applyStreamedCfg). row.persist is a blocking
+// socket round trip on the attached path, and the core keeps emitting while
+// it runs — so without the stamp a snapshot built before the toggle arrives
+// just after it and flips the setting straight back.
 func (m *Model) applySettingsRow(i int) (tea.Model, tea.Cmd) {
 	row := settingsRows[i]
 	switch row.kind {
@@ -2120,6 +2173,9 @@ func (m *Model) applySettingsRow(i int) (tea.Model, tea.Cmd) {
 	row.set(m.cfg, next)
 	m.setFlash("info", row.flash(next))
 	_ = row.persist(m.backend, next)
+	// After persist, not before: any snapshot built while that round trip
+	// was in flight predates this write and must not be allowed to land.
+	m.cfgAppliedAt = time.Now()
 	if row.refreshSessions {
 		m.refreshSessions()
 	}

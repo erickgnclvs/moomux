@@ -100,13 +100,21 @@ type Result struct {
 	Cfg      *config.Config       `json:"cfg,omitempty"`
 	Agents   []config.AgentOption `json:"agents,omitempty"`
 	Themes   []config.Theme       `json:"themes,omitempty"`
-	Name     string               `json:"name,omitempty"`
-	Hint     string               `json:"hint,omitempty"`
-	Dirty    bool                 `json:"dirty,omitempty"`
-	Unpushed bool                 `json:"unpushed,omitempty"`
-	OK       bool                 `json:"ok,omitempty"`
-	Files    int                  `json:"files,omitempty"`
-	Commits  int                  `json:"commits,omitempty"`
+	// ProjectEmoji is every project name mapped to Cfg.ProjectEmoji(name):
+	// the glyph a client should draw, including the deterministic palette
+	// fallback for projects that never chose one. Serve-only — the server
+	// fills it, no client sends it back. It is deliberately *not* a field
+	// on config.Project: UpdateProject replaces the whole record, so a
+	// front end round-tripping a project would persist a palette pick as
+	// the user's own emoji (the trap config.Project.Collapsed has).
+	ProjectEmoji map[string]string `json:"project_emoji,omitempty"`
+	Name         string            `json:"name,omitempty"`
+	Hint         string            `json:"hint,omitempty"`
+	Dirty        bool              `json:"dirty,omitempty"`
+	Unpushed     bool              `json:"unpushed,omitempty"`
+	OK           bool              `json:"ok,omitempty"`
+	Files        int               `json:"files,omitempty"`
+	Commits      int               `json:"commits,omitempty"`
 }
 
 // nudgeRequest is the only thing a client sends on a live "Watch"

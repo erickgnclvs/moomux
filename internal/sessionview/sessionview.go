@@ -88,8 +88,20 @@ type Snapshot struct {
 	// namespace now, and the whole point of the layout is that a folder's
 	// members span projects. See BuildFolderRows.
 	FolderRows []FolderRow `json:"folder_rows,omitempty"`
-	PollTime   time.Time   `json:"poll_time"`
-	Err        string      `json:"err,omitempty"`
+	// Cfg is the core's config as of PollTime: projects, the folder table,
+	// theme, and the display settings. It rides the stream for the same
+	// reason everything else here does — a front end that only learned
+	// about config changes it made itself went stale the moment a *second*
+	// front end added a project or switched the theme, and stayed stale
+	// until it was restarted.
+	//
+	// A pointer so a Snapshot built without one (the error-only snapshot
+	// ipc.Client emits when the connection drops, and every test literal)
+	// reads as "no answer" rather than as an empty config a client would
+	// dutifully apply over the real one.
+	Cfg      *config.Config `json:"cfg,omitempty"`
+	PollTime time.Time      `json:"poll_time"`
+	Err      string         `json:"err,omitempty"`
 }
 
 // Source is a stream of Snapshots. Implemented by Watcher (the real thing,
@@ -108,16 +120,13 @@ type Source interface {
 // satisfies it.
 type Core interface {
 	Sessions() []session.Session
-	// Projects is every project the user has, in their display order.
-	// Required, not a convenience: it is the only thing that knows about a
-	// project whose sessions have all been deleted (folders used to hang
-	// off the project and answered that, and don't any more), so without it
-	// such a project silently drops out of Snapshot.Rows. It is also the
-	// order BuildFolderRows puts its project subheaders in.
-	Projects() []string
-	// Folders is the global folder table — the other half of what
-	// BuildRows and BuildFolderRows need. nil when no folder exists.
-	Folders() map[string]config.FolderMeta
+	// ConfigSnapshot is the whole config as of now, cloned so the Watcher
+	// can hold it while the core mutates. It supplies the project list (the
+	// only thing that knows about a project whose sessions have all been
+	// deleted, and the order BuildFolderRows lists project subheaders in),
+	// the global folder table, and everything else a client renders from
+	// config — see Snapshot.Cfg.
+	ConfigSnapshot() config.Config
 	TmuxAliveAll() map[string]bool
 	WorktreeStatus(id string) (dirty, unpushed, ok bool)
 	PRStatus(id string) (prstatus.Info, bool)
@@ -432,8 +441,11 @@ func (w *Watcher) build() (Snapshot, map[string]watcher.State) {
 
 	w.prune(sessions, live)
 
-	folders := w.Core.Folders()
-	projects := w.Core.Projects()
+	// One read of the config, not one per thing derived from it: the rows a
+	// client renders and the Cfg it renders them under have to agree.
+	cfg := w.Core.ConfigSnapshot()
+	folders := cfg.Folders
+	projects := cfg.OrderedProjectNames()
 	known := projectsOf(ordered, projects)
 	rows := make(map[string][]Row, len(known))
 	for project := range known {
@@ -445,6 +457,7 @@ func (w *Watcher) build() (Snapshot, map[string]watcher.State) {
 		Views:      views,
 		Rows:       rows,
 		FolderRows: BuildFolderRows(ordered, folders, projects),
+		Cfg:        &cfg,
 		PollTime:   time.Now(),
 		Err:        w.lastErr,
 	}

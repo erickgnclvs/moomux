@@ -10,7 +10,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-isatty"
@@ -56,8 +58,11 @@ Usage:
                      done. Backs the /reseed slash command inside Claude Code.
   moomux serve      Run the orchestration core headless on a unix socket,
                      for another front end to drive. 'moomux serve -h'.
-  moomux ui ...     Run the TUI against a running 'moomux serve' instead of
-                     its own core. Run 'moomux ui -h' for its flags.
+                     While one is running, a plain 'moomux' attaches to it
+                     rather than starting a second core, so the TUI and any
+                     other front end (the Mac app) show the same thing.
+  moomux ui ...     Run the TUI against a 'moomux serve' on a specific
+                     socket. Run 'moomux ui -h' for its flags.
   moomux --version  Print the version.
   moomux --help     Show this message.`)
 }
@@ -298,15 +303,7 @@ func newApp() (*app.App, error) {
 		return nil, fmt.Errorf("load sessions: %w", err)
 	}
 
-	home, _ := os.UserHomeDir()
-	logDir := filepath.Join(home, ".local", "share", "moomux")
-	_ = os.MkdirAll(logDir, 0o755)
-	logPath := filepath.Join(logDir, "moomux.log")
-	if lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
-		slog.SetDefault(slog.New(slog.NewTextHandler(lf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	} else {
-		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
-	}
+	setupLogging()
 
 	tmuxClient := tmux.New()
 	// moomux itself commonly runs inside a long-lived "moomux" tmux session
@@ -329,6 +326,32 @@ func newApp() (*app.App, error) {
 	}
 	a.InstallKnownCommands()
 	return a, nil
+}
+
+// setupLogging points slog at ~/.local/share/moomux/moomux.log. It must run
+// on every path that renders a TUI, not just the ones that build a local
+// core: the front end logs too (terminalBackend's open/close failures,
+// tui.New's client-config read), and with the default stderr handler those
+// lines are written straight over the alt-screen UI. Attaching to a running
+// serve skips newApp entirely, which is how that became the default path.
+//
+// Once, because run() calls it before deciding whether to attach and newApp
+// calls it for every other entry point; without the guard the fall-through
+// path opens the file twice and leaks the first descriptor.
+var loggingOnce sync.Once
+
+func setupLogging() {
+	loggingOnce.Do(func() {
+		home, _ := os.UserHomeDir()
+		logDir := filepath.Join(home, ".local", "share", "moomux")
+		_ = os.MkdirAll(logDir, 0o755)
+		logPath := filepath.Join(logDir, "moomux.log")
+		if lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+			slog.SetDefault(slog.New(slog.NewTextHandler(lf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+		} else {
+			slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
+		}
+	})
 }
 
 // runSpawn implements `moomux spawn`: create a session (worktree + tmux +
@@ -625,6 +648,38 @@ func currentSession(a *app.App) (session.Session, error) {
 }
 
 func run() error {
+	home, _ := os.UserHomeDir()
+
+	// Prefer a running `moomux serve` over starting a second core. Two
+	// cores over one config.toml is how the terminal TUI and the Mac app
+	// drifted apart: each held its own in-memory config and only re-read
+	// the file when it wrote to it (App.Sessions calls Store.Reload on
+	// every read, which is why the session list stayed in step and nothing
+	// else did). Attaching instead means one core, many front ends, and the
+	// snapshot stream — config included, see sessionview.Snapshot.Cfg —
+	// keeps them all on the same answer.
+	//
+	// No serve running is not an error: fall through and be the core, which
+	// is what moomux has always done. Deliberately *not* starting one — a
+	// tool that spawns a background daemon the user didn't ask for owns a
+	// lifecycle it has no way to explain.
+	// Before the branch: both paths render a TUI, and a TUI that logs to
+	// stderr writes over its own alt screen.
+	setupLogging()
+
+	if c, cfg, agentOptions, err := connect(ipc.DefaultSocket(home)); err == nil {
+		// Both of these are about the terminal *this* process is sitting
+		// in, so they belong to the front end and can't be inherited from
+		// the core: a serve started by launchd is a different pane, and on
+		// this path newApp — which does them for every other entry point —
+		// never runs.
+		if err := tmux.New().EnsureEnvRefresh(); err != nil {
+			slog.Warn("tmux EnsureEnvRefresh failed", "err", err)
+		}
+		autoRelaunchInTmux(cfg)
+		return runProgram(cfg, c, agentOptions, c)
+	}
+
 	a, err := newApp()
 	if err != nil {
 		return err
@@ -633,6 +688,10 @@ func run() error {
 	// Shared across both prompts: a fresh bufio.Reader per prompt can read
 	// ahead past its own newline, silently discarding a fast/pasted second
 	// answer meant for the next prompt.
+	//
+	// Only on this path: both prompts write config.toml directly, which is
+	// the one thing a front end attached to somebody else's core must never
+	// do. They are first-run setup for a machine that owns its core anyway.
 	stdin := bufio.NewReader(os.Stdin)
 
 	if !cfg.TmuxSetupAsked {
@@ -641,15 +700,51 @@ func run() error {
 	if !cfg.AutoTmuxAsked {
 		promptAutoTmux(stdin, cfg, cfgPath)
 	}
+	autoRelaunchInTmux(cfg)
+
+	return runProgram(cfg, a, a.AgentOptions(), buildSource(a, home))
+}
+
+// autoRelaunchInTmux re-execs this process inside moomux's own tmux session
+// when the user asked for that. A front-end concern even though the setting
+// lives in core config: it is about the terminal this process is sitting in,
+// so it runs on both the local and the attached path.
+func autoRelaunchInTmux(cfg *config.Config) {
 	if cfg.AutoTmux && os.Getenv("TMUX") == "" {
 		if err := relaunchInTmux(); err != nil {
 			fmt.Fprintln(os.Stderr, "moomux: could not start inside tmux:", err)
 		}
 	}
-
-	home, _ := os.UserHomeDir()
-	return runProgram(cfg, a, a.AgentOptions(), buildSource(a, home))
 }
+
+// connect dials a running `moomux serve` and fetches the two things the TUI
+// needs before it can start. The first call doubles as the liveness probe —
+// a socket file left behind by a dead serve refuses the connection rather
+// than answering — so callers branch on the error rather than stat'ing the
+// path, which would race and would believe a stale file.
+func connect(sock string) (*ipc.Client, *config.Config, []config.AgentOption, error) {
+	// Bounded, and on a throwaway client: a serve that is listening but
+	// wedged — another front end holding App.cfgMu through a `git worktree
+	// add`, say — would otherwise leave the user staring at a blank
+	// terminal with no message and no fall-back to a local core. The client
+	// we hand back carries no deadline, because the real calls behind it
+	// (CreateSession most of all) are legitimately slow.
+	probe := &ipc.Client{Socket: sock, Timeout: connectProbeTimeout}
+	cfg, err := probe.Config()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	agentOptions, err := probe.AgentOptions()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return &ipc.Client{Socket: sock}, cfg, agentOptions, nil
+}
+
+// connectProbeTimeout bounds each of connect's two probe calls. Long enough
+// that a busy-but-healthy serve still answers, short enough that a wedged
+// one doesn't read as a hang.
+const connectProbeTimeout = 3 * time.Second
 
 // runProgram drives the TUI against any core + view source, so the local
 // (*app.App) path and the socket-backed (*ipc.Client) path share one setup.
@@ -717,12 +812,7 @@ func runRemote(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	c := &ipc.Client{Socket: *sock}
-	cfg, err := c.Config()
-	if err != nil {
-		return fmt.Errorf("connect %s: %w (is `moomux serve` running?)", *sock, err)
-	}
-	agentOptions, err := c.AgentOptions()
+	c, cfg, agentOptions, err := connect(*sock)
 	if err != nil {
 		return fmt.Errorf("connect %s: %w (is `moomux serve` running?)", *sock, err)
 	}

@@ -9,6 +9,33 @@ The short version: **the core computes, clients render.** If a front end
 would have to work something out in order to draw it, that's a bug in this
 protocol, not a thing for the front end to implement.
 
+## One core, many front ends
+
+`moomux serve` runs the core; everything else attaches. That includes a plain
+`moomux`: it probes the default socket first and only builds its own core
+when nothing answers.
+
+That is not a convenience — it is the whole reason the protocol holds. Two
+cores over one `config.toml` each keep their own in-memory copy, and only the
+*write* paths re-read the file (`config.Reload`, on all eleven of them). The
+read paths never do. So a project added in one process was invisible to the
+other until it restarted. The session list was the exception, and the tell:
+`App.Sessions` calls `Store.Reload()` on every read, which is exactly why
+sessions stayed in step while everything else drifted.
+
+Attaching means there is one copy of the truth, and the stream below is how
+every front end stays level with it.
+
+Two consequences worth knowing:
+
+- A plain `moomux` behaves differently depending on whether a serve is up.
+  That is intended, but it does mean an old `moomux serve` left running after
+  an upgrade gets attached to by the new binary, and there is no version
+  handshake (see the folder migration note below for why). Restart serve when
+  you upgrade.
+- The one-time first-run prompts (tmux.conf setup, auto-tmux) write
+  `config.toml` directly, so they only run on the path that owns the core.
+
 ## The two channels
 
 Everything moomux serves goes over one of two paths, and which one it uses is
@@ -78,6 +105,7 @@ the joined state, so a parked session's cow told the Mac app it was working).
       "label": "in the barn", "quip": "mootering off for now"
     }
   },
+  "cfg": { /* the whole config.Config: projects, folders, theme, settings */ },
   "poll_time": "2026-09-06T18:00:00Z",
   "err": ""                                // a scan failure, as text
 }
@@ -98,12 +126,39 @@ TUI replaces its whole view map on every tick rather than merging.
 | `git_ok`/`dirty`/`unpushed` | Run `git status` and `rev-list` per session, on its own staleness schedule |
 | `pr` | Run `gh pr view` per session, network-bound and rate-limited |
 | `sessions` order | Apply the live-first tiebreak on top of the manual/recent-first sort |
+| `cfg` | Notice that *another* front end changed the config — there is no other way to find out |
 
 The last one is subtle and worth stating plainly: **`sessions` is already in
 display order.** A client filters it (by project, by archived — those are the
 client's own view state) and renders the result. It does not sort. Half the
 ordering rule used to live in the core and half in each client, which meant
 two front ends could list the same project differently.
+
+### `cfg` is pushed, not just pulled
+
+`Config` is also a pull method, and that's how a front end gets its first
+copy. But a config a client only refreshed after *its own* writes went stale
+the moment a second client attached: add a project in the Mac app and the
+TUI would keep listing the old set, with the wrong theme and a stale folder
+table, until it was restarted. So the config rides every snapshot, same as
+everything else that is simply true right now.
+
+Two rules for a client applying it:
+
+- **`cfg` is absent, not empty, when there is no answer.** It's a pointer on
+  the Go side and `omitempty` on the wire. The error-only snapshot
+  `ipc.Client` emits when the connection drops carries none, and a client
+  must not apply an empty config over the real one.
+- **Ignore a snapshot older than your own last write.** Snapshots are built
+  on the core's timer, so one built moments before your `SetTheme` can land
+  moments after it and revert what the user just did for a whole interval.
+  Compare `poll_time` against when you applied your own mutation's result —
+  `applyStreamedCfg` in `internal/tui/update.go` is the reference.
+
+What does *not* ride the stream is `config.Client` (`client.toml`): that
+describes the machine a person is sitting at, not the sessions being
+orchestrated, and the core has no method for it at all. See the front-end
+split further down.
 
 ### `state` is a name, not an integer
 
@@ -303,6 +358,26 @@ has no caller for it — it shows one project at a time — and that is fine:
 display state belongs with the rest of the state, not in one front end's
 private preferences.
 
+### `project_emoji`: a derived glyph that must not become a choice
+
+Every response that carries a config snapshot (`Config`, and every mutator,
+which attaches the post-mutation snapshot) also carries `project_emoji`: a
+top-level map of every project name to `config.ProjectEmoji(name)` — the
+project's own `emoji` if it set one, else the `moomux` -> cow special case,
+else a deterministic pick from `ProjectEmojiPalette` by name hash. That is
+the glyph the TUI draws, so a client renders the same one without a second
+copy of the palette in its own language.
+
+It is serve-only: the server fills it when it builds the response, and no
+client ever sends it back. And it is deliberately a top-level map rather
+than a field on `config.Project` — `UpdateProject` replaces the whole
+project record, so a front end that round-trips a project it was served
+would persist a palette pick as the user's own emoji, which is exactly the
+trap `collapsed` sets. Keep derived-per-name data out of the record.
+
+Older clients ignore the extra key (`omitempty`), and a client talking to an
+older core sees no key at all — fall back to `Project.emoji` there.
+
 ### Rows: the list layout, derived once
 
 `Snapshot.Rows` is `Sessions` laid out as display rows, keyed by project:
@@ -465,6 +540,7 @@ nil. What changed:
 | `prstatus.Info` as `{"State":…}` | `{"state":…}` — lowercase, like everything else |
 | `OpenSession` (the core spawns a terminal for "Open in terminal") | **removed** — the app opens its own; see "The core never opens a terminal" |
 | `session.Session.term_tab_id` | **removed** — never decoded on the Swift side, and nothing stores a tab handle now |
+| a client had no way to know a project's fallback emoji | `Result.project_emoji` — additive, so an older client is unaffected |
 
 A version handshake would be cheap insurance against the next one; there
 isn't one today.

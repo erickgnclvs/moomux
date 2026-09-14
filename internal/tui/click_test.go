@@ -463,12 +463,6 @@ func (f *fakeBackend) SetFolderCollapsed(name string, collapsed bool) error {
 	return nil
 }
 
-// Folders satisfies sessionview.Core, so a fake backend can feed the same
-// row derivation the real core serves.
-func (f *fakeBackend) Folders() map[string]config.FolderMeta {
-	return f.cfg.Folders
-}
-
 func (f *fakeBackend) SetProjectCollapsed(project string, collapsed bool) error {
 	if f.cfg.Projects != nil {
 		p := f.cfg.Projects[project]
@@ -493,7 +487,6 @@ func (f *fakeBackend) DeleteFolder(name string) error {
 	}
 	return f.deleteFolderErr
 }
-func (f *fakeBackend) Projects() []string            { return nil }
 func (f *fakeBackend) ConfigSnapshot() config.Config { return f.cfg.Clone() }
 func (f *fakeBackend) AddProject(name string, p config.Project) (string, error) {
 	f.addProjectCalls = append(f.addProjectCalls, projectCall{name, p})

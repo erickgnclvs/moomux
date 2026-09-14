@@ -335,12 +335,6 @@ func (f *fakeBackend) SetFolderCollapsed(name string, collapsed bool) error {
 func (f *fakeBackend) DeleteFolder(name string) error                           { return nil }
 func (f *fakeBackend) ReorderFolders(names []string) error                      { return nil }
 func (f *fakeBackend) SetProjectCollapsed(project string, collapsed bool) error { return nil }
-func (f *fakeBackend) Folders() map[string]config.FolderMeta {
-	if f.cfg == nil {
-		return nil
-	}
-	return f.cfg.Folders
-}
 func (f *fakeBackend) SetSessionTags(id, ticket, pr string) (session.Session, error) {
 	return session.Session{}, nil
 }
@@ -375,17 +369,6 @@ func (f *fakeBackend) SuggestedProject() (string, string) { return (&app.App{}).
 
 func (f *fakeBackend) Sessions() []session.Session { return f.sessions }
 
-// Projects answers in the user's order, like the real core: it is what
-// sessionview keys Snapshot.Rows off (so a project whose sessions were all
-// deleted still gets rows) and the order BuildFolderRows lists its project
-// subheaders in. Returning nil here would leave both to the sample data's
-// map iteration.
-func (f *fakeBackend) Projects() []string {
-	if f.cfg == nil {
-		return nil
-	}
-	return f.cfg.OrderedProjectNames()
-}
 func (f *fakeBackend) AddProject(name string, p config.Project) (string, error) {
 	// The path warning is the core's now, so ask the real one rather than
 	// canning a string here — that's what the project-init-choice scenario

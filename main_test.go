@@ -14,6 +14,7 @@ import (
 
 	"github.com/erickgnclvs/moomux/internal/app"
 	"github.com/erickgnclvs/moomux/internal/config"
+	"github.com/erickgnclvs/moomux/internal/ipc"
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/tmux"
 	"github.com/erickgnclvs/moomux/internal/watcher"
@@ -273,4 +274,86 @@ func TestAntigravityQueryGroupsPerWorktree(t *testing.T) {
 	if got["file:///wt/one"] <= got["file:///wt/stuck"] {
 		t.Errorf("/wt/one = %d, want the newer of its two conversations", got["file:///wt/one"])
 	}
+}
+
+// TestConnectPrefersARunningServe is the out-of-sync fix at the process
+// level. Bare `moomux` used to build its own core unconditionally, so a user
+// running the terminal TUI alongside the Mac app (which drives `moomux
+// serve`) had two cores over one config.toml. Sessions stayed in step only
+// because App.Sessions re-reads the store on every call; config has no such
+// reload on its read path, so it drifted and stayed drifted.
+//
+// connect is what run() branches on: a live serve means attach to it, an
+// error means be the core ourselves.
+func TestConnectPrefersARunningServe(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+	cfg := &config.Config{Projects: map[string]config.Project{"served": {Repo: filepath.Join(dir, "repo")}}}
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	store := &session.Store{Path: filepath.Join(dir, "sessions.json")}
+	if err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	a := &app.App{Store: store, Cfg: cfg, CfgPath: cfgPath, Tmux: &tmux.Client{Runner: stubTmuxRunner{}}}
+
+	// Short path deliberately: a unix socket path is capped around 104
+	// bytes, and t.TempDir() under a long test name can spend most of that.
+	sockDir, err := os.MkdirTemp("", "mx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(sockDir)
+	sock := filepath.Join(sockDir, "s")
+
+	ln, err := ipc.Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	srv := &ipc.Server{Backend: a, Config: a.ConfigSnapshot, AgentOptions: a.AgentOptions}
+	go srv.Serve(ln)
+
+	c, got, agentOptions, err := connect(sock)
+	if err != nil {
+		t.Fatalf("connect to a live serve: %v", err)
+	}
+	if c == nil {
+		t.Fatal("connect returned no client")
+	}
+	if _, ok := got.Projects["served"]; !ok {
+		t.Errorf("config came from somewhere other than the serving core: %+v", got.Projects)
+	}
+	if len(agentOptions) == 0 {
+		t.Error("no agent options fetched from the serving core")
+	}
+}
+
+// TestConnectFallsBackWhenNothingIsServing covers the other branch: no
+// serve, and bare `moomux` has to keep working as its own core. A socket
+// path left behind by a dead serve must also refuse rather than hang, which
+// is why the probe is a real call and not a stat.
+func TestConnectFallsBackWhenNothingIsServing(t *testing.T) {
+	dir, err := os.MkdirTemp("", "mx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	t.Run("no socket at all", func(t *testing.T) {
+		if _, _, _, err := connect(filepath.Join(dir, "absent")); err == nil {
+			t.Fatal("connect succeeded with nothing listening; run() would attach to a core that isn't there")
+		}
+	})
+
+	t.Run("stale socket file from a dead serve", func(t *testing.T) {
+		stale := filepath.Join(dir, "stale")
+		if err := os.WriteFile(stale, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, _, err := connect(stale); err == nil {
+			t.Fatal("connect succeeded against a leftover socket file")
+		}
+	})
 }
