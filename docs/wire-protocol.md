@@ -303,6 +303,26 @@ has no caller for it — it shows one project at a time — and that is fine:
 display state belongs with the rest of the state, not in one front end's
 private preferences.
 
+### `project_emoji`: a derived glyph that must not become a choice
+
+Every response that carries a config snapshot (`Config`, and every mutator,
+which attaches the post-mutation snapshot) also carries `project_emoji`: a
+top-level map of every project name to `config.ProjectEmoji(name)` — the
+project's own `emoji` if it set one, else the `moomux` -> cow special case,
+else a deterministic pick from `ProjectEmojiPalette` by name hash. That is
+the glyph the TUI draws, so a client renders the same one without a second
+copy of the palette in its own language.
+
+It is serve-only: the server fills it when it builds the response, and no
+client ever sends it back. And it is deliberately a top-level map rather
+than a field on `config.Project` — `UpdateProject` replaces the whole
+project record, so a front end that round-trips a project it was served
+would persist a palette pick as the user's own emoji, which is exactly the
+trap `collapsed` sets. Keep derived-per-name data out of the record.
+
+Older clients ignore the extra key (`omitempty`), and a client talking to an
+older core sees no key at all — fall back to `Project.emoji` there.
+
 ### Rows: the list layout, derived once
 
 `Snapshot.Rows` is `Sessions` laid out as display rows, keyed by project:
@@ -462,6 +482,7 @@ nil. What changed:
 | `prstatus.Info` as `{"State":…}` | `{"state":…}` — lowercase, like everything else |
 | `OpenSession` (the core spawns a terminal for "Open in terminal") | **removed** — the app opens its own; see "The core never opens a terminal" |
 | `session.Session.term_tab_id` | **removed** — never decoded on the Swift side, and nothing stores a tab handle now |
+| a client had no way to know a project's fallback emoji | `Result.project_emoji` — additive, so an older client is unaffected |
 
 A version handshake would be cheap insurance against the next one; there
 isn't one today.

@@ -223,8 +223,7 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		if s.Config == nil {
 			return Result{}, errors.New("server has no config")
 		}
-		cfg := s.Config()
-		return Result{Cfg: &cfg}, nil
+		return cfgResult(s.Config()), nil
 	case "AgentOptions":
 		if s.AgentOptions == nil {
 			return Result{}, errors.New("server has no agent options")
@@ -390,6 +389,16 @@ func (s *Server) mutResult(err error) (Result, error) {
 	if err != nil || s.Config == nil {
 		return Result{}, err
 	}
-	cfg := s.Config()
-	return Result{Cfg: &cfg}, nil
+	return cfgResult(s.Config()), nil
+}
+
+// cfgResult wraps a config snapshot for the wire, adding the derived
+// project emoji table so a non-Go front end doesn't need its own copy of
+// config.ProjectEmojiPalette.
+func cfgResult(cfg config.Config) Result {
+	emoji := make(map[string]string, len(cfg.Projects))
+	for name := range cfg.Projects {
+		emoji[name] = cfg.ProjectEmoji(name)
+	}
+	return Result{Cfg: &cfg, ProjectEmoji: emoji}
 }

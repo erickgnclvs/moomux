@@ -893,3 +893,31 @@ func TestWatchCarriesRows(t *testing.T) {
 		t.Fatal("timed out waiting for the snapshot")
 	}
 }
+
+// TestConfigServesEffectiveProjectEmoji covers the serve-only project_emoji
+// map: an explicit Project.Emoji wins, and a project without one reports
+// exactly what config.ProjectEmoji derives — so a non-Go front end never
+// needs its own copy of ProjectEmojiPalette. The derived glyph must stay
+// out of Project.Emoji itself, or UpdateProject would round-trip a palette
+// pick into the user's config.
+func TestConfigServesEffectiveProjectEmoji(t *testing.T) {
+	cfg := &config.Config{Projects: map[string]config.Project{
+		"chosen":  {Emoji: "🦄"},
+		"derived": {},
+	}}
+	c, _ := start(t, &fakeBackend{}, cfg, nil)
+	r, err := c.call("Config", Args{})
+	if err != nil {
+		t.Fatalf("Config: %v", err)
+	}
+	if got := r.ProjectEmoji["chosen"]; got != "🦄" {
+		t.Errorf("project_emoji[chosen] = %q, want 🦄", got)
+	}
+	want := cfg.ProjectEmoji("derived")
+	if got := r.ProjectEmoji["derived"]; got != want {
+		t.Errorf("project_emoji[derived] = %q, want %q", got, want)
+	}
+	if e := r.Cfg.Projects["derived"].Emoji; e != "" {
+		t.Errorf("Projects[derived].Emoji = %q, want empty — derived glyph must not become an explicit choice", e)
+	}
+}
