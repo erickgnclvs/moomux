@@ -59,6 +59,22 @@ type Backend interface {
 	// uncommitted changes, commits unpushed) for the delete dialog's detail
 	// line; ok is false if it can't be determined.
 	ChangeSummary(id string) (filesChanged, unpushedCommits int, ok bool)
+	// Capture returns the visible text of each session's active pane, keyed
+	// by session id, for a front end that draws a grid of live sessions.
+	// Nothing in the TUI calls it — it is already inside one of these panes
+	// — but a remote front end has no tmux binary to run capture-pane
+	// itself, and the batching (one invocation for the whole set) belongs
+	// next to the session-id-to-tmux-name mapping either way. Ids that
+	// can't be captured are absent rather than an error: a caller polling
+	// this must not read a failure as an empty pane.
+	Capture(ids []string) map[string]string
+	// Review opens (or reuses) a "review" window in the session's tmux
+	// session, running its diff against the base branch. Also not a TUI
+	// caller; it is here for the same reason EnsureTmux is — Backend is the
+	// core's whole API, and that is what the socket serves. It is a tmux
+	// window and not a rendered patch so the diff reaches a real tty and
+	// the user's own pager.
+	Review(id string) (hint string, err error)
 	KillTmux(id string) error
 	SetSessionTags(id, ticket, pr string) (session.Session, error)
 	SetSessionPrompt(id, prompt string) (session.Session, error)

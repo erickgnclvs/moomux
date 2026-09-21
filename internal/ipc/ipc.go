@@ -80,6 +80,10 @@ type Args struct {
 	Theme      string `json:"theme,omitempty"`
 	Appearance string `json:"appearance,omitempty"`
 	Delta      int    `json:"delta,omitempty"`
+	// Cols and Rows are Attach's initial pty size. Zero means "the client
+	// didn't say", which attach reads as 80x24 — see Server.attach.
+	Cols int `json:"cols,omitempty"`
+	Rows int `json:"rows,omitempty"`
 	// Req is CreateSession's whole request. One field rather than a dozen
 	// flat ones, because creating a session is a transaction the core runs
 	// end to end — see session.CreateRequest.
@@ -113,8 +117,11 @@ type Result struct {
 	Dirty        bool              `json:"dirty,omitempty"`
 	Unpushed     bool              `json:"unpushed,omitempty"`
 	OK           bool              `json:"ok,omitempty"`
-	Files        int               `json:"files,omitempty"`
-	Commits      int               `json:"commits,omitempty"`
+	// Screens is Capture's answer: one session id to the visible text of
+	// its active pane. An id that couldn't be captured is absent.
+	Screens map[string]string `json:"screens,omitempty"`
+	Files   int               `json:"files,omitempty"`
+	Commits int               `json:"commits,omitempty"`
 }
 
 // nudgeRequest is the only thing a client sends on a live "Watch"

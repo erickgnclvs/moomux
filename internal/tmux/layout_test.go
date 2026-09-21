@@ -9,7 +9,7 @@ import (
 
 func TestNewSessionWithLayoutAgentOnRight(t *testing.T) {
 	fr := &fakeRunner{out: map[string]string{
-		"list-panes -t =moomux-x: -F #{pane_id}":                     "%3\n",
+		"list-panes -t =moomux-x:^ -F #{pane_id}":                    "%3\n",
 		"split-window -h -b -t %3 -c /tmp/wt -p 70 -P -F #{pane_id}": "%4\n",
 	}}
 	c := &Client{Runner: fr}
@@ -25,14 +25,16 @@ func TestNewSessionWithLayoutAgentOnRight(t *testing.T) {
 	}
 	want := [][]string{
 		{"new-session", "-d", "-s", "moomux-x", "-c", "/tmp/wt", "-n", "x"},
-		{"set-window-option", "-t", "=moomux-x:", "automatic-rename", "off"},
-		{"set-option", "-t", "=moomux-x:", "set-titles", "on"},
-		{"set-option", "-t", "=moomux-x:", "set-titles-string", "#{window_name}"},
-		{"set-option", "-t", "=moomux-x:", "mouse", "on"},
-		{"list-panes", "-t", "=moomux-x:", "-F", "#{pane_id}"},
+		{"set-window-option", "-t", "=moomux-x:^", "automatic-rename", "off"},
+		{"set-option", "-t", "=moomux-x:^", "set-titles", "on"},
+		{"set-option", "-t", "=moomux-x:^", "set-titles-string", "#{window_name}"},
+		{"set-option", "-t", "=moomux-x:^", "mouse", "on"},
+		{"list-panes", "-t", "=moomux-x:^", "-F", "#{pane_id}"},
 		{"split-window", "-h", "-b", "-t", "%3", "-c", "/tmp/wt", "-p", "70", "-P", "-F", "#{pane_id}"},
 		{"send-keys", "-t", "%4", "npm run dev", "Enter"},
 		{"select-pane", "-t", "%3"},
+		{"set-window-option", "-t", "%3", "@moomux_agent", "1"},
+		{"display-message", "-p", "-t", "%3", "#{window_id}"},
 		{"send-keys", "-t", "%3", "claude", "Enter"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
@@ -42,7 +44,7 @@ func TestNewSessionWithLayoutAgentOnRight(t *testing.T) {
 
 func TestNewSessionWithLayoutNestedGrid(t *testing.T) {
 	fr := &fakeRunner{out: map[string]string{
-		"list-panes -t =moomux-x: -F #{pane_id}":                     "%3\n",
+		"list-panes -t =moomux-x:^ -F #{pane_id}":                    "%3\n",
 		"split-window -h -b -t %3 -c /tmp/wt -p 50 -P -F #{pane_id}": "%4\n",
 		"split-window -v -b -t %4 -c /tmp/wt -p 50 -P -F #{pane_id}": "%5\n",
 	}}
@@ -66,16 +68,18 @@ func TestNewSessionWithLayoutNestedGrid(t *testing.T) {
 	}
 	want := [][]string{
 		{"new-session", "-d", "-s", "moomux-x", "-c", "/tmp/wt", "-n", "x"},
-		{"set-window-option", "-t", "=moomux-x:", "automatic-rename", "off"},
-		{"set-option", "-t", "=moomux-x:", "set-titles", "on"},
-		{"set-option", "-t", "=moomux-x:", "set-titles-string", "#{window_name}"},
-		{"set-option", "-t", "=moomux-x:", "mouse", "on"},
-		{"list-panes", "-t", "=moomux-x:", "-F", "#{pane_id}"},
+		{"set-window-option", "-t", "=moomux-x:^", "automatic-rename", "off"},
+		{"set-option", "-t", "=moomux-x:^", "set-titles", "on"},
+		{"set-option", "-t", "=moomux-x:^", "set-titles-string", "#{window_name}"},
+		{"set-option", "-t", "=moomux-x:^", "mouse", "on"},
+		{"list-panes", "-t", "=moomux-x:^", "-F", "#{pane_id}"},
 		{"split-window", "-h", "-b", "-t", "%3", "-c", "/tmp/wt", "-p", "50", "-P", "-F", "#{pane_id}"},
 		{"split-window", "-v", "-b", "-t", "%4", "-c", "/tmp/wt", "-p", "50", "-P", "-F", "#{pane_id}"},
 		{"send-keys", "-t", "%5", "top-left", "Enter"},
 		{"send-keys", "-t", "%3", "right-pane", "Enter"},
 		{"select-pane", "-t", "%4"},
+		{"set-window-option", "-t", "%4", "@moomux_agent", "1"},
+		{"display-message", "-p", "-t", "%4", "#{window_id}"},
 		{"send-keys", "-t", "%4", "claude", "Enter"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
@@ -85,7 +89,7 @@ func TestNewSessionWithLayoutNestedGrid(t *testing.T) {
 
 func TestNewSessionWithLayoutMultipleWindows(t *testing.T) {
 	fr := &fakeRunner{out: map[string]string{
-		"list-panes -t =moomux-x: -F #{pane_id}":                      "%3\n",
+		"list-panes -t =moomux-x:^ -F #{pane_id}":                     "%3\n",
 		"new-window -t =moomux-x -c /tmp/wt -n logs -P -F #{pane_id}": "%9\n",
 		"split-window -v -b -t %9 -c /tmp/wt -p 50 -P -F #{pane_id}":  "%10\n",
 	}}
@@ -105,11 +109,11 @@ func TestNewSessionWithLayoutMultipleWindows(t *testing.T) {
 	}
 	want := [][]string{
 		{"new-session", "-d", "-s", "moomux-x", "-c", "/tmp/wt", "-n", "x"},
-		{"set-window-option", "-t", "=moomux-x:", "automatic-rename", "off"},
-		{"set-option", "-t", "=moomux-x:", "set-titles", "on"},
-		{"set-option", "-t", "=moomux-x:", "set-titles-string", "#{window_name}"},
-		{"set-option", "-t", "=moomux-x:", "mouse", "on"},
-		{"list-panes", "-t", "=moomux-x:", "-F", "#{pane_id}"},
+		{"set-window-option", "-t", "=moomux-x:^", "automatic-rename", "off"},
+		{"set-option", "-t", "=moomux-x:^", "set-titles", "on"},
+		{"set-option", "-t", "=moomux-x:^", "set-titles-string", "#{window_name}"},
+		{"set-option", "-t", "=moomux-x:^", "mouse", "on"},
+		{"list-panes", "-t", "=moomux-x:^", "-F", "#{pane_id}"},
 		{"new-window", "-t", "=moomux-x", "-c", "/tmp/wt", "-n", "logs", "-P", "-F", "#{pane_id}"},
 		{"set-window-option", "-t", "%9", "automatic-rename", "off"},
 		{"set-option", "-t", "%9", "set-titles", "on"},
@@ -119,6 +123,8 @@ func TestNewSessionWithLayoutMultipleWindows(t *testing.T) {
 		{"send-keys", "-t", "%9", "docker compose logs -f", "Enter"},
 		{"select-window", "-t", "%3"},
 		{"select-pane", "-t", "%3"},
+		{"set-window-option", "-t", "%3", "@moomux_agent", "1"},
+		{"display-message", "-p", "-t", "%3", "#{window_id}"},
 		{"send-keys", "-t", "%3", "claude", "Enter"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
@@ -131,7 +137,7 @@ func TestNewSessionWithLayoutMultipleWindows(t *testing.T) {
 // window isn't the first one listed, rather than always landing on window 0.
 func TestNewSessionWithLayoutNameFollowsAgentWindow(t *testing.T) {
 	fr := &fakeRunner{out: map[string]string{
-		"list-panes -t =moomux-x: -F #{pane_id}":                     "%3\n",
+		"list-panes -t =moomux-x:^ -F #{pane_id}":                    "%3\n",
 		"split-window -h -b -t %3 -c /tmp/wt -p 50 -P -F #{pane_id}": "%4\n",
 		"new-window -t =moomux-x -c /tmp/wt -n x -P -F #{pane_id}":   "%7\n",
 	}}
@@ -151,8 +157,8 @@ func TestNewSessionWithLayoutNameFollowsAgentWindow(t *testing.T) {
 	}
 	want := [][]string{
 		{"new-session", "-d", "-s", "moomux-x", "-c", "/tmp/wt"},
-		{"set-option", "-t", "=moomux-x:", "mouse", "on"},
-		{"list-panes", "-t", "=moomux-x:", "-F", "#{pane_id}"},
+		{"set-option", "-t", "=moomux-x:^", "mouse", "on"},
+		{"list-panes", "-t", "=moomux-x:^", "-F", "#{pane_id}"},
 		{"split-window", "-h", "-b", "-t", "%3", "-c", "/tmp/wt", "-p", "50", "-P", "-F", "#{pane_id}"},
 		{"send-keys", "-t", "%4", "shell1", "Enter"},
 		{"send-keys", "-t", "%3", "shell2", "Enter"},
@@ -162,6 +168,8 @@ func TestNewSessionWithLayoutNameFollowsAgentWindow(t *testing.T) {
 		{"set-option", "-t", "%7", "set-titles-string", "#{window_name}"},
 		{"select-window", "-t", "%7"},
 		{"select-pane", "-t", "%7"},
+		{"set-window-option", "-t", "%7", "@moomux_agent", "1"},
+		{"display-message", "-p", "-t", "%7", "#{window_id}"},
 		{"send-keys", "-t", "%7", "claude", "Enter"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
@@ -174,7 +182,7 @@ func TestNewSessionWithLayoutNameFollowsAgentWindow(t *testing.T) {
 // session display name rather than being honored.
 func TestNewSessionWithLayoutAgentWindowNameIgnoresFileName(t *testing.T) {
 	fr := &fakeRunner{out: map[string]string{
-		"list-panes -t =moomux-x: -F #{pane_id}": "%3\n",
+		"list-panes -t =moomux-x:^ -F #{pane_id}": "%3\n",
 	}}
 	c := &Client{Runner: fr}
 	windows := []layout.WindowSpec{
@@ -185,12 +193,14 @@ func TestNewSessionWithLayoutAgentWindowNameIgnoresFileName(t *testing.T) {
 	}
 	want := [][]string{
 		{"new-session", "-d", "-s", "moomux-x", "-c", "/tmp/wt", "-n", "x"},
-		{"set-window-option", "-t", "=moomux-x:", "automatic-rename", "off"},
-		{"set-option", "-t", "=moomux-x:", "set-titles", "on"},
-		{"set-option", "-t", "=moomux-x:", "set-titles-string", "#{window_name}"},
-		{"set-option", "-t", "=moomux-x:", "mouse", "on"},
-		{"list-panes", "-t", "=moomux-x:", "-F", "#{pane_id}"},
+		{"set-window-option", "-t", "=moomux-x:^", "automatic-rename", "off"},
+		{"set-option", "-t", "=moomux-x:^", "set-titles", "on"},
+		{"set-option", "-t", "=moomux-x:^", "set-titles-string", "#{window_name}"},
+		{"set-option", "-t", "=moomux-x:^", "mouse", "on"},
+		{"list-panes", "-t", "=moomux-x:^", "-F", "#{pane_id}"},
 		{"select-pane", "-t", "%3"},
+		{"set-window-option", "-t", "%3", "@moomux_agent", "1"},
+		{"display-message", "-p", "-t", "%3", "#{window_id}"},
 		{"send-keys", "-t", "%3", "claude", "Enter"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {

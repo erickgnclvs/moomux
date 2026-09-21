@@ -300,6 +300,8 @@ func (f *fakeBackend) PRStatus(id string) (prstatus.Info, bool) {
 	return info, present
 }
 func (f *fakeBackend) KillTmux(id string) error                                { return nil }
+func (f *fakeBackend) Capture([]string) map[string]string                      { return nil }
+func (f *fakeBackend) Review(string) (string, error)                           { return "", nil }
 func (f *fakeBackend) SetSessionStatusTitle(id string, st watcher.State) error { return nil }
 func (f *fakeBackend) ReorderSessions(ids []string) error                      { return nil }
 func (f *fakeBackend) MoveProject(name string, delta int) error                { return nil }

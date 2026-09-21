@@ -39,7 +39,7 @@ func (c *Client) NewSessionWithLayout(name, cwd, windowName string, windows []la
 	if err := c.newSessionBase(name, cwd, windowNameFor(0)); err != nil {
 		return err
 	}
-	rootPane, err := c.Runner.Run("list-panes", "-t", exactWindow(name), "-F", "#{pane_id}")
+	rootPane, err := c.Runner.Run("list-panes", "-t", firstWindow(name), "-F", "#{pane_id}")
 	if err != nil {
 		return err
 	}
@@ -89,6 +89,10 @@ func (c *Client) NewSessionWithLayout(name, cwd, windowName string, windows []la
 	if _, err := c.Runner.Run("select-pane", "-t", agentPane); err != nil {
 		return err
 	}
+	// Which window that pane is in is not recoverable later — the window's
+	// name is the agent-state title, which moomux rewrites — so record it
+	// now; everything targeting "the agent's window" reads it back.
+	c.markAgentWindow(name, agentPane)
 	if agentCmd != "" {
 		if _, err := c.Runner.Run("send-keys", "-t", agentPane, agentCmd, "Enter"); err != nil {
 			return err

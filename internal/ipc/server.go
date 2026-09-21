@@ -2,10 +2,12 @@ package ipc
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -155,12 +157,28 @@ func (s *Server) handle(c net.Conn) {
 	// request line, so a nudge arriving in the same read as the Watch
 	// request would vanish and the client would wait out a whole tick.
 	r := bufio.NewReader(c)
+	// A json.Decoder, deliberately, and not a line read: it returns as soon
+	// as the JSON value is complete, needing neither a trailing newline nor
+	// EOF. A client that writes its request and then waits for the answer
+	// on the same connection — without half-closing, which is an ordinary
+	// way to write a client — has sent neither. Requiring one made every
+	// pull method hang for such a client, with no error and no refusal:
+	// total, silent, and on every method at once.
+	dec := json.NewDecoder(r)
 	var req request
-	if err := json.NewDecoder(r).Decode(&req); err != nil {
+	if err := dec.Decode(&req); err != nil {
 		return
 	}
 	if req.Method == "Watch" {
-		s.stream(c, r)
+		// dec.Buffered() and not r alone: the decoder owns whatever it read
+		// past the request, so a nudge that arrived in the same packet is
+		// sitting in it — dropped at best, and at worst half a JSON value
+		// that makes the next decode fail and tears the stream down.
+		s.stream(c, io.MultiReader(dec.Buffered(), r))
+		return
+	}
+	if req.Method == "Attach" {
+		s.attach(c, attachInput(dec, r), req.Args)
 		return
 	}
 	res, err := s.dispatch(req.Method, req.Args)
@@ -174,6 +192,50 @@ func (s *Server) handle(c net.Conn) {
 	}
 }
 
+// attachInput is the client's keystroke stream once an Attach request has
+// been read: whatever the decoder pulled in past the request, then the
+// connection itself.
+//
+// Minus the newline that terminated the request, which is not a keystroke.
+// A Decoder stops at the end of the JSON value and leaves the terminator in
+// its buffer, so without this it becomes the first byte written to the pty —
+// an Enter typed into the agent's pane on every attach, which in an agent
+// pane submits whatever was sitting in the input box.
+//
+// The terminator is stripped from the first read, not from dec.Buffered():
+// over TCP — the tailnet front door, and a client in another language that
+// may write the JSON and its newline as two sends — the decoder can stop at
+// the closing brace with nothing buffered, leaving the newline to arrive on
+// the connection itself. Stripping only what a Read returned keeps this from
+// blocking for a keystroke it might then eat.
+//
+// One terminator, and never a bare "\r" — an encoder writes "\n", while a
+// terminal sends CR for Return, so a lone CR is a keypress, not framing.
+func attachInput(dec *json.Decoder, r io.Reader) io.Reader {
+	rest, _ := io.ReadAll(dec.Buffered())
+	return &unterminated{r: io.MultiReader(bytes.NewReader(rest), r)}
+}
+
+// unterminated drops one leading newline from the first non-empty read.
+type unterminated struct {
+	r    io.Reader
+	done bool
+}
+
+func (u *unterminated) Read(p []byte) (int, error) {
+	n, err := u.r.Read(p)
+	if u.done || n == 0 {
+		return n, err
+	}
+	u.done = true
+	for _, nl := range [][]byte{[]byte("\r\n"), []byte("\n")} {
+		if after, ok := bytes.CutPrefix(p[:n], nl); ok {
+			return copy(p, after), err
+		}
+	}
+	return n, err
+}
+
 // stream pushes snapshots until the client hangs up. The write error on a
 // closed connection is what ends it — there's no unsubscribe.
 //
@@ -182,7 +244,7 @@ func (s *Server) handle(c net.Conn) {
 // tick (see sessionview.Source.Nudge). Reading it is also how a client that
 // hangs up releases this goroutine immediately, rather than at the next
 // snapshot write.
-func (s *Server) stream(c net.Conn, r *bufio.Reader) {
+func (s *Server) stream(c net.Conn, r io.Reader) {
 	if s.Source == nil {
 		return
 	}
@@ -258,6 +320,11 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 	case "WorktreeStatus":
 		dirty, unpushed, ok := b.WorktreeStatus(a.ID)
 		return Result{Dirty: dirty, Unpushed: unpushed, OK: ok}, nil
+	case "Capture":
+		return Result{Screens: b.Capture(a.IDs)}, nil
+	case "Review":
+		hint, err := b.Review(a.ID)
+		return Result{Hint: hint}, err
 	case "ChangeSummary":
 		files, commits, ok := b.ChangeSummary(a.ID)
 		return Result{Files: files, Commits: commits, OK: ok}, nil
