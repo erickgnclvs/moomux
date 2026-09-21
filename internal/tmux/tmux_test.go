@@ -25,6 +25,19 @@ func (f *fakeRunner) Run(args ...string) (string, error) {
 	return f.out[key], nil
 }
 
+// agentWindowLookup is the one-off "which window is the agent in" query
+// agentWindow caches per session (see tmux.go). Tests that assert an exact
+// call sequence for a session this client didn't create drop it.
+func withoutAgentLookup(calls [][]string) [][]string {
+	out := make([][]string, 0, len(calls))
+	for _, call := range calls {
+		if call[0] != "list-windows" {
+			out = append(out, call)
+		}
+	}
+	return out
+}
+
 type exitErr struct{ code int }
 
 func (e exitErr) Error() string { return "exit" }
@@ -101,19 +114,19 @@ func TestExecRunnerDirIsStable(t *testing.T) {
 }
 
 func TestNewSession(t *testing.T) {
-	fr := &fakeRunner{out: map[string]string{"list-panes -t =moomux-foo: -F #{pane_id}": "%3\n"}}
+	fr := &fakeRunner{out: map[string]string{"list-panes -t =moomux-foo:^ -F #{pane_id}": "%3\n"}}
 	c := &Client{Runner: fr}
 	if err := c.NewSession("moomux-foo", "/tmp/wt", "claude", "foo"); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{
 		{"new-session", "-d", "-s", "moomux-foo", "-c", "/tmp/wt", "-n", "foo"},
-		{"set-window-option", "-t", "=moomux-foo:", "automatic-rename", "off"},
-		{"set-option", "-t", "=moomux-foo:", "set-titles", "on"},
-		{"set-option", "-t", "=moomux-foo:", "set-titles-string", "#{window_name}"},
-		{"set-option", "-t", "=moomux-foo:", "mouse", "on"},
-		{"list-panes", "-t", "=moomux-foo:", "-F", "#{pane_id}"},
-		{"split-window", "-h", "-t", "=moomux-foo:", "-c", "/tmp/wt", "-l", "33%"},
+		{"set-window-option", "-t", "=moomux-foo:^", "automatic-rename", "off"},
+		{"set-option", "-t", "=moomux-foo:^", "set-titles", "on"},
+		{"set-option", "-t", "=moomux-foo:^", "set-titles-string", "#{window_name}"},
+		{"set-option", "-t", "=moomux-foo:^", "mouse", "on"},
+		{"list-panes", "-t", "=moomux-foo:^", "-F", "#{pane_id}"},
+		{"split-window", "-h", "-t", "=moomux-foo:^", "-c", "/tmp/wt", "-l", "33%"},
 		{"select-pane", "-t", "%3"},
 		{"send-keys", "-t", "%3", "claude", "Enter"},
 	}
@@ -123,16 +136,16 @@ func TestNewSession(t *testing.T) {
 }
 
 func TestNewSessionNoWindowName(t *testing.T) {
-	fr := &fakeRunner{out: map[string]string{"list-panes -t =moomux-foo: -F #{pane_id}": "%3\n"}}
+	fr := &fakeRunner{out: map[string]string{"list-panes -t =moomux-foo:^ -F #{pane_id}": "%3\n"}}
 	c := &Client{Runner: fr}
 	if err := c.NewSession("moomux-foo", "/tmp/wt", "claude", ""); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{
 		{"new-session", "-d", "-s", "moomux-foo", "-c", "/tmp/wt"},
-		{"set-option", "-t", "=moomux-foo:", "mouse", "on"},
-		{"list-panes", "-t", "=moomux-foo:", "-F", "#{pane_id}"},
-		{"split-window", "-h", "-t", "=moomux-foo:", "-c", "/tmp/wt", "-l", "33%"},
+		{"set-option", "-t", "=moomux-foo:^", "mouse", "on"},
+		{"list-panes", "-t", "=moomux-foo:^", "-F", "#{pane_id}"},
+		{"split-window", "-h", "-t", "=moomux-foo:^", "-c", "/tmp/wt", "-l", "33%"},
 		{"select-pane", "-t", "%3"},
 		{"send-keys", "-t", "%3", "claude", "Enter"},
 	}
@@ -142,19 +155,19 @@ func TestNewSessionNoWindowName(t *testing.T) {
 }
 
 func TestNewSessionNoCmd(t *testing.T) {
-	fr := &fakeRunner{out: map[string]string{"list-panes -t =moomux-foo: -F #{pane_id}": "%3\n"}}
+	fr := &fakeRunner{out: map[string]string{"list-panes -t =moomux-foo:^ -F #{pane_id}": "%3\n"}}
 	c := &Client{Runner: fr}
 	if err := c.NewSession("moomux-foo", "/tmp/wt", "", "foo"); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{
 		{"new-session", "-d", "-s", "moomux-foo", "-c", "/tmp/wt", "-n", "foo"},
-		{"set-window-option", "-t", "=moomux-foo:", "automatic-rename", "off"},
-		{"set-option", "-t", "=moomux-foo:", "set-titles", "on"},
-		{"set-option", "-t", "=moomux-foo:", "set-titles-string", "#{window_name}"},
-		{"set-option", "-t", "=moomux-foo:", "mouse", "on"},
-		{"list-panes", "-t", "=moomux-foo:", "-F", "#{pane_id}"},
-		{"split-window", "-h", "-t", "=moomux-foo:", "-c", "/tmp/wt", "-l", "33%"},
+		{"set-window-option", "-t", "=moomux-foo:^", "automatic-rename", "off"},
+		{"set-option", "-t", "=moomux-foo:^", "set-titles", "on"},
+		{"set-option", "-t", "=moomux-foo:^", "set-titles-string", "#{window_name}"},
+		{"set-option", "-t", "=moomux-foo:^", "mouse", "on"},
+		{"list-panes", "-t", "=moomux-foo:^", "-F", "#{pane_id}"},
+		{"split-window", "-h", "-t", "=moomux-foo:^", "-c", "/tmp/wt", "-l", "33%"},
 		{"select-pane", "-t", "%3"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
@@ -291,7 +304,7 @@ func TestEnsureEnvRefreshUnsetsGlobalWhenNotSet(t *testing.T) {
 }
 
 func TestPaneCwd(t *testing.T) {
-	fr := &fakeRunner{out: map[string]string{"list-panes -t =moomux-foo: -F #{pane_current_path}": "/tmp/wt\n"}}
+	fr := &fakeRunner{out: map[string]string{"list-panes -t =moomux-foo:^ -F #{pane_current_path}": "/tmp/wt\n"}}
 	c := &Client{Runner: fr}
 	got, err := c.PaneCwd("moomux-foo")
 	if err != nil || got != "/tmp/wt" {
@@ -352,15 +365,15 @@ func TestPasteTextLoadsThenPastesExactBuffer(t *testing.T) {
 	if fr.staged != want {
 		t.Fatalf("staged content = %q, want %q", fr.staged, want)
 	}
-	if len(fr.calls) != 2 || fr.calls[0][0] != "load-buffer" {
-		t.Fatalf("calls = %v, want load-buffer then paste-buffer", fr.calls)
+	if calls := withoutAgentLookup(fr.calls); len(calls) != 2 || calls[0][0] != "load-buffer" {
+		t.Fatalf("calls = %v, want load-buffer then paste-buffer", calls)
 	}
-	// "=moomux-foo:" pins paste-buffer to an exact session match; a bare name
+	// "=moomux-foo:^" pins paste-buffer to an exact session match; a bare name
 	// falls back to prefix matching and could paste into moomux-foo-2 once
 	// moomux-foo is gone.
-	want2 := []string{"paste-buffer", "-p", "-d", "-t", "=moomux-foo:"}
-	if !reflect.DeepEqual(fr.calls[1], want2) {
-		t.Fatalf("second call = %v, want %v", fr.calls[1], want2)
+	want2 := []string{"paste-buffer", "-p", "-d", "-t", "=moomux-foo:^"}
+	if calls := withoutAgentLookup(fr.calls); !reflect.DeepEqual(calls[1], want2) {
+		t.Fatalf("second call = %v, want %v", calls[1], want2)
 	}
 	if _, err := os.ReadFile(fr.calls[0][1]); err == nil {
 		t.Fatalf("temp file %q was not cleaned up", fr.calls[0][1])
@@ -397,7 +410,7 @@ func TestBracketedPaste(t *testing.T) {
 		out  string
 		want bool
 	}{{"1\n", true}, {"0\n", false}, {"", false}} {
-		key := "display-message -p -t =moomux-foo: #{bracket_paste_flag}"
+		key := "display-message -p -t =moomux-foo:^ #{bracket_paste_flag}"
 		r := &fakeRunner{out: map[string]string{key: tc.out}}
 		c := &Client{Runner: r}
 		got, err := c.BracketedPaste("moomux-foo")
@@ -407,9 +420,40 @@ func TestBracketedPaste(t *testing.T) {
 		if got != tc.want {
 			t.Fatalf("BracketedPaste(%q) = %v, want %v", tc.out, got, tc.want)
 		}
-		want := []string{"display-message", "-p", "-t", "=moomux-foo:", "#{bracket_paste_flag}"}
-		if len(r.calls) != 1 || strings.Join(r.calls[0], " ") != strings.Join(want, " ") {
-			t.Fatalf("calls = %v, want %v", r.calls, want)
+		want := []string{"display-message", "-p", "-t", "=moomux-foo:^", "#{bracket_paste_flag}"}
+		if calls := withoutAgentLookup(r.calls); len(calls) != 1 || strings.Join(calls[0], " ") != strings.Join(want, " ") {
+			t.Fatalf("calls = %v, want %v", calls, want)
 		}
+	}
+}
+
+// A layout session's agent window is cached as a concrete window id, and
+// that window goes away when the agent exits and closes its only pane —
+// while the tmux session lives on. A stale id that is never dropped means
+// every later capture, rename and paste aims at a dead window forever.
+func TestAgentWindowIsReresolvedAfterAFailedCall(t *testing.T) {
+	lookup := "list-windows -t =moomux-a -F #{window_id} #{" + agentWindowOption + "}"
+	fr := &fakeRunner{
+		out:    map[string]string{lookup: "@7 1"},
+		failOn: map[string]bool{"capture-pane -p -t @7": true},
+	}
+	c := &Client{Runner: fr}
+	if _, err := c.CapturePane("moomux-a"); err == nil {
+		t.Fatal("want the capture against the dead window to fail")
+	}
+	// The window came back (or the mark moved); the next call must find it.
+	fr.out[lookup] = "@9 1"
+	fr.failOn = nil
+	if _, err := c.CapturePane("moomux-a"); err != nil {
+		t.Fatalf("second capture still failed: %v", err)
+	}
+	var lookups int
+	for _, call := range fr.calls {
+		if call[0] == "list-windows" {
+			lookups++
+		}
+	}
+	if lookups != 2 {
+		t.Fatalf("resolved the agent window %d times, want 2 (the stale id was kept)", lookups)
 	}
 }

@@ -3,9 +3,11 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,6 +63,9 @@ Usage:
                      While one is running, a plain 'moomux' attaches to it
                      rather than starting a second core, so the TUI and any
                      other front end (the Mac app) show the same thing.
+                     Set tailnet_listen = true in config.toml to also listen
+                     on this machine's Tailscale address, for a client that
+                     can't reach a unix socket (a phone).
   moomux ui ...     Run the TUI against a 'moomux serve' on a specific
                      socket. Run 'moomux ui -h' for its flags.
   moomux --version  Print the version.
@@ -799,7 +804,34 @@ func runServe(args []string) error {
 	}
 	defer ln.Close()
 	fmt.Fprintln(os.Stderr, "moomux: serving on", *sock)
-	return (&ipc.Server{Backend: a, Config: a.ConfigSnapshot, AgentOptions: a.AgentOptions, Source: buildSource(a, home)}).Serve(ln)
+	srv := &ipc.Server{Backend: a, Config: a.ConfigSnapshot, AgentOptions: a.AgentOptions, Source: buildSource(a, home)}
+	// The tailnet listener is a second front door onto the same handler, for
+	// clients that cannot reach a unix socket (a phone). Its absence is
+	// never fatal — no tailscale, a stopped daemon, a logged-out node — the
+	// unix socket is what local clients use either way.
+	if a.Cfg.TailnetListen {
+		tln, err := ipc.ListenTailnet(ipc.TailnetPort)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "moomux: no tailnet listener:", err)
+		} else {
+			defer tln.Close()
+			fmt.Fprintln(os.Stderr, "moomux: also serving on", tln.Addr())
+			go func() {
+				// Serve returning means nothing is accepting on this
+				// listener any more: close it, or the port stays bound and
+				// any connection already past the tailnet auth check sits
+				// on its fd until the process exits.
+				defer tln.Close()
+				// Not an error when it's the deferred Close above that
+				// ended it, which is every clean shutdown.
+				// Serve only ever returns a non-nil error.
+				if err := srv.Serve(tln); !errors.Is(err, net.ErrClosed) {
+					slog.Error("tailnet listener stopped", "err", err)
+				}
+			}()
+		}
+	}
+	return srv.Serve(ln)
 }
 
 // runRemote implements `moomux ui -socket`: the same TUI, driven entirely

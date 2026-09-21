@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +23,8 @@ import (
 // sessionview.Source, so the derived per-session state streams from the same
 // place — already joined, labelled and status-checked by the core.
 type Client struct {
+	// Socket is a unix socket path, or a host:port for the tailnet
+	// listener — see dial.
 	Socket string
 	// Timeout bounds one pull call end to end (dial, write, read) when
 	// non-zero; zero means no deadline, which is the right default for the
@@ -58,7 +62,7 @@ var (
 // ponytail: connection-per-call. Pool it if profiling ever shows the dial
 // cost mattering.
 func (c *Client) call(method string, a Args) (Result, error) {
-	conn, err := net.Dial("unix", c.Socket)
+	conn, err := c.dial()
 	if err != nil {
 		return Result{}, err
 	}
@@ -82,6 +86,33 @@ func (c *Client) call(method string, a Args) (Result, error) {
 		return res.Result, wireErr{msg: res.Err, sentinel: sentinels[res.Code]}
 	}
 	return res.Result, nil
+}
+
+// dial reaches the core. A unix socket path is the local case and the
+// default; a "host:port" is the tailnet listener, which is the only way in
+// for a client that has no filesystem in common with the core. A socket path
+// is a path, and a slash settles it before anything else is considered: a
+// host:port never contains one, while net.SplitHostPort does not validate
+// the port and will happily read "run:1/moomux.sock" as host "run". The
+// port has to parse as a number for the same reason, for the slashless
+// version of that path: a relative socket name like "moomux:1.sock" splits
+// cleanly and would be dialed as TCP host "moomux".
+//
+// Timeout bounds the connect too, and over TCP that is the difference
+// between a 3s "is moomux serve running?" and a minute of nothing: a core
+// that is asleep or off the tailnet black-holes the SYN, and a bare
+// net.Dial sits on the OS connect timeout (~75s on macOS) before the
+// deadline in call() has anything to apply to.
+func (c *Client) dial() (net.Conn, error) {
+	d := net.Dialer{Timeout: c.Timeout}
+	if !strings.ContainsRune(c.Socket, '/') {
+		if _, port, err := net.SplitHostPort(c.Socket); err == nil {
+			if _, err := strconv.Atoi(port); err == nil {
+				return d.Dial("tcp", c.Socket)
+			}
+		}
+	}
+	return d.Dial("unix", c.Socket)
 }
 
 // mut wraps the calls that change server-side config. The server attaches
@@ -242,6 +273,24 @@ func (c *Client) ChangeSummary(id string) (filesChanged, unpushedCommits int, ok
 		return 0, 0, false
 	}
 	return r.Files, r.Commits, r.OK
+}
+
+// Capture returns each session's pane text, keyed by session id. A failed
+// call is an empty map, not nil-with-error, for the same reason the core
+// drops uncapturable ids: the caller redraws a grid from it.
+func (c *Client) Capture(ids []string) map[string]string {
+	r, err := c.call("Capture", Args{IDs: ids})
+	// Screens is omitempty, so a successful call that captured nothing
+	// decodes to nil — which a caller merging into the result writes to.
+	if err != nil || r.Screens == nil {
+		return map[string]string{}
+	}
+	return r.Screens
+}
+
+func (c *Client) Review(id string) (string, error) {
+	r, err := c.call("Review", Args{ID: id})
+	return r.Hint, err
 }
 
 func (c *Client) SetSessionTags(id, ticket, pr string) (session.Session, error) {
@@ -415,7 +464,7 @@ func (c *Client) Run(ctx context.Context, out chan<- sessionview.Snapshot) {
 // whether any snapshot arrived, so Run can tell a healthy connection that
 // dropped from one that never worked.
 func (c *Client) stream(ctx context.Context, out chan<- sessionview.Snapshot) (got bool, err error) {
-	conn, err := net.Dial("unix", c.Socket)
+	conn, err := c.dial()
 	if err != nil {
 		return false, err
 	}

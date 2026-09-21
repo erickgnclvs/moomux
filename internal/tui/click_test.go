@@ -265,6 +265,9 @@ func (f *fakeBackend) PRStatus(id string) (prstatus.Info, bool) {
 	st, present := f.prStatus[id]
 	return st, present
 }
+func (f *fakeBackend) Capture([]string) map[string]string { return nil }
+func (f *fakeBackend) Review(string) (string, error)      { return "", nil }
+
 func (f *fakeBackend) KillTmux(id string) error {
 	f.killCalls = append(f.killCalls, id)
 	return nil

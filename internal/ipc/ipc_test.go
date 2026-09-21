@@ -80,7 +80,15 @@ func (f *fakeBackend) EnsureTmux(id string) (string, error)  { return "ensured "
 func (f *fakeBackend) DeleteSession(id string) (string, error) {
 	return "", errors.New("worktree dirty")
 }
-func (f *fakeBackend) KillTmux(string) error                    { return nil }
+func (f *fakeBackend) KillTmux(string) error { return nil }
+func (f *fakeBackend) Capture(ids []string) map[string]string {
+	out := map[string]string{}
+	for _, id := range ids {
+		out[id] = "screen of " + id
+	}
+	return out
+}
+func (f *fakeBackend) Review(id string) (string, error)         { return "reviewing " + id, nil }
 func (f *fakeBackend) WorktreeStatus(string) (bool, bool, bool) { return true, false, true }
 func (f *fakeBackend) ChangeSummary(string) (int, int, bool)    { return 7, 3, true }
 func (f *fakeBackend) PRStatus(string) (prstatus.Info, bool) {
@@ -774,6 +782,33 @@ func TestWatchNudgeReachesSource(t *testing.T) {
 	t.Fatal("nudge never reached the source")
 }
 
+// A client is free to write its Watch request and a nudge in one packet,
+// and a decoder that stops at the request's closing brace has the rest in
+// its buffer. Handing stream the bare connection loses it — the nudge at
+// best, and at worst half a JSON value, which fails the next decode and
+// tears the whole snapshot stream down.
+func TestWatchNudgeInTheSamePacketAsTheRequest(t *testing.T) {
+	w := &fakeWatcher{snaps: []sessionview.Snapshot{{Views: view("moomux:a", watcher.Working), PollTime: time.Now()}}}
+	c, _ := start(t, &fakeBackend{}, &config.Config{}, w)
+
+	conn, err := net.Dial("unix", c.Socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte(`{"method":"Watch"}` + "\n" + `{"nudge":true}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if w.nudges.Load() > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("nudge sent alongside the request never reached the source")
+}
+
 // TestMoveSessionCompatShim: the macOS app lives in another repo with no CI
 // link back here and still sends MoveSession, so removing the method in
 // favour of ReorderSessions would break its reordering silently at runtime
@@ -934,5 +969,25 @@ func TestConfigServesEffectiveProjectEmoji(t *testing.T) {
 	}
 	if e := r.Cfg.Projects["derived"].Emoji; e != "" {
 		t.Errorf("Projects[derived].Emoji = %q, want empty — derived glyph must not become an explicit choice", e)
+	}
+}
+
+// TestClientTimeoutBoundsDial pins the connect half of Client.Timeout. The
+// deadline call() sets needs a connection to set it on, so a bare net.Dial
+// to a core that is asleep or off the tailnet sits on the OS connect
+// timeout (~75s on macOS) with nothing bounding it. 203.0.113.0/24 is
+// TEST-NET-3: routed nowhere, so the SYN is dropped rather than refused.
+func TestClientTimeoutBoundsDial(t *testing.T) {
+	t.Parallel()
+	c := &Client{Socket: "203.0.113.1:45876", Timeout: 150 * time.Millisecond}
+	done := make(chan error, 1)
+	go func() { done <- c.err0("Sessions", Args{}) }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("dialing a black-holed address succeeded")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("dial ignored Client.Timeout")
 	}
 }

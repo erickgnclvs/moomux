@@ -36,10 +36,48 @@ Two consequences worth knowing:
 - The one-time first-run prompts (tmux.conf setup, auto-tmux) write
   `config.toml` directly, so they only run on the path that owns the core.
 
-## The two channels
+## Where the core listens
 
-Everything moomux serves goes over one of two paths, and which one it uses is
-the most important thing to understand about the protocol.
+The unix socket is the transport for everything local, and it is unchanged:
+`~/.local/share/moomux/moomux.sock`, mode 0600, which is the whole of its
+access control — anyone who can dial it can call `CreateSession`, which runs
+the worktree-create userscripts and can launch an agent with its
+permission-skipping flag.
+
+A phone cannot dial a unix socket. So `moomux serve` optionally binds a
+**second listener on this machine's Tailscale address**, feeding the same
+handler. Two listeners, one `Server`; `Serve` has always taken a
+`net.Listener`.
+
+- **Off by default**, behind `tailnet_listen` in `config.toml`. Deliberately
+  not settable over the wire: turning it on exposes the create path to the
+  tailnet, so it is a decision made at the machine, not from a client.
+- **Never `0.0.0.0`.** It binds the tailnet address specifically, on
+  `ipc.TailnetPort`.
+- **Authorization is `tailscale whois`.** WireGuard already gives encryption
+  and machine identity, so there is no TLS, no pairing flow and no token
+  store to design — but every node on the tailnet can reach the bind, which
+  is not the same as being allowed to. Each accepted connection's peer
+  address (from the socket, not from anything the peer said) is resolved to a
+  tailnet user and matched against this node's own; anything else is closed.
+  Authorized peers are cached for a minute, because the protocol is
+  connection-per-call and the check is a subprocess. It runs per connection
+  off the accept path, never inside `Accept`: inline, one wedged
+  `tailscaled` would stall every other connection behind it.
+- **Failing to bind is never fatal.** No tailscale on the machine, a stopped
+  daemon, a logged-out node: serve logs it and carries on with the unix
+  socket, which is what local clients use either way.
+
+Deliberately not `tsnet`. Becoming a tailnet node of its own is the more
+correct answer — it never touches the host's network stack, so there is no
+way to fat-finger a bind onto the LAN — but it pulls the whole
+`tailscale.com` module into a `go.mod` with ten direct requirements. Revisit
+if binding proves fragile when the interface is down. Funnel stays off.
+
+## The three channels
+
+Everything moomux serves goes over one of three paths, and which one it uses
+is the most important thing to understand about the protocol.
 
 **Pull — one request, one response, connection closes.** Used for the things
 a person *does*: create a session, rename one, add a project, change the
@@ -49,6 +87,11 @@ theme. 36 methods, dispatched by name.
 what every session is doing, what its worktree looks like, what order to show
 them in. Opened with `{"method": "Watch"}`, then one
 `sessionview.Snapshot` per line until the client hangs up.
+
+**Raw — the `Attach` pty.** Used for the one thing that is neither state nor
+an action: a live terminal. One request line in, one response line back, and
+from there the connection *is* the pty — bytes both ways, no framing, until
+somebody closes it. See "Attach" below.
 
 A front end reads state off the stream and never polls for it. Rendering
 makes zero requests.
@@ -221,6 +264,13 @@ anything.
 union each beats 36 pairs of structs at this size; split them if the surface
 doubles, or if two methods ever want the same field to mean different things.
 
+One quirk to know before writing a decoder: **`args.req` is the only part of
+the wire that isn't snake_case.** `session.CreateRequest` carries no `json`
+tags at all, so it encodes with Go's field names — `{"Project": "moomux",
+"Name": "a", "OpenTerminal": true}` — while every other struct here is
+tagged. It is not worth changing: the tags would have to land in the same
+release as the Swift side's, and nothing else reads the shape.
+
 `code` names a sentinel error the client branches on, since `errors.Is` can't
 survive a string round trip. Only sentinels a front end actually tests for
 need one; today that's `not_git_repo`, which drives the "init it here / add
@@ -229,10 +279,153 @@ as plain folder" dialog.
 ### Methods
 
 **Read** — `Config`, `Sessions`, `AgentOptions`, `Themes`, `SuggestedProject`,
-`WorktreeStatus`, `ChangeSummary`.
+`WorktreeStatus`, `ChangeSummary`, `Capture`.
 
 **Session lifecycle** — `CreateSession`, `EnsureTmux`, `DeleteSession`,
-`KillTmux` (park).
+`KillTmux` (park), `Review`.
+
+`Attach` is a method name too, but it is not on this channel — see below.
+
+### `Capture` and `Review`: two holes that used to be shelled out
+
+Both of these were the Mac app running `tmux` itself, which is legal for an
+app on the same machine as the core and impossible for one that isn't. They
+are core methods now, so every front end gets them.
+
+`Capture` takes `args.ids` and answers `result.screens`: session id to the
+visible text of the active pane of the session's **agent** window — the one
+the agent runs in, not whichever window is current, which `Review` below
+changes, and not necessarily the first, which a layout session's agent leaf
+often isn't (tmux marks it with a `@moomux_agent` window option). The id mapping is the point — a
+client asks about sessions and never needs to know what moomux called the
+tmux session. An id that could not be captured (unknown, or its tmux died
+between the poll and the capture) is **absent** rather than empty, because a
+caller polling this on a timer to redraw a grid must not read a failure as
+"the pane is blank" and wipe what it last drew. The whole set is one tmux
+invocation with the captures joined by `;`, which matters: the grid polls
+every live session every few seconds, and a process per session per tick was
+the entire expense of that design.
+
+Callers send the whole set in one request rather than looping — a grid asks
+for **every live session, uncapped** (thirty is routine), and the batch costs
+one tmux process whichever way. The rows come back unsplit: truncating them
+to a tile's width is a rendering decision and belongs to the client.
+
+`Review` takes `args.id` and opens (or reuses) a tmux window named `review`
+in that session, running `git diff --merge-base <base>` plus `git status
+--short --branch`. It returns a `hint`. A tmux window and not a patch the
+client renders: the output reaches a real tty, so git colours and pages it
+with the user's own pager — a configured `delta` is honoured — and the window
+is somewhere to run `git add -p` from afterwards. The base is the session's
+own `base_branch`, falling back to the project's, falling back to `main`.
+Reuse is `respawn-window -k` then `select-window`, with `new-window` only
+when there was nothing to reuse: killing the last window of a session kills
+the session. Because it selects that window, everything else the core does
+to a session — capture, the status-title rename, sending keys — addresses
+the session's first window explicitly rather than its current one.
+
+### `Attach`: the connection becomes the pty
+
+```jsonc
+// request — cols/rows are the initial terminal size
+{"method": "Attach", "args": {"id": "moomux:a", "cols": 100, "rows": 40}}
+
+// response, and the last JSON on this connection
+{"result": {"ok": true}}
+
+// ...everything after this line is raw pty bytes, both directions, forever
+```
+
+The core revives the session (`EnsureTmux`, so attaching to a parked one
+works and its tmux name is read *after* any migration), allocates a pty, runs
+`tmux attach` on it, and copies both ways. **Closing the socket is the
+detach** — there is nothing else to send, and tmux loses the client without
+losing the session.
+
+No framing, no length prefixes, no multiplexing: a second thing to say means
+a second connection. That is deliberate, and it is what makes a phone's
+terminal a `receive`/`write` pair of closures over a socket rather than a
+protocol to implement.
+
+### What terminates a request
+
+Worth stating plainly, because getting it wrong is silent and total.
+
+**A request ends when its JSON value is complete.** The core parses with a
+streaming decoder, so it needs *neither* a trailing newline *nor* an EOF. A
+client may write its request and then read the reply on the same connection
+without half-closing — which is the obvious way to write one — and that
+works on every method.
+
+This is not a free choice. An earlier build of the attach work read the
+request as a line instead, and that broke every pull method for exactly such
+a client: no error, no refusal, just nothing, on all of them at once, with
+`nc` still working because `nc`'s stdin ends and half-closes. Same methods,
+same args, same results, no version to notice it by. Don't reintroduce it.
+
+Sending a newline is still the convention and costs nothing — `Watch` and
+`Attach` both keep writing on the connection after the request, so neither
+can ever half-close, and a terminator is how a reader on the other side
+knows the line is done without waiting.
+
+**The response side is the mirror, and the newline that ends it is
+consumed.** This is the sharp edge of the whole design and it cuts both
+ways. A JSON decoder reads a *value*, leaving the terminating newline — and
+however much of the next thing arrived in the same packet — stranded in a
+buffer the raw reader never sees. On the server that stray newline is an
+Enter keypress typed into the agent's pane on every attach; on the client it
+is a hole in the middle of tmux's first screen draw. So: read to the first
+`\n`, parse that, and treat the very next byte as the pty. Both regression
+tests exist (`TestAttachKeepsEveryByteWrittenBehindTheResponseLine`, and the
+pane-line check in the e2e attach test). On the core's side that means the
+request's terminator is stripped from the pty's input — one `\n` or `\r\n`,
+never a bare `\r`, since an encoder writes `\n` while a terminal sends CR
+for Return.
+
+An error is only expressible *before* the switch to raw mode, so a failure
+(unknown session, a session with no tmux name, a pty that wouldn't allocate)
+arrives as an ordinary `{"err": ...}` line and the connection closes. After
+`{"ok": true}` there is nowhere to put one.
+
+Resize is the initial size and nothing more: `cols`/`rows` reach
+`pty.Setsize` at start, and a client that changes size mid-attach detaches
+and reattaches. A control connection or an in-band escape is the upgrade if
+that ever grates. A missing or nonsensical size becomes 80x24 — never 0,
+which makes tmux draw nothing at all and reads as a hung connection.
+
+`TERM` is fixed at `xterm-256color` on the pty. The terminfo entry has to
+exist on the *core's* machine, which is the reason not to take the client's
+word for it.
+
+### Every tmux client shares one window size — and we leave it alone
+
+Worth writing down because it looks like a bug and it is not, and because
+the obvious fix is worse than the problem.
+
+A phone attaching to a session someone is working in resizes that session's
+window for *everyone*, because tmux gives a window one size shared by every
+attached client. Measured on tmux 3.7c with real 200x50 and 80x24 clients:
+under tmux's default `window-size latest` the window follows whoever acted
+most recently, so the phone attaching drops the desktop to 80x23 — and the
+desktop's **next keystroke springs it straight back** to 200x49. It is
+transient, not sticky until detach.
+
+`window-size largest` would pin the window to the biggest client and spare
+the desktop entirely. moomux deliberately does **not** set it: the desktop's
+letterboxing self-heals on the next keypress, while `largest` would hand the
+phone a 200-column window cropped to its ~50, to be panned and pinch-zoomed
+one line at a time. The cost lands on the client least able to absorb it, to
+fix something that already fixes itself.
+
+Two details for anyone revisiting this. It only differs with **two clients
+attached at once** — a detached session keeps its size under either setting,
+and a single client is followed under either. And `window-size` is a
+*window* option that a new window does not inherit, so setting it would mean
+re-asserting it at every session and window moomux creates, not once.
+
+What does not spring back: output already emitted into a plain shell pane
+stays hard-wrapped at the narrow width. A full-screen TUI (the agent pane)
+redraws on SIGWINCH and recovers completely.
 
 ### The core never opens a terminal
 
@@ -541,6 +734,10 @@ nil. What changed:
 | `OpenSession` (the core spawns a terminal for "Open in terminal") | **removed** — the app opens its own; see "The core never opens a terminal" |
 | `session.Session.term_tab_id` | **removed** — never decoded on the Swift side, and nothing stores a tab handle now |
 | a client had no way to know a project's fallback emoji | `Result.project_emoji` — additive, so an older client is unaffected |
+| `tmux capture-pane` run by the app, per session, every 5s | `Capture` — `args.ids` in, `result.screens` keyed by **session id** out, one tmux invocation for the set |
+| `tmux new-window`/`respawn-window` run by the app | `Review` — `args.id` in, a `hint` out |
+| `tmux attach` via libghostty's `.exec` backend | `Attach` — the connection becomes the pty; there is no local process |
+| the unix socket was the only listener | plus an optional tailnet listener, `tailnet_listen` in `config.toml` |
 
 A version handshake would be cheap insurance against the next one; there
 isn't one today.
