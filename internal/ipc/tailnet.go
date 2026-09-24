@@ -289,10 +289,35 @@ func tailscaleLogin(addr string) (string, error) {
 	return who.UserProfile.LoginName, nil
 }
 
+// tailscaleCandidates are tried in order when `tailscale` isn't on PATH. The
+// Homebrew service's launchd plist sets a PATH of only /opt/homebrew and the
+// system dirs, while Tailscale's macOS app puts its CLI shim in /usr/local/bin
+// or leaves it inside the bundle — so a core started that way never found it.
+var tailscaleCandidates = []string{
+	"/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+	"/usr/local/bin/tailscale",
+	"/opt/homebrew/bin/tailscale",
+}
+
+// tailscaleBin resolves the CLI once. With nothing found it returns the bare
+// name, so the exec error still reads "not found in $PATH".
+var tailscaleBin = sync.OnceValue(func() string { return findTailscale(tailscaleCandidates) })
+
+// findTailscale returns the first of PATH's `tailscale` and candidates that
+// exists and is executable. LookPath on an absolute path does that check.
+func findTailscale(candidates []string) string {
+	for _, name := range append([]string{"tailscale"}, candidates...) {
+		if p, err := exec.LookPath(name); err == nil {
+			return p
+		}
+	}
+	return "tailscale"
+}
+
 func tailscaleRun(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tailscaleTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "tailscale", args...).Output()
+	out, err := exec.CommandContext(ctx, tailscaleBin(), args...).Output()
 	if err != nil {
 		return "", err
 	}
