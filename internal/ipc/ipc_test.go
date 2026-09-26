@@ -1,6 +1,7 @@
 package ipc
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -308,6 +310,48 @@ func TestRoundTrip(t *testing.T) {
 		}
 		if !reflect.DeepEqual(got, config.Themes()) {
 			t.Fatalf("Themes() = %+v, want %+v", got, config.Themes())
+		}
+	})
+
+	t.Run("a saved file lands whole, under a name that needs no quoting", func(t *testing.T) {
+		data := []byte{0, 1, 2, 0xff}
+		path, err := c.SaveFile("../my shot $(x).png", data)
+		if err != nil {
+			t.Fatalf("SaveFile: %v", err)
+		}
+		t.Cleanup(func() { os.Remove(path) })
+		if got, _ := os.ReadFile(path); !bytes.Equal(got, data) {
+			t.Fatalf("SaveFile wrote %v, want %v", got, data)
+		}
+		base := filepath.Base(path)
+		if filepath.Dir(path) != filepath.Join(os.TempDir(), "moomux-images") ||
+			!strings.HasSuffix(base, "-my-shot---x-.png") || strings.ContainsAny(base, " $()/") {
+			t.Fatalf("SaveFile path = %q", path)
+		}
+		if _, err := c.SaveFile("x", nil); err == nil {
+			t.Fatal("SaveFile accepted an empty file")
+		}
+		again, err := c.SaveFile("../my shot $(x).png", data)
+		if err != nil || again == path {
+			t.Fatalf("a second upload of the same name got %q (%v), first was %q", again, err, path)
+		}
+		t.Cleanup(func() { os.Remove(again) })
+		long, err := c.SaveFile(strings.Repeat("a", 300)+".png", data)
+		if err != nil {
+			t.Fatalf("SaveFile with a long name: %v", err)
+		}
+		t.Cleanup(func() { os.Remove(long) })
+		if b := filepath.Base(long); len(b) > 12+maxSaveName || !strings.HasSuffix(b, "a.png") {
+			t.Fatalf("long name saved as %q", b)
+		}
+		if _, err := c.SaveFile("big.bin", make([]byte, maxSaveFile+1)); err == nil ||
+			!strings.Contains(err.Error(), "limit") {
+			t.Fatalf("SaveFile over the cap: %v", err)
+		}
+		// Past the request limit the server stops reading, so the client may
+		// see the refusal or a broken pipe; either way it must not succeed.
+		if _, err := c.SaveFile(strings.Repeat("a", maxRequest), data); err == nil {
+			t.Fatal("a request over maxRequest was accepted")
 		}
 	})
 

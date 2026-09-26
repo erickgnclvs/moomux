@@ -210,6 +210,13 @@ func (c *Client) Themes() ([]config.Theme, error) {
 	return r.Themes, nil
 }
 
+// SaveFile uploads a file to the server's machine and returns the path it
+// was written to — how a remote front end puts a local file in a prompt.
+func (c *Client) SaveFile(name string, data []byte) (string, error) {
+	r, err := c.call("SaveFile", Args{Name: name, Data: data})
+	return r.Path, err
+}
+
 func (c *Client) Sessions() []session.Session {
 	r, err := c.call("Sessions", Args{})
 	c.mu.Lock()

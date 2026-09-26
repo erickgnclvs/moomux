@@ -95,6 +95,9 @@ type Args struct {
 	Dangerous *bool          `json:"dangerous,omitempty"`
 	On        bool           `json:"on,omitempty"` // archived / recentFirst / compact / autoTmux
 	Proj      config.Project `json:"proj"`
+	// Data is SaveFile's contents, base64 on the wire (encoding/json's
+	// []byte); Name carries the file's original name.
+	Data []byte `json:"data,omitempty"`
 }
 
 // Result is the matching union of every return shape. Same trade as Args.
@@ -122,6 +125,9 @@ type Result struct {
 	Screens map[string]string `json:"screens,omitempty"`
 	Files   int               `json:"files,omitempty"`
 	Commits int               `json:"commits,omitempty"`
+	// Path is SaveFile's answer: where the file now lives on the core's
+	// machine, ready to drop into a prompt.
+	Path string `json:"path,omitempty"`
 }
 
 // nudgeRequest is the only thing a client sends on a live "Watch"
