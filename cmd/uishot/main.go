@@ -62,6 +62,9 @@ var screens = map[string][]string{
 	// One more tab lands on the thinking row, whose hint for antigravity says
 	// the effort flag only applies to model "default" — see newFormFieldHint.
 	"new-session-thinking-antigravity": {"n", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "right", "right", "tab", "tab"},
+	// "left" from the sample project's codex is claude; two tabs land on its
+	// thinking row — Claude Code's --effort levels, and a hint saying so.
+	"new-session-thinking-claude": {"n", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "left", "tab", "tab"},
 	// Named model *and* a thinking level: the model row warns that the level
 	// is about to be dropped, which the thinking row's own hint can't say to
 	// someone who set the level first — see newFormAgyEffortDropped.

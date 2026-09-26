@@ -22,7 +22,7 @@ import (
 // would serve in production, kept in lockstep with it by
 // TestAgentOptionsMatchesTUIFixture in agent_options_test.go.
 var testAgentOptions = []config.AgentOption{
-	{Name: "claude", Models: []string{"default", "sonnet", "opus", "fable"}, Thinking: []string{"default", "think", "think hard", "think harder", "ultrathink"}},
+	{Name: "claude", Models: []string{"default", "sonnet", "opus", "fable"}, Thinking: []string{"default", "low", "medium", "high", "xhigh", "max"}},
 	{Name: "codex", Models: []string{"default", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}, Thinking: []string{"default", "minimal", "low", "medium", "high", "xhigh"}},
 	{Name: "opencode", Thinking: []string{"default", "think", "think hard", "think harder", "ultrathink"}},
 	{Name: "antigravity", Models: []string{"default", "Gemini 3.8 Flash (High)", "Gemini 3.8 Flash (Medium)", "Gemini 3.8 Flash (Low)", "Gemini 3.1 Pro (High)", "Gemini 3.1 Pro (Low)"}, Thinking: []string{"default", "low", "medium", "high"}},

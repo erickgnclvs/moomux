@@ -2,7 +2,7 @@
 ╭──────────────────────────────────────╮
 │                                      │
 │                                      │
-│  agent:  ‹ [antigravity] ›           │
+│  agent:  ‹ [claude] ›                │
 │                                      │
 │  model:  ‹ [default] ›               │
 │                                      │
@@ -14,8 +14,8 @@
 │                                      │
 │  auto-submit:  [off]                 │
 │                                      │
-│  only with model "default" — agy     │
-│  models bake in their effort         │
+│  optional — claude --effort level;   │
+│  "default" omits it                  │
 │  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
@@ -36,11 +36,11 @@
            │                                                                            │           
            │  > PR url (optional)                                                       │           
            │                                                                            │           
-           │  agent:  claude  codex  opencode  [antigravity]                            │           
+           │  agent:  [claude]  codex  opencode  antigravity                            │           
            │                                                                            │           
-           │  model:  ‹ [default] ›                                                     │           
+           │  model:  [default]  sonnet  opus  fable                                    │           
            │                                                                            │           
-           │  thinking:  [default]  low  medium  high                                   │           
+           │  thinking:  [default]  low  medium  high  xhigh  max                       │           
            │                                                                            │           
            │  dangerous:  [off]                                                         │           
            │                                                                            │           
@@ -48,7 +48,7 @@
            │                                                                            │           
            │  auto-submit:  [off]                                                       │           
            │                                                                            │           
-           │  only with model "default" — agy models bake in their effort               │           
+           │  optional — claude --effort level; "default" omits it                      │           
            │  tab/↑↓ fields  ←→ choose  enter  esc cancel                               │           
            │                                                                            │           
            ╰────────────────────────────────────────────────────────────────────────────╯           

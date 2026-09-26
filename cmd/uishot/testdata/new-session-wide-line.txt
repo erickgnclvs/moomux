@@ -16,7 +16,7 @@
 │                                      │
 │  only used for a new branch — blank  │
 │  uses the project's base branch      │
-│  tab/↑↓ fields  ←→ choose  enter  e  │
+│  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
 === 100x32 ===

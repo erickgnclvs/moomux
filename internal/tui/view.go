@@ -109,10 +109,15 @@ func lastLines(s string, n int) string {
 }
 
 func (m *Model) formFooter(hint, controls, errText string) string {
-	if m.overlayWidth(formHintWidth) < 28 {
-		// Put escape first when there is not enough width for descriptive
-		// controls so the essential way out is never the truncated portion.
-		controls = "esc  tab/↑↓  enter"
+	// Shorter presets whenever the full line doesn't fit, not below one fixed
+	// breakpoint: every form's controls differ in length, and a 40-column
+	// terminal clipped them all mid-word. Escape leads the short ones so the
+	// essential way out is never the truncated portion.
+	for _, short := range []string{"esc cancel  tab/↑↓  enter", "esc  tab/↑↓  enter"} {
+		if lipgloss.Width(controls) <= m.overlayWidth(formHintWidth) {
+			break
+		}
+		controls = short
 	}
 	hint = strings.TrimRight(m.renderFormHint(hint), "\n")
 	var rows []string

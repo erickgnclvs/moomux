@@ -15,7 +15,7 @@
 │                                      │
 │  repo path used by new sessions —    │
 │  existing worktrees stay put         │
-│  tab/↑↓  ←→ change  enter save  esc  │
+│  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
                                         

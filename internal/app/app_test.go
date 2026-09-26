@@ -768,9 +768,9 @@ func TestCreateSessionModelAppendsFlag(t *testing.T) {
 
 // TestCreateSessionThinkingAppendsCodexFlag guards reasoningEffortFlag: a
 // chosen thinking level is a real -c model_reasoning_effort flag for codex,
-// --effort for antigravity, "default"/empty omits it, and claude/opencode never
-// get the flag at all (they have no such launch-time flag — see
-// thinkingPromptPrefix in internal/tui instead).
+// --effort for claude and antigravity, "default"/empty omits it, and opencode
+// never gets a flag at all (it has no such launch-time flag — FirstPrompt
+// prefixes the prompt instead).
 func TestCreateSessionThinkingAppendsCodexFlag(t *testing.T) {
 	cases := []struct {
 		agent    string
@@ -783,7 +783,8 @@ func TestCreateSessionThinkingAppendsCodexFlag(t *testing.T) {
 		{"antigravity", "high", "agy --effort high"},
 		{"antigravity", "default", "agy"},
 		{"antigravity", "", "agy"},
-		{"claude", "high", "claude"},
+		{"claude", "max", "claude --effort max"},
+		{"claude", "default", "claude"},
 		{"opencode", "high", "opencode --port 4096"},
 	}
 	for _, tc := range cases {
@@ -3158,7 +3159,7 @@ func TestFirstPromptComposition(t *testing.T) {
 		want string
 	}{
 		{"no prompt means nothing is typed",
-			session.CreateRequest{Agent: "claude", Thinking: "ultrathink", Ticket: "https://t/1"},
+			session.CreateRequest{Agent: "claude", Thinking: "max", Ticket: "https://t/1"},
 			""},
 		{"plain prompt passes through",
 			session.CreateRequest{Agent: "claude", Prompt: "do it"},
@@ -3166,12 +3167,12 @@ func TestFirstPromptComposition(t *testing.T) {
 		{"default thinking adds nothing",
 			session.CreateRequest{Agent: "claude", Prompt: "do it", Thinking: "default"},
 			"do it"},
-		{"claude gets the magic word, having no flag for it",
-			session.CreateRequest{Agent: "claude", Prompt: "do it", Thinking: "ultrathink"},
-			"ultrathink: do it"},
-		{"opencode likewise",
+		{"opencode gets the magic word, having no flag for it",
 			session.CreateRequest{Agent: "opencode", Prompt: "do it", Thinking: "think hard"},
 			"think hard: do it"},
+		{"claude does not: it got --effort on its launch command",
+			session.CreateRequest{Agent: "claude", Prompt: "do it", Thinking: "max"},
+			"do it"},
 		{"codex does not: it got -c model_reasoning_effort on its launch command",
 			session.CreateRequest{Agent: "codex", Prompt: "do it", Thinking: "high"},
 			"do it"},
@@ -3182,7 +3183,7 @@ func TestFirstPromptComposition(t *testing.T) {
 			session.CreateRequest{Agent: "claude", Prompt: "do it", PR: "https://p/2"},
 			"do it\n\nPR: https://p/2"},
 		{"prefix and context together",
-			session.CreateRequest{Agent: "claude", Prompt: "do it", Thinking: "think", Ticket: "https://t/1"},
+			session.CreateRequest{Agent: "opencode", Prompt: "do it", Thinking: "think", Ticket: "https://t/1"},
 			"think: do it\n\nTicket: https://t/1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -3210,13 +3211,15 @@ func TestCreateSessionRunsTheWholeTransaction(t *testing.T) {
 	s, hint, err := a.CreateSession(session.CreateRequest{
 		Project: "demo", Name: "feat", Agent: "claude",
 		Ticket: "https://t/1", PR: "https://p/2",
-		Thinking: "ultrathink", Prompt: "do it", AutoSubmit: true,
+		Thinking: "max", Prompt: "do it", AutoSubmit: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateSession: %v (hint %q)", err, hint)
 	}
 
-	want := "ultrathink: do it\n\nTicket: https://t/1\nPR: https://p/2"
+	// claude's level went onto its launch command as --effort, so the
+	// prompt carries none.
+	want := "do it\n\nTicket: https://t/1\nPR: https://p/2"
 	if s.PR != "https://p/2" || s.Ticket != "https://t/1" {
 		t.Errorf("tags not attached: %+v", s)
 	}
@@ -3675,6 +3678,8 @@ func TestModelFlagQuotesForTheShell(t *testing.T) {
 	for _, tc := range []struct{ agent, thinking, want string }{
 		{"antigravity", "high", "--effort high"},
 		{"antigravity", "high; rm -rf /", `--effort 'high; rm -rf /'`},
+		{"claude", "xhigh", "--effort xhigh"},
+		{"claude", "max; id", `--effort 'max; id'`},
 		// codex keeps TOML quotes around the value for its own -c parser,
 		// and the whole token is shell-quoted so `id` and $HOME stay literal
 		// — %q alone left both live in the pane's shell.

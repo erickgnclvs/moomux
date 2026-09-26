@@ -164,7 +164,7 @@ var newFormFieldHints = []string{
 	6:  "optional — shown as a clickable PR icon next to the session",
 	7:  "which agent CLI runs in the session's pane — ←→ to choose",
 	8:  "optional — passed as --model to the agent; \"default\" omits the flag",
-	9:  "optional — prepended to the first prompt (e.g. \"ultrathink: ...\"); no effect without a prompt",
+	9:  "optional — prepended to the first prompt (e.g. \"think hard: ...\"); no effect without a prompt",
 	10: "on: skips permission prompts (--dangerously-skip-permissions / --yolo); no effect for opencode",
 	11: "on: starts the session in the background, no terminal window",
 	12: "on: presses enter after typing the first prompt so the agent starts right away; off: leaves it typed for you to review first",
@@ -304,9 +304,9 @@ func (m *Model) renderNewFormModelSelector() string {
 
 // newFormFieldHint returns the footer hint for the currently focused
 // new-form field. It's newFormFieldHints[m.newFormFocus] for every row
-// except the thinking selector, which reads differently for codex (a real
-// -c model_reasoning_effort flag) than for claude/opencode (a phrase
-// prepended to the first prompt).
+// except the thinking selector, which reads differently for codex and claude
+// (a real launch flag) than for opencode (a phrase prepended to the first
+// prompt).
 func (m *Model) newFormFieldHint() string {
 	agent := ""
 	if m.newFormAgentIdx >= 0 {
@@ -317,6 +317,8 @@ func (m *Model) newFormFieldHint() string {
 		switch agent {
 		case "codex":
 			return "optional — passed to codex as -c model_reasoning_effort; \"default\" omits it"
+		case "claude":
+			return "optional — claude --effort level; \"default\" omits it"
 		case "antigravity":
 			// agy refuses --effort alongside --model, and every named model
 			// already carries its own effort — so this only reaches the
