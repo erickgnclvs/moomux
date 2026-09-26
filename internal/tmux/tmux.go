@@ -469,6 +469,17 @@ func (c *Client) PaneCwd(name string) (string, error) {
 	return lines[0], nil
 }
 
+// ActivePaneCwd returns the current working directory of the pane tmux has
+// active in session `name` — its current window's active pane. Not
+// PaneCwd's agent pane: this answers for whatever a client attached to the
+// session is looking at, which is where a path someone taps was printed.
+// The trailing ":" marks "=name" as a session, and a session target picks
+// its current window's active pane.
+func (c *Client) ActivePaneCwd(name string) (string, error) {
+	out, err := c.Runner.Run("display-message", "-p", "-t", Exact(name)+":", "#{pane_current_path}")
+	return strings.TrimSpace(out), err
+}
+
 // CapturePane returns the visible text of session `name`'s active pane, used
 // to detect when an agent CLI has finished its startup render and is idle
 // waiting for input (see App.StartFirstPrompt).

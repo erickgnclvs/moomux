@@ -131,7 +131,8 @@ type Result struct {
 	Commits int               `json:"commits,omitempty"`
 	// Path is SaveFile's answer: where the file now lives on the core's
 	// machine, ready to drop into a prompt. For ReadFile, the resolved
-	// absolute path that Data was read from.
+	// absolute path that Data was read from; for ResolveFile, that path
+	// alone.
 	Path string `json:"path,omitempty"`
 	// Data is ReadFile's file contents, base64 on the wire like Args.Data.
 	Data []byte `json:"data,omitempty"`

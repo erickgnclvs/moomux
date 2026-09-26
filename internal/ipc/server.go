@@ -45,10 +45,11 @@ type Server struct {
 	// labels, quips, git/PR status, recovered prompts — computed once here
 	// rather than by each client. Optional; powers the "Watch" stream.
 	Source sessionview.Source
-	// PaneCwd answers the current directory of a tmux session's agent pane,
-	// which ReadFile resolves a relative path against first. Optional;
-	// without it paths resolve against the worktree. tmux.Client.PaneCwd
-	// satisfies this.
+	// PaneCwd answers the current directory of a tmux session's active pane
+	// — the one an attached client is showing, where a tapped path was
+	// printed — which ReadFile resolves a relative path against first.
+	// Optional; without it paths resolve against the worktree.
+	// tmux.Client.ActivePaneCwd satisfies this.
 	PaneCwd func(tmuxSession string) (string, error)
 
 	// subMu guards the fan-out below. Source.Run is started once, on the
@@ -315,10 +316,10 @@ func stripLocation(path string) string {
 	return path
 }
 
-// readFile is SaveFile's mirror: the bytes of a file a path in a session's
-// pane names, for a front end that cannot read this machine's disk (a phone
-// showing a tapped path in Quick Look). It answers the resolved absolute
-// path and the contents.
+// resolveFile turns a path as tapped in a session's pane into the file it
+// names, applying every rule both ReadFile and ResolveFile answer by, and
+// returns an open os.Root holding it (the caller closes it), the file's
+// path relative to that root, and the path to name in an error.
 //
 // A relative path is tried against each of bases in order — the pane's
 // cwd, then the worktree — and the first that exists wins. Where it
@@ -326,14 +327,15 @@ func stripLocation(path string) string {
 // roots (the worktree and the temp dirs agents write screenshots to) are,
 // so a pane cd'd to /etc can't widen that. Containment is checked after
 // symlinks are resolved on both sides, so neither "../" nor a symlink
-// pointing out gets past it, and the file is then opened through an
-// os.Root, so a symlink swapped in after the check cannot either. Errors
-// are shown to the user verbatim, so they say what went wrong in plain
-// words.
-func readFile(bases, roots []string, path string) (string, []byte, error) {
+// pointing out gets past it, and a caller that opens the file goes through
+// the returned os.Root, so a symlink swapped in after the check cannot
+// either. Errors are shown to the user verbatim, so they say what went
+// wrong in plain words; the method's name is put in front of them in
+// dispatch, since both methods share every one.
+func resolveFile(bases, roots []string, path string) (*os.Root, string, string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return "", nil, errors.New("ReadFile: empty path")
+		return nil, "", "", errors.New("empty path")
 	}
 	// Expanded so a ~ path is judged by where it really is: refused as
 	// outside, or served when it is inside the worktree.
@@ -359,9 +361,8 @@ func readFile(bases, roots []string, path string) (string, []byte, error) {
 	}
 	real, err := filepath.EvalSymlinks(path)
 	if err != nil {
-		return "", nil, readErr(path, err)
+		return nil, "", "", readErr(path, err)
 	}
-	var root *os.Root
 	for _, dir := range roots {
 		if dir == "" {
 			continue
@@ -374,33 +375,45 @@ func readFile(bases, roots []string, path string) (string, []byte, error) {
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			continue
 		}
-		if root, err = os.OpenRoot(dir); err != nil {
-			return "", nil, readErr(path, err)
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			return nil, "", "", readErr(path, err)
 		}
-		defer root.Close()
-		real = rel
-		break
+		// Checked before any open, not only after: opening a named pipe
+		// blocks until something writes to it, and the phone would wait
+		// forever.
+		info, err := root.Stat(rel)
+		if err == nil {
+			err = regular(path, info)
+		} else {
+			err = readErr(path, err)
+		}
+		if err != nil {
+			root.Close()
+			return nil, "", "", err
+		}
+		return root, rel, path, nil
 	}
-	if root == nil {
-		return "", nil, fmt.Errorf("ReadFile: %s is outside this session's worktree", path)
-	}
-	// Checked before opening, not only after: opening a named pipe blocks
-	// until something writes to it, and the phone would wait forever.
-	info, err := root.Stat(real)
+	return nil, "", "", fmt.Errorf("%s is outside this session's worktree", path)
+}
+
+// readFile is SaveFile's mirror: the bytes of a file a path in a session's
+// pane names, for a front end that cannot read this machine's disk (a phone
+// showing a tapped path in Quick Look). It answers the resolved absolute
+// path and the contents. Resolution and refusals are resolveFile's.
+func readFile(bases, roots []string, path string) (string, []byte, error) {
+	root, rel, path, err := resolveFile(bases, roots, path)
 	if err != nil {
-		return "", nil, readErr(path, err)
-	}
-	if err := regular(path, info); err != nil {
 		return "", nil, err
 	}
-	f, info, err := openRegular(root, real, path)
+	defer root.Close()
+	f, info, err := openRegular(root, rel, path)
 	if err != nil {
 		return "", nil, err
 	}
 	defer f.Close()
-	real = filepath.Join(root.Name(), real)
 	if info.Size() > maxSaveFile {
-		return "", nil, fmt.Errorf("ReadFile: %s MB is over the %d MB limit", mb(info.Size()), maxSaveFile>>20)
+		return "", nil, fmt.Errorf("%s MB is over the %d MB limit", mb(info.Size()), maxSaveFile>>20)
 	}
 	// Limited in case the file grows between the Stat and the read.
 	data, err := io.ReadAll(io.LimitReader(f, maxSaveFile+1))
@@ -408,9 +421,21 @@ func readFile(bases, roots []string, path string) (string, []byte, error) {
 		return "", nil, readErr(path, err)
 	}
 	if len(data) > maxSaveFile {
-		return "", nil, fmt.Errorf("ReadFile: %s MB is over the %d MB limit", mb(int64(len(data))), maxSaveFile>>20)
+		return "", nil, fmt.Errorf("%s MB is over the %d MB limit", mb(int64(len(data))), maxSaveFile>>20)
 	}
-	return real, data, nil
+	return filepath.Join(root.Name(), rel), data, nil
+}
+
+// resolvePath is ResolveFile: resolveFile's answer as an absolute path,
+// for a front end on this machine (the Mac) that opens the file itself.
+// Nothing is read, so no size limit applies.
+func resolvePath(bases, roots []string, path string) (string, error) {
+	root, rel, _, err := resolveFile(bases, roots, path)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	return filepath.Join(root.Name(), rel), nil
 }
 
 // openRegular opens name under root and refuses it unless it is a plain
@@ -438,10 +463,10 @@ func openRegular(root *os.Root, name, path string) (*os.File, os.FileInfo, error
 // regular refuses anything but a plain file, in the phone's words.
 func regular(path string, info os.FileInfo) error {
 	if info.IsDir() {
-		return fmt.Errorf("ReadFile: %s is a folder, not a file", path)
+		return fmt.Errorf("%s is a folder, not a file", path)
 	}
 	if !info.Mode().IsRegular() {
-		return fmt.Errorf("ReadFile: %s is not a regular file", path)
+		return fmt.Errorf("%s is not a regular file", path)
 	}
 	return nil
 }
@@ -452,16 +477,16 @@ func regular(path string, info os.FileInfo) error {
 func readErr(path string, err error) error {
 	switch {
 	case errors.Is(err, os.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
-		return fmt.Errorf("ReadFile: %s does not exist", path)
+		return fmt.Errorf("%s does not exist", path)
 	case errors.Is(err, os.ErrPermission):
-		return fmt.Errorf("ReadFile: %s can't be read — permission denied", path)
+		return fmt.Errorf("%s can't be read — permission denied", path)
 	case errors.Is(err, syscall.ELOOP):
-		return fmt.Errorf("ReadFile: %s is a symlink that loops back on itself", path)
+		return fmt.Errorf("%s is a symlink that loops back on itself", path)
 	case strings.Contains(err.Error(), "path escapes from parent"):
 		// os.Root's refusal: a symlink changed after the containment check.
-		return fmt.Errorf("ReadFile: %s is outside this session's worktree", path)
+		return fmt.Errorf("%s is outside this session's worktree", path)
 	}
-	return fmt.Errorf("ReadFile: %s can't be read: %w", path, err)
+	return fmt.Errorf("%s can't be read: %w", path, err)
 }
 
 // attachInput is the client's keystroke stream once an Attach request has
@@ -550,6 +575,40 @@ func (s *Server) stream(c net.Conn, r io.Reader) {
 	}
 }
 
+// fileScope is where ReadFile and ResolveFile look for session id's paths:
+// the bases a relative path resolves against, and the roots a file must be
+// inside to be served.
+// fileErr puts the method's name in front of a shared file error, the way
+// SaveFile's read ("SaveFile: empty file"): ReadFile and ResolveFile give
+// the same refusals, so the helpers leave the name to the caller.
+func fileErr(method string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", method, err)
+}
+
+func (s *Server) fileScope(id string) (bases, roots []string, err error) {
+	sessions := s.Backend.Sessions()
+	i := slices.IndexFunc(sessions, func(s session.Session) bool { return s.ID == id })
+	if i < 0 {
+		return nil, nil, fmt.Errorf("no session %q — it may have been deleted", id)
+	}
+	sess := sessions[i]
+	// The pane's cwd first: an agent that ran `cd Sources` prints paths
+	// relative to that. No tmux answer (parked, no hook) is just the
+	// worktree.
+	var cwd string
+	if s.PaneCwd != nil && sess.TmuxSession != "" {
+		cwd, _ = s.PaneCwd(sess.TmuxSession)
+	}
+	// SaveFile's dir rather than all of os.TempDir(), which on macOS is
+	// every app's per-user temp files; /tmp is where agents write
+	// screenshots.
+	return []string{cwd, sess.WorktreePath},
+		[]string{sess.WorktreePath, filepath.Join(os.TempDir(), "moomux-images"), "/tmp"}, nil
+}
+
 func (s *Server) dispatch(method string, a Args) (Result, error) {
 	b := s.Backend
 	switch method {
@@ -572,25 +631,19 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		path, err := saveFile(os.TempDir(), a.Name, a.Data)
 		return Result{Path: path}, err
 	case "ReadFile":
-		sessions := b.Sessions()
-		i := slices.IndexFunc(sessions, func(s session.Session) bool { return s.ID == a.ID })
-		if i < 0 {
-			return Result{}, fmt.Errorf("ReadFile: no session %q — it may have been deleted", a.ID)
+		bases, roots, err := s.fileScope(a.ID)
+		if err != nil {
+			return Result{}, fileErr(method, err)
 		}
-		sess := sessions[i]
-		// The pane's cwd first: an agent that ran `cd Sources` prints paths
-		// relative to that. No tmux answer (parked, no hook) is just the
-		// worktree.
-		var cwd string
-		if s.PaneCwd != nil && sess.TmuxSession != "" {
-			cwd, _ = s.PaneCwd(sess.TmuxSession)
+		path, data, err := readFile(bases, roots, a.Path)
+		return Result{Path: path, Data: data}, fileErr(method, err)
+	case "ResolveFile":
+		bases, roots, err := s.fileScope(a.ID)
+		if err != nil {
+			return Result{}, fileErr(method, err)
 		}
-		// SaveFile's dir rather than all of os.TempDir(), which on macOS is
-		// every app's per-user temp files; /tmp is where agents write
-		// screenshots.
-		roots := []string{sess.WorktreePath, filepath.Join(os.TempDir(), "moomux-images"), "/tmp"}
-		path, data, err := readFile([]string{cwd, sess.WorktreePath}, roots, a.Path)
-		return Result{Path: path, Data: data}, err
+		path, err := resolvePath(bases, roots, a.Path)
+		return Result{Path: path}, fileErr(method, err)
 	case "Sessions":
 		return Result{Sessions: b.Sessions()}, nil
 	case "SuggestedProject":

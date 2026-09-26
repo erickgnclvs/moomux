@@ -1106,8 +1106,8 @@ func TestReadFile(t *testing.T) {
 		{"symlink to outside", "link", "", "", "outside this session's worktree", nil},
 		{"temp dir", filepath.Join(tmp, "shot.png"), filepath.Join(realTmp, "shot.png"), "png", "", nil},
 		{"directory", "src", "", "", "is a folder", nil},
-		{"oversize by a byte", "big.bin", "", "", "ReadFile: 32.1 MB is over the 32 MB limit", nil},
-		{"oversize by half a MB", "half.bin", "", "", "ReadFile: 32.5 MB is over the 32 MB limit", nil},
+		{"oversize by a byte", "big.bin", "", "", "32.1 MB is over the 32 MB limit", nil},
+		{"oversize by half a MB", "half.bin", "", "", "32.5 MB is over the 32 MB limit", nil},
 		{"named pipe", "pipe", "", "", "is not a regular file", nil},
 		{"pane cwd first", "UI/Foo.swift", filepath.Join(realWT, "Sources", "UI", "Foo.swift"), "ui", "", []string{sources, wt}},
 		{"worktree after the pane cwd", "src/Foo.swift:3", foo, "foo", "", []string{sources, wt}},
@@ -1246,5 +1246,73 @@ func TestReadFileOverTheWireUsesThePaneCwdAndTheSaveFileDir(t *testing.T) {
 	t.Cleanup(func() { os.Remove(other.Name()) })
 	if _, _, err := c.ReadFile("s1", other.Name()); err == nil || !strings.Contains(err.Error(), "outside") {
 		t.Fatalf("ReadFile of another app's temp file: %v", err)
+	}
+}
+
+func TestResolveFileOverTheWire(t *testing.T) {
+	wt := t.TempDir()
+	sub := filepath.Join(wt, "Sources")
+	if err := os.MkdirAll(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	foo := filepath.Join(sub, "Foo.swift")
+	if err := os.WriteFile(foo, []byte("foo"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Over ReadFile's cap: resolving reads nothing, so it must still answer.
+	big := filepath.Join(wt, "big.bin")
+	if err := os.WriteFile(big, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(big, maxSaveFile+1); err != nil {
+		t.Fatal(err)
+	}
+	b := &fakeBackend{
+		sessions: []session.Session{{ID: "s1", WorktreePath: wt, TmuxSession: "moomux-s1"}},
+		paneCwd:  func(string) (string, error) { return sub, nil },
+	}
+	c, _ := start(t, b, nil, nil)
+	realFoo, _ := filepath.EvalSymlinks(foo)
+	if got, err := c.ResolveFile("s1", "Foo.swift:42:7:"); err != nil || got != realFoo {
+		t.Fatalf("ResolveFile relative = %q, %v; want %q", got, err, realFoo)
+	}
+	realBig, _ := filepath.EvalSymlinks(big)
+	if got, err := c.ResolveFile("s1", big); err != nil || got != realBig {
+		t.Fatalf("ResolveFile over the read cap = %q, %v; want %q", got, err, realBig)
+	}
+	if _, _, err := c.ReadFile("s1", big); err == nil || !strings.Contains(err.Error(), "limit") {
+		t.Fatalf("ReadFile of the same file: %v", err)
+	}
+	if _, err := c.ResolveFile("s1", "/etc/passwd"); err == nil || !strings.Contains(err.Error(), "outside") {
+		t.Fatalf("ResolveFile outside the roots: %v", err)
+	}
+	if _, err := c.ResolveFile("s1", "Sources"); err == nil || !strings.Contains(err.Error(), "is a folder") {
+		t.Fatalf("ResolveFile of a folder: %v", err)
+	}
+	if _, err := c.ResolveFile("nope", "Foo.swift"); err == nil || !strings.Contains(err.Error(), "no session") {
+		t.Fatalf("ResolveFile of an unknown session: %v", err)
+	}
+}
+
+// The two methods share every refusal, but each names itself: the Mac shows
+// a ResolveFile error in an alert, and "ReadFile: …" there would misname it.
+func TestFileErrorsNameTheirMethod(t *testing.T) {
+	wt := t.TempDir()
+	c, _ := start(t, &fakeBackend{sessions: []session.Session{{ID: "s1", WorktreePath: wt}}}, nil, nil)
+	for _, tc := range []struct{ id, path, want string }{
+		{"s1", "/etc/passwd", "is outside this session's worktree"},
+		{"s1", ".", "is a folder, not a file"},
+		{"s1", "nope.txt", "does not exist"},
+		{"s1", " ", "empty path"},
+		{"nope", "a.txt", "no session"},
+	} {
+		_, rerr := c.ResolveFile(tc.id, tc.path)
+		_, _, ferr := c.ReadFile(tc.id, tc.path)
+		for method, err := range map[string]error{"ResolveFile": rerr, "ReadFile": ferr} {
+			if err == nil || !strings.HasPrefix(err.Error(), method+": ") || !strings.Contains(err.Error(), tc.want) ||
+				strings.Count(err.Error(), "File: ") != 1 {
+				t.Errorf("%s(%q, %q) err = %v, want %q prefixed %q once", method, tc.id, tc.path, err, tc.want, method+":")
+			}
+		}
 	}
 }

@@ -225,6 +225,14 @@ func (c *Client) ReadFile(id, path string) (string, []byte, error) {
 	return r.Path, r.Data, err
 }
 
+// ResolveFile answers the absolute path a path in session id's pane names,
+// by ReadFile's rules, without reading it — for a front end on the server's
+// own machine, which opens the file itself.
+func (c *Client) ResolveFile(id, path string) (string, error) {
+	r, err := c.call("ResolveFile", Args{ID: id, Path: path})
+	return r.Path, err
+}
+
 func (c *Client) Sessions() []session.Session {
 	r, err := c.call("Sessions", Args{})
 	c.mu.Lock()

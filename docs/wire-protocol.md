@@ -298,7 +298,8 @@ answers "request is over the … limit" and stops reading.
 that session's pane) and answers `path` (resolved, absolute) and `data`
 (base64). It is how the phone shows a file an agent mentioned — it cannot read
 this machine's disk. A leading `~` is expanded to the home dir. A relative path
-resolves against the agent pane's current directory first (an agent that ran
+resolves against the session's active pane's current directory first (the
+pane an attached client is showing) (an agent that ran
 `cd Sources` prints paths relative to it), then the session's worktree; the
 first that exists wins. A path that does not exist but ends in a compiler or
 grep location — `:42`, `:42:7`, or either with the trailing `:` those tools
@@ -314,6 +315,12 @@ anywhere. Neither `../` nor a symlink escapes, and the open goes through an
 a regular file (checked before opening — opening a named pipe would block),
 capped at 32 MB like `SaveFile`. Errors are written to be shown to the user
 as-is.
+
+`ResolveFile` takes the same `id` and `path` and answers only `path`: the file
+`ReadFile` would read, by exactly the same resolution and refusals, without
+reading it — so no size cap. It is for the Mac, which shares this machine's
+disk and only needs the core to turn a relative or `:42` path into one it can
+open itself.
 
 `Attach` is a method name too, but it is not on this channel — see below.
 
