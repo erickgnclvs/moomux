@@ -1350,10 +1350,6 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		ticket := m.ticketInput.Value()
 		pr := m.prInput.Value()
 		firstPrompt := m.promptInput.Value()
-		if name == "" && branch == "" && strings.TrimSpace(firstPrompt) == "" {
-			m.newFormErr = "enter a session name, an existing branch, or a prompt"
-			return m, nil
-		}
 		if m.newFormAgentIdx < 0 {
 			m.newFormErr = "this project requires choosing an agent — tab to the agent row, then ←→"
 			return m, nil
@@ -1381,7 +1377,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			label = branch
 		}
 		if label == "" {
-			// The core names it after the prompt.
+			// The core names it, after the prompt or at random.
 			label = "session"
 		}
 		m.setFlash("info", "creating "+label+"…")

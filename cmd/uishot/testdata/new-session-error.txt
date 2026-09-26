@@ -9,8 +9,8 @@
 │  > base branch (optional, defau…     │
 │                                      │
 │                                      │
-│  list + folder name — blank uses     │
-│  branch or prompt                    │
+│  list + folder name — blank: from    │
+│  branch, prompt, or random           │
 │  no branch "merchant-physcal" in     │
 │  /tmp/demo (checked local and        │
 │  origin) — fix the name, or clear    │
@@ -46,7 +46,7 @@
            │                                                                            │           
            │  auto-submit:  [off]                                                       │           
            │                                                                            │           
-           │  list + folder name — blank uses branch or prompt                          │           
+           │  list + folder name — blank: from branch, prompt, or random                │           
            │  no branch "merchant-physcal" in /tmp/demo (checked local and origin) —    │           
            │  fix the name, or clear the branch field to start a new branch off main    │           
            │  tab/↑↓ fields  ←→ choose  enter  esc cancel                               │           

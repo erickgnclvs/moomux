@@ -351,22 +351,17 @@ func TestNewSessionCreateInFlightBlocksSecondForm(t *testing.T) {
 	}
 }
 
-func TestNewSessionFormEmptySubmitIsNoop(t *testing.T) {
+// An entirely blank form still submits: naming the session is the core's
+// (a random session-<hex> when there's no branch or prompt to go on), so the
+// form doesn't keep a second copy of a "name required" rule.
+func TestNewSessionFormEmptySubmitCreates(t *testing.T) {
 	be := &fakeBackend{}
 	m := newTestModel(be)
 	m.Update(keyRune("n"))
 	tabTo(t, m, newFormNameFocus) // off the prompt, where Enter is a newline
-	press(m, tea.KeyEnter)
-	if len(be.createCalls) != 0 || m.mode != ModeNewForm {
-		t.Fatalf("calls=%v mode=%v", be.createCalls, m.mode)
-	}
-	// The rejection must be visible in the form itself, not a discarded flash.
-	if v := m.View(); !strings.Contains(v, "or a prompt") {
-		t.Fatalf("empty-submit error not rendered:\n%s", v)
-	}
-	press(m, tea.KeyEsc)
-	if m.mode != ModeList {
-		t.Fatalf("mode = %v", m.mode)
+	run(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(be.createCalls) != 1 || be.createCalls[0].Name != "" || be.createCalls[0].Prompt != "" {
+		t.Fatalf("createCalls = %+v, want one request with an empty name", be.createCalls)
 	}
 }
 
@@ -444,16 +439,12 @@ func TestNewSessionCreateErrorKeepsForm(t *testing.T) {
 }
 
 // A blank name and branch with a prompt submits: the core names the session
-// after the prompt. With no prompt either, the form still refuses.
+// after the prompt.
 func TestNewSessionBlankNameWithPromptSubmits(t *testing.T) {
 	be := &fakeBackend{}
 	m := newTestModel(be)
 	m.Update(keyRune("n"))
 	tabTo(t, m, newFormNameFocus) // off the prompt, where Enter is a newline
-	run(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.mode != ModeNewForm || len(be.createCalls) != 0 {
-		t.Fatalf("submitted with nothing to name it by: mode=%v calls=%v", m.mode, be.createCalls)
-	}
 	m.promptInput.SetValue("add dark mode")
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(be.createCalls) != 1 || be.createCalls[0].Name != "" || be.createCalls[0].Prompt != "add dark mode" {

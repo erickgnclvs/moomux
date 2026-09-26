@@ -887,16 +887,14 @@ func (a *App) CreateSessionReport(req session.CreateRequest) (session.Session, C
 	if name == "" && req.Branch == "" {
 		// Named after the prompt here, in the core, rather than by each
 		// client: only the core can see which names are taken.
-		if req.Prompt != "" {
-			base := deriveNameFromPrompt(req.Prompt)
-			if base == "" {
-				// Nothing usable in it (all filler, or only an image path):
-				// losing the prompt to "name required" would be worse than
-				// an arbitrary name the user can rename later.
-				base = fmt.Sprintf("session-%04x", rand.IntN(0x10000))
-			}
-			name = a.uniqueName(req.Project, base)
+		base := deriveNameFromPrompt(req.Prompt)
+		if base == "" {
+			// No prompt, or nothing usable in it (all filler, or only an
+			// image path): an arbitrary name the user can rename later
+			// beats refusing the create, and losing the prompt with it.
+			base = fmt.Sprintf("session-%04x", rand.IntN(0x10000))
 		}
+		name = a.uniqueName(req.Project, base)
 	}
 	s, hint, err := a.createSession(req.Project, name, req.Agent, req.Branch, req.Ticket,
 		req.OpenTerminal, req.Dangerous, req.BaseBranch, req.Model, req.Thinking)

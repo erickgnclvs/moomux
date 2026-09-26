@@ -188,7 +188,7 @@ func (m *Model) newFormAsksAgent() bool {
 
 var newFormFieldHints = []string{
 	0:  "which project this session belongs to — ←→ to choose",
-	1:  "list + folder name — blank uses branch or prompt",
+	1:  "list + folder name — blank: from branch, prompt, or random",
 	2:  "resume an existing branch; blank = new branch off base",
 	3:  "only used for a new branch — blank uses the project's base branch",
 	4:  "optional — the agent's first task; enter for a newline, tab away to submit",

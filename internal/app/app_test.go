@@ -344,14 +344,16 @@ func TestCreateSessionNamesFromPrompt(t *testing.T) {
 	if s.Name != "fix-login-bug-2" {
 		t.Fatalf("name = %q, want fix-login-bug-2", s.Name)
 	}
-	// Nothing usable in the prompt still creates, under a made-up name,
-	// rather than dropping the prompt on a "name required" error.
-	s, _, err = a.CreateSession(session.CreateRequest{Project: "demo", Agent: "claude", Prompt: "the to of"})
-	if err != nil {
-		t.Fatalf("filler-only prompt: %v", err)
-	}
-	if !strings.HasPrefix(s.Name, "session-") {
-		t.Fatalf("filler-only prompt: name = %q, want session-<random>", s.Name)
+	// Nothing usable in the prompt, or no prompt at all, still creates
+	// under a made-up name rather than failing with "name required".
+	for _, prompt := range []string{"the to of", ""} {
+		s, _, err = a.CreateSession(session.CreateRequest{Project: "demo", Agent: "claude", Prompt: prompt})
+		if err != nil {
+			t.Fatalf("prompt %q: %v", prompt, err)
+		}
+		if !strings.HasPrefix(s.Name, "session-") {
+			t.Fatalf("prompt %q: name = %q, want session-<random>", prompt, s.Name)
+		}
 	}
 }
 

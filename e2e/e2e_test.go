@@ -295,8 +295,30 @@ func TestCreateSession_Errors(t *testing.T) {
 	if _, _, err := a.CreateSession(session.CreateRequest{Project: "missing-project", Name: "x", OpenTerminal: true, Dangerous: boolPtr(false)}); err == nil {
 		t.Fatalf("expected error for unknown project")
 	}
-	if _, _, err := a.CreateSession(session.CreateRequest{Project: "demo", OpenTerminal: true, Dangerous: boolPtr(false)}); err == nil {
-		t.Fatalf("expected error when name and existingBranch are both empty")
+}
+
+// No name, branch or prompt is not an error: the core makes up a
+// session-<hex> name, and it has to be one real git, the filesystem and tmux
+// all accept.
+func TestCreateSession_EmptyRequestGetsRandomName(t *testing.T) {
+	repo := initRepo(t, "main")
+	a := newTestApp(t)
+	if _, err := a.AddProject("demo", config.Project{Repo: repo, BaseBranch: "main"}); err != nil {
+		t.Fatalf("AddProject: %v", err)
+	}
+
+	s, _, err := a.CreateSession(session.CreateRequest{Project: "demo", OpenTerminal: true, Dangerous: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if !strings.HasPrefix(s.Name, "session-") {
+		t.Fatalf("name = %q, want session-<hex>", s.Name)
+	}
+	if _, err := os.Stat(s.WorktreePath); err != nil {
+		t.Fatalf("worktree missing: %v", err)
+	}
+	if !tmuxHasSession(s.TmuxSession) {
+		t.Fatalf("tmux session %q not running", s.TmuxSession)
 	}
 }
 

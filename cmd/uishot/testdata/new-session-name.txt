@@ -14,8 +14,8 @@
 │                                      │
 │  agent:  ‹ [codex] ›                 │
 │                                      │
-│  list + folder name — blank uses     │
-│  branch or prompt                    │
+│  list + folder name — blank: from    │
+│  branch, prompt, or random           │
 │  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
@@ -48,7 +48,7 @@
            │                                                                            │           
            │  auto-submit:  [off]                                                       │           
            │                                                                            │           
-           │  list + folder name — blank uses branch or prompt                          │           
+           │  list + folder name — blank: from branch, prompt, or random                │           
            │  tab/↑↓ fields  ←→ choose  enter  esc cancel                               │           
            │                                                                            │           
            ╰────────────────────────────────────────────────────────────────────────────╯           
