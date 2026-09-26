@@ -2,34 +2,37 @@
 ╭──────────────────────────────────────╮
 │                                      │
 │                                      │
-│  >                                   │
-│  >                                   │
-│  >                                   │
-│  >                                   │
+│  > myfeat                            │
 │                                      │
-│  > ticket url (optional)             │
+│  > existing branch (optional)        │
 │                                      │
-│  > PR url (optional)                 │
-│                                      │
-│  agent:  ‹ [codex] ›                 │
+│  > base branch (optional, defau…     │
 │                                      │
 │                                      │
-│  optional — the agent's first task;  │
-│  enter for a newline, tab away to    │
+│  list + folder name — blank: from    │
+│  branch, prompt, or random           │
+│  no branch "merchant-physcal" in     │
+│  /tmp/demo (checked local and        │
+│  origin) — fix the name, or clear    │
+│  the branch field to start a new     │
+│  branch off main                     │
 │  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
 === 100x32 ===
            ╭────────────────────────────────────────────────────────────────────────────╮           
            │                                                                            │           
+           │  >                                                                         │           
+           │  >                                                                         │           
+           │  >                                                                         │           
+           │                                                                            │           
+           │  thinking:  [default]  minimal  low  medium  high  xhigh                   │           
+           │                                                                            │           
+           │  > myfeat                                                                  │           
+           │                                                                            │           
            │  > existing branch (optional)                                              │           
            │                                                                            │           
-           │  > rst prompt that must survive the failure                                │           
-           │                                                                            │           
-           │  >                                                                         │           
-           │  >                                                                         │           
-           │  >                                                                         │           
-           │  >                                                                         │           
+           │  > base branch (optional, defaults to pr…                                  │           
            │                                                                            │           
            │  > ticket url (optional)                                                   │           
            │                                                                            │           
@@ -39,16 +42,13 @@
            │                                                                            │           
            │  model:  [default]  gpt-5.6-sol  gpt-5.6-terra  gpt-5.6-luna               │           
            │                                                                            │           
-           │  thinking:  [default]  minimal  low  medium  high  xhigh                   │           
-           │                                                                            │           
-           │  dangerous:  [off]                                                         │           
-           │                                                                            │           
            │  open in background:  [off]                                                │           
            │                                                                            │           
            │  auto-submit:  [off]                                                       │           
            │                                                                            │           
-           │  optional — the agent's first task; enter for a newline, tab away to       │           
-           │  submit                                                                    │           
+           │  list + folder name — blank: from branch, prompt, or random                │           
+           │  no branch "merchant-physcal" in /tmp/demo (checked local and origin) —    │           
+           │  fix the name, or clear the branch field to start a new branch off main    │           
            │  tab/↑↓ fields  ←→ choose  enter  esc cancel                               │           
            │                                                                            │           
            ╰────────────────────────────────────────────────────────────────────────────╯           

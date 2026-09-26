@@ -2,20 +2,20 @@
 ╭──────────────────────────────────────╮
 │                                      │
 │                                      │
-│  > this is a single long line        │
-│  > typed into the first prompt       │
-│  > field that should only wrap       │
-│  > once it actually reaches the      │
+│  dangerous:  [off]                   │
+│                                      │
+│  > first prompt (optional)           │
+│  >                                   │
+│  >                                   │
+│  >                                   │
 │                                      │
 │  thinking:  ‹ [default] ›            │
 │                                      │
 │  > session name (optional)           │
 │                                      │
-│  > existing branch (optional)        │
 │                                      │
-│                                      │
-│  optional — the agent's first task;  │
-│  enter for a newline, tab away to    │
+│  on: skips permission prompts (--    │
+│  dangerously-skip-permissions / --   │
 │  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
@@ -23,12 +23,14 @@
            ╭────────────────────────────────────────────────────────────────────────────╮           
            │                                                                            │           
            │                                                                            │           
-           │  > this is a single long line typed into the first prompt field that       │           
-           │  > should only wrap once it actually reaches the right edge of the box     │           
-           │  > on a wide terminal                                                      │           
+           │  dangerous:  [off]                                                         │           
+           │                                                                            │           
+           │  > first prompt (optional)                                                 │           
+           │  >                                                                         │           
+           │  >                                                                         │           
            │  >                                                                         │           
            │                                                                            │           
-           │  thinking:  [default]  minimal  low  medium  high  xhigh                   │           
+           │  thinking:  [default]  low  medium  high  xhigh  max                       │           
            │                                                                            │           
            │  > session name (optional)                                                 │           
            │                                                                            │           
@@ -40,15 +42,13 @@
            │                                                                            │           
            │  > PR url (optional)                                                       │           
            │                                                                            │           
-           │  agent:  claude  [codex]  opencode  antigravity                            │           
-           │                                                                            │           
-           │  model:  [default]  gpt-5.6-sol  gpt-5.6-terra  gpt-5.6-luna               │           
+           │  model:  [default]  sonnet  opus  fable                                    │           
            │                                                                            │           
            │  open in background:  [off]                                                │           
            │                                                                            │           
            │                                                                            │           
-           │  optional — the agent's first task; enter for a newline, tab away to       │           
-           │  submit                                                                    │           
+           │  on: skips permission prompts (--dangerously-skip-permissions / --yolo);   │           
+           │  no effect for opencode                                                    │           
            │  tab/↑↓ fields  ←→ choose  enter  esc cancel                               │           
            │                                                                            │           
            ╰────────────────────────────────────────────────────────────────────────────╯           

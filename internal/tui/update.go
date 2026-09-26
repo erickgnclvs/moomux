@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -549,7 +550,7 @@ func (m *Model) openNewSessionForm() {
 	if len(m.projects) > 1 {
 		m.newFormFocus = newFormProjFocus
 	} else {
-		m.newFormFocus = 1 // start below the project picker, at the name field
+		m.newFormFocus = newFormPromptFocus // start below the project picker
 	}
 	m.newFormOpenInBackground = false
 	m.newFormDangerous = false
@@ -1243,7 +1244,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// The prompt field is a multi-line textarea — leave ↑/↓ to it for
 		// moving the cursor between lines. But if you're on the first
 		// or last line, let it switch fields!
-		if m.newFormFocus == 4 {
+		if m.newFormFocus == newFormPromptFocus {
 			atTop := m.promptInput.Line() == 0
 			atBottom := m.promptInput.Line() == m.promptInput.LineCount()-1
 			if (key.Matches(msg, m.keys.FormUp) && !atTop) || (key.Matches(msg, m.keys.FormDown) && !atBottom) {
@@ -1334,7 +1335,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case key.Matches(msg, m.keys.Enter):
-		if m.newFormFocus == 4 {
+		if m.newFormFocus == newFormPromptFocus {
 			// Enter inserts a newline in the multi-line prompt field instead
 			// of submitting — tab to another field to submit with Enter.
 			break
@@ -1349,10 +1350,6 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		ticket := m.ticketInput.Value()
 		pr := m.prInput.Value()
 		firstPrompt := m.promptInput.Value()
-		if name == "" && branch == "" {
-			m.newFormErr = "enter a session name or an existing branch"
-			return m, nil
-		}
 		if m.newFormAgentIdx < 0 {
 			m.newFormErr = "this project requires choosing an agent — tab to the agent row, then ←→"
 			return m, nil
@@ -1365,12 +1362,23 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			model = m.modelNamesFor(agent)[m.newFormModelIdx]
 		}
 		thinking := m.thinkingNamesFor(agent)[m.newFormThinkingIdx]
-		dangerous := m.newFormDangerous
+		// nil leaves it to the project's own setting — the form only asks,
+		// and so only overrides it, for a project that asks for the agent
+		// too (see newFormFields).
+		var dangerous *bool
+		if m.newFormAsksAgent() {
+			v := m.newFormDangerous
+			dangerous = &v
+		}
 		openTerminal := !m.newFormOpenInBackground
 		m.mode = m.sessionDialogReturn
 		label := name
 		if label == "" {
 			label = branch
+		}
+		if label == "" {
+			// The core names it, after the prompt or at random.
+			label = "session"
 		}
 		m.setFlash("info", "creating "+label+"…")
 		m.busy = true
@@ -1384,7 +1392,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			Project: proj, Name: name, Agent: agent, Branch: branch, BaseBranch: baseBranch,
 			Ticket: ticket, PR: pr, Model: model, Thinking: thinking,
 			Prompt: firstPrompt, AutoSubmit: autoSubmit, OpenTerminal: openTerminal,
-			Dangerous: &dangerous,
+			Dangerous: dangerous,
 		}
 		return m, func() tea.Msg {
 			var cfgSnap *config.Config
@@ -1404,17 +1412,17 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// into.
 	var cmd tea.Cmd
 	switch m.newFormFocus {
-	case 1:
+	case newFormNameFocus:
 		m.nameInput, cmd = m.nameInput.Update(msg)
-	case 2:
+	case newFormBranchFocus:
 		m.branchInput, cmd = m.branchInput.Update(msg)
-	case 3:
+	case newFormBaseBranchFocus:
 		m.baseBranchInput, cmd = m.baseBranchInput.Update(msg)
-	case 4:
+	case newFormPromptFocus:
 		m.promptInput, cmd = m.promptInput.Update(msg)
-	case 5:
+	case newFormTicketFocus:
 		m.ticketInput, cmd = m.ticketInput.Update(msg)
-	case 6:
+	case newFormPRFocus:
 		m.prInput, cmd = m.prInput.Update(msg)
 	case newFormModelFocus:
 		if m.newFormAgentIdx >= 0 && m.agentUsesFreeTextModel(m.agentNames()[m.newFormAgentIdx]) {
@@ -1427,10 +1435,13 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // joinHint combines two non-empty hint strings for display; either may be
 // empty.
 // newFormMoveFocus blurs the currently focused field and shifts focus by
-// delta (wrapping), then focuses whatever field lands there.
+// delta rows through newFormFields (wrapping), then focuses whatever field
+// lands there.
 func (m *Model) newFormMoveFocus(delta int) {
 	m.newFormBlurAll()
-	m.newFormFocus = (m.newFormFocus + delta + newFormFieldCount) % newFormFieldCount
+	fields := m.newFormFields()
+	pos := slices.Index(fields, m.newFormFocus)
+	m.newFormFocus = fields[(pos+delta+len(fields))%len(fields)]
 	m.newFormFocusInput()
 }
 
@@ -1450,17 +1461,17 @@ func (m *Model) newFormBlurAll() {
 // unfocused there.
 func (m *Model) newFormFocusInput() {
 	switch m.newFormFocus {
-	case 1:
+	case newFormNameFocus:
 		m.nameInput.Focus()
-	case 2:
+	case newFormBranchFocus:
 		m.branchInput.Focus()
-	case 3:
+	case newFormBaseBranchFocus:
 		m.baseBranchInput.Focus()
-	case 4:
+	case newFormPromptFocus:
 		m.promptInput.Focus()
-	case 5:
+	case newFormTicketFocus:
 		m.ticketInput.Focus()
-	case 6:
+	case newFormPRFocus:
 		m.prInput.Focus()
 	case newFormModelFocus:
 		if m.newFormAgentIdx >= 0 && m.agentUsesFreeTextModel(m.agentNames()[m.newFormAgentIdx]) {
@@ -1591,7 +1602,6 @@ func (m *Model) projFormModel() string {
 }
 
 func (m *Model) updateNewProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	const totalFields = projFormInputCount + 5 // +1 emoji selector, +1 agent selector, +1 model selector, +1 dangerous toggle, +1 worktree toggle
 	switch {
 	case key.Matches(msg, m.keys.Cancel):
 		// projectDialogReturn defaults to ModeList (its zero value), which is
@@ -1600,10 +1610,10 @@ func (m *Model) updateNewProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = m.projectDialogReturn
 		return m, nil
 	case key.Matches(msg, m.keys.Tab), key.Matches(msg, m.keys.FormDown):
-		cycleFormFocus(m.projForm.inputs, &m.projForm.focus, totalFields, true)
+		m.cycleProjFormFocus(newProjectFocuses, true)
 		return m, nil
 	case key.Matches(msg, m.keys.ShiftTab), key.Matches(msg, m.keys.FormUp):
-		cycleFormFocus(m.projForm.inputs, &m.projForm.focus, totalFields, false)
+		m.cycleProjFormFocus(newProjectFocuses, false)
 		return m, nil
 	case key.Matches(msg, m.keys.Left):
 		if m.adjustProjFormField(-1) {
@@ -1701,15 +1711,32 @@ func (m *Model) updateEditSession(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// newProjectFocuses is the rendered and tab order of the add-project form,
+// the same as the macOS app's project sheet: where it lives, then what runs
+// there, then the rarely-touched settings. Values are projForm.focus field
+// ids — see projFormInputCount.
+var newProjectFocuses = []int{
+	1, 0, 2, // repo, name, base branch
+	projFormInputCount + 1, projFormInputCount + 2, projFormInputCount + 3, // agent, model, dangerous
+	3, projFormInputCount + 4, projFormInputCount, // branch prefix, worktrees, emoji
+}
+
+// editProjectFocuses is newProjectFocuses less the name, which can't be
+// changed, and for a plain project less everything about branches.
 func editProjectFocuses(p config.Project) []int {
 	if p.IsPlain() {
-		return []int{1, projFormInputCount, projFormInputCount + 1, projFormInputCount + 2, projFormInputCount + 3}
+		return []int{1, projFormInputCount + 1, projFormInputCount + 2, projFormInputCount + 3, projFormInputCount}
 	}
-	return []int{1, 2, 3, projFormInputCount, projFormInputCount + 1, projFormInputCount + 2, projFormInputCount + 3, projFormInputCount + 4}
+	return slices.DeleteFunc(slices.Clone(newProjectFocuses), func(f int) bool { return f == 0 })
 }
 
 func (m *Model) cycleEditProjectFocus(forward bool) {
-	focuses := editProjectFocuses(m.cfg.Projects[m.editProjectName])
+	m.cycleProjFormFocus(editProjectFocuses(m.cfg.Projects[m.editProjectName]), forward)
+}
+
+// cycleProjFormFocus moves the project form's focus one step through
+// focuses, blurring and focusing text inputs on the way.
+func (m *Model) cycleProjFormFocus(focuses []int, forward bool) {
 	current := 0
 	for i, focus := range focuses {
 		if focus == m.projForm.focus {

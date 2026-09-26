@@ -756,7 +756,7 @@ func (m *Model) linkAt(x, y int) (string, bool) {
 
 func New(cfg *config.Config, backend Backend, agentOptions []config.AgentOption, statusCh <-chan sessionview.Snapshot, cancel context.CancelFunc) *Model {
 	ti := textinput.New()
-	ti.Placeholder = "session name (optional if branch set)"
+	ti.Placeholder = "session name (optional)"
 	ti.CharLimit = 64
 	ti.Width = 40
 
@@ -1066,7 +1066,9 @@ func (m *Model) newProjectForm() projectForm {
 		pf.inputs[0].SetValue(name)
 		pf.inputs[1].SetValue(repo)
 	}
-	pf.inputs[0].Focus()
+	// Repo first, as newProjectFocuses renders it.
+	pf.inputs[1].Focus()
+	pf.focus = 1
 	return pf
 }
 
@@ -1091,9 +1093,6 @@ func (m *Model) editProjectForm(name string, p config.Project) projectForm {
 		pf.emojiChoices = append([]string{"auto", p.Emoji}, projectEmojiPalette...)
 		pf.emojiIdx = 1
 	}
-	pf.inputs[0].Blur()
-	pf.inputs[1].Focus()
-	pf.focus = 1
 	if p.PromptAgent {
 		pf.agentIdx = askAgentIdx
 	} else {

@@ -2,20 +2,20 @@
 ╭──────────────────────────────────────╮
 │                                      │
 │                                      │
-│  > this is a single long line        │
-│  > typed into the first prompt       │
-│  > field that should only wrap       │
-│  > once it actually reaches the      │
-│                                      │
-│  thinking:  ‹ [default] ›            │
-│                                      │
 │  > session name (optional)           │
 │                                      │
 │  > existing branch (optional)        │
 │                                      │
+│  > base branch (optional, defau…     │
 │                                      │
-│  optional — the agent's first task;  │
-│  enter for a newline, tab away to    │
+│  > ticket url (optional)             │
+│                                      │
+│  > PR url (optional)                 │
+│                                      │
+│  agent:  ‹ [codex] ›                 │
+│                                      │
+│  list + folder name — blank: from    │
+│  branch, prompt, or random           │
 │  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
@@ -23,9 +23,9 @@
            ╭────────────────────────────────────────────────────────────────────────────╮           
            │                                                                            │           
            │                                                                            │           
-           │  > this is a single long line typed into the first prompt field that       │           
-           │  > should only wrap once it actually reaches the right edge of the box     │           
-           │  > on a wide terminal                                                      │           
+           │  > first prompt (optional)                                                 │           
+           │  >                                                                         │           
+           │  >                                                                         │           
            │  >                                                                         │           
            │                                                                            │           
            │  thinking:  [default]  minimal  low  medium  high  xhigh                   │           
@@ -46,9 +46,9 @@
            │                                                                            │           
            │  open in background:  [off]                                                │           
            │                                                                            │           
+           │  auto-submit:  [off]                                                       │           
            │                                                                            │           
-           │  optional — the agent's first task; enter for a newline, tab away to       │           
-           │  submit                                                                    │           
+           │  list + folder name — blank: from branch, prompt, or random                │           
            │  tab/↑↓ fields  ←→ choose  enter  esc cancel                               │           
            │                                                                            │           
            ╰────────────────────────────────────────────────────────────────────────────╯           

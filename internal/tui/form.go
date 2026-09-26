@@ -91,11 +91,10 @@ func (m *Model) resizeFormInputs() {
 		}
 	}
 
-	labels := []string{"name", "repo", "base branch", "branch prefix"}
 	projWidths := [4]int{32, 48, 24, 24}
 	for i := range m.projForm.inputs {
 		if i < len(projWidths) {
-			labelWidth := m.formLabelWidth(labels[i], 15)
+			labelWidth := m.formLabelWidth(projFormInputLabels[i], 15)
 			w := textInputWidth(&m.projForm.inputs[i], projWidths[i], avail-labelWidth)
 			setInputWidth(&m.projForm.inputs[i], w)
 		}
@@ -138,14 +137,16 @@ func (m *Model) renderFormHint(text string) string {
 // newFormFieldHints gives a one-line explanation for whichever field of the
 // new-session form is currently focused, so the jargon (worktree, base
 // branch) doesn't have to be memorized up front.
-// newFormFieldCount is the focus cycle length: project selector, name,
-// branch, base branch, prompt, ticket, PR, agent selector, model selector,
-// thinking selector, dangerous toggle, open-terminal toggle, auto-submit
-// toggle — matching the rendered order. The named constants below are the
-// newFormFocus values for the non-text rows in that order; the text inputs
-// are referred to by their bare index.
+// newFormFieldCount is the focus cycle length. A newFormFocus value names a
+// field, not a position — where each sits on screen is newFormFields'.
 const (
 	newFormFieldCount        = 13
+	newFormNameFocus         = 1
+	newFormBranchFocus       = 2
+	newFormBaseBranchFocus   = 3
+	newFormPromptFocus       = 4
+	newFormTicketFocus       = 5
+	newFormPRFocus           = 6
 	newFormAgentFocus        = 7
 	newFormModelFocus        = 8
 	newFormThinkingFocus     = 9
@@ -154,9 +155,40 @@ const (
 	newFormAutoSubmitFocus   = 12
 )
 
+// newFormFields is the rendered and tab order of the new-session form, the
+// same as the macOS app's New Session sheet: what changes per session first
+// (project, then the prompt the name is derived from), what rarely does last.
+//
+// A project that asks for an agent every time gets the agent row, and the
+// permission toggle with it, right under the project — both are questions it
+// needs answered. Any other project has its own agent and dangerous setting,
+// which are right as they stand: the agent row moves down among the
+// rarely-changed ones, and the toggle isn't shown at all.
+func (m *Model) newFormFields() []int {
+	fields := []int{newFormProjFocus}
+	askAgent := m.newFormAsksAgent()
+	if askAgent {
+		fields = append(fields, newFormAgentFocus, newFormDangerousFocus)
+	}
+	fields = append(fields,
+		newFormPromptFocus, newFormThinkingFocus,
+		newFormNameFocus, newFormBranchFocus, newFormBaseBranchFocus,
+		newFormTicketFocus, newFormPRFocus)
+	if !askAgent {
+		fields = append(fields, newFormAgentFocus)
+	}
+	return append(fields, newFormModelFocus, newFormOpenTerminalFocus, newFormAutoSubmitFocus)
+}
+
+// newFormAsksAgent reports whether the form's project is a prompt_agent one,
+// which starts every session with no agent chosen.
+func (m *Model) newFormAsksAgent() bool {
+	return m.newFormProjIdx >= 0 && m.cfg.Projects[m.projects[m.newFormProjIdx]].PromptAgent
+}
+
 var newFormFieldHints = []string{
 	0:  "which project this session belongs to — ←→ to choose",
-	1:  "shown in the list and worktree folder — blank uses branch",
+	1:  "list + folder name — blank: from branch, prompt, or random",
 	2:  "resume an existing branch; blank = new branch off base",
 	3:  "only used for a new branch — blank uses the project's base branch",
 	4:  "optional — the agent's first task; enter for a newline, tab away to submit",
@@ -173,40 +205,44 @@ var newFormFieldHints = []string{
 func (m *Model) renderNewForm() string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("New session"))
-	b.WriteString("\n\n")
-	b.WriteString(muteStyle.Render("project:  "))
-	b.WriteString(m.renderNewFormProjectSelector())
-	b.WriteString("\n\n")
-	b.WriteString(m.nameInput.View())
-	b.WriteString("\n\n")
-	b.WriteString(m.branchInput.View())
-	b.WriteString("\n\n")
-	b.WriteString(m.baseBranchInput.View())
-	b.WriteString("\n\n")
-	b.WriteString(m.promptInput.View())
-	b.WriteString("\n\n")
-	b.WriteString(m.ticketInput.View())
-	b.WriteString("\n\n")
-	b.WriteString(m.prInput.View())
-	b.WriteString("\n\n")
-	b.WriteString(muteStyle.Render("agent:  "))
-	b.WriteString(m.renderNewFormAgentSelector())
-	b.WriteString("\n\n")
-	b.WriteString(muteStyle.Render("model:  "))
-	b.WriteString(m.renderNewFormModelSelector())
-	b.WriteString("\n\n")
-	b.WriteString(muteStyle.Render("thinking:  "))
-	b.WriteString(m.renderNewFormThinkingSelector())
-	b.WriteString("\n\n")
-	b.WriteString(muteStyle.Render("dangerous:  "))
-	b.WriteString(m.renderNewFormDangerousToggle())
-	b.WriteString("\n\n")
-	b.WriteString(muteStyle.Render("open in background:  "))
-	b.WriteString(m.renderNewFormOpenTerminalToggle())
-	b.WriteString("\n\n")
-	b.WriteString(muteStyle.Render("auto-submit:  "))
-	b.WriteString(m.renderNewFormAutoSubmitToggle())
+	for _, field := range m.newFormFields() {
+		b.WriteString("\n\n")
+		b.WriteString(m.renderNewFormRow(field))
+	}
 	return b.String()
+}
+
+// renderNewFormRow renders the new-session form's row for field.
+func (m *Model) renderNewFormRow(field int) string {
+	switch field {
+	case newFormProjFocus:
+		return muteStyle.Render("project:  ") + m.renderNewFormProjectSelector()
+	case newFormNameFocus:
+		return m.nameInput.View()
+	case newFormBranchFocus:
+		return m.branchInput.View()
+	case newFormBaseBranchFocus:
+		return m.baseBranchInput.View()
+	case newFormPromptFocus:
+		return m.promptInput.View()
+	case newFormTicketFocus:
+		return m.ticketInput.View()
+	case newFormPRFocus:
+		return m.prInput.View()
+	case newFormAgentFocus:
+		return muteStyle.Render("agent:  ") + m.renderNewFormAgentSelector()
+	case newFormModelFocus:
+		return muteStyle.Render("model:  ") + m.renderNewFormModelSelector()
+	case newFormThinkingFocus:
+		return muteStyle.Render("thinking:  ") + m.renderNewFormThinkingSelector()
+	case newFormDangerousFocus:
+		return muteStyle.Render("dangerous:  ") + m.renderNewFormDangerousToggle()
+	case newFormOpenTerminalFocus:
+		return muteStyle.Render("open in background:  ") + m.renderNewFormOpenTerminalToggle()
+	case newFormAutoSubmitFocus:
+		return muteStyle.Render("auto-submit:  ") + m.renderNewFormAutoSubmitToggle()
+	}
+	return ""
 }
 
 // renderToggle renders a form's on/off toggle value, in the highlighted style
@@ -442,31 +478,42 @@ var editProjectFieldHints = []string{
 }
 
 func (m *Model) renderNewProject() string {
-	labels := []string{"name", "repo", "base branch", "branch prefix"}
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("Add project"))
 	b.WriteString("\n\n")
-	for i, ti := range m.projForm.inputs {
-		b.WriteString(m.renderFormLabel(labels[i], 15))
-		b.WriteString(ti.View())
-		b.WriteString("\n")
+	for _, focus := range newProjectFocuses {
+		m.writeProjFormRow(&b, focus)
 	}
-	b.WriteString(m.renderFormLabel("emoji", 15))
-	b.WriteString(m.renderProjectEmojiSelector())
 	b.WriteString("\n")
-	b.WriteString(m.renderFormLabel("agent", 15))
-	b.WriteString(m.renderAgentSelector())
-	b.WriteString("\n")
-	b.WriteString(m.renderFormLabel("model", 15))
-	b.WriteString(m.renderProjectModelSelector())
-	b.WriteString("\n")
-	b.WriteString(m.renderFormLabel("dangerous", 15))
-	b.WriteString(m.renderProjectDangerousToggle())
-	b.WriteString("\n")
-	b.WriteString(m.renderFormLabel("worktrees", 15))
-	b.WriteString(m.renderWorktreeToggle())
-	b.WriteString("\n\n")
 	return b.String()
+}
+
+// projFormInputLabels labels the project form's text inputs, by index.
+var projFormInputLabels = []string{"name", "repo", "base branch", "branch prefix"}
+
+// writeProjFormRow writes the add/edit project form row for field focus.
+func (m *Model) writeProjFormRow(b *strings.Builder, focus int) {
+	switch {
+	case focus < projFormInputCount:
+		b.WriteString(m.renderFormLabel(projFormInputLabels[focus], 15))
+		b.WriteString(m.projForm.inputs[focus].View())
+	case focus == projFormInputCount:
+		b.WriteString(m.renderFormLabel("emoji", 15))
+		b.WriteString(m.renderProjectEmojiSelector())
+	case focus == projFormInputCount+1:
+		b.WriteString(m.renderFormLabel("agent", 15))
+		b.WriteString(m.renderAgentSelector())
+	case focus == projFormInputCount+2:
+		b.WriteString(m.renderFormLabel("model", 15))
+		b.WriteString(m.renderProjectModelSelector())
+	case focus == projFormInputCount+3:
+		b.WriteString(m.renderFormLabel("dangerous", 15))
+		b.WriteString(m.renderProjectDangerousToggle())
+	case focus == projFormInputCount+4:
+		b.WriteString(m.renderFormLabel("worktrees", 15))
+		b.WriteString(m.renderWorktreeToggle())
+	}
+	b.WriteString("\n")
 }
 
 func (m *Model) renderEditProject() string {
@@ -478,33 +525,8 @@ func (m *Model) renderEditProject() string {
 	b.WriteString(m.editProjectName)
 	b.WriteString(muteStyle.Render(" (fixed)"))
 	b.WriteString("\n")
-	b.WriteString(m.renderFormLabel("repo", 15))
-	b.WriteString(m.projForm.inputs[1].View())
-	b.WriteString("\n")
-	if !project.IsPlain() {
-		b.WriteString(m.renderFormLabel("base branch", 15))
-		b.WriteString(m.projForm.inputs[2].View())
-		b.WriteString("\n")
-		b.WriteString(m.renderFormLabel("branch prefix", 15))
-		b.WriteString(m.projForm.inputs[3].View())
-		b.WriteString("\n")
-	}
-	b.WriteString(m.renderFormLabel("emoji", 15))
-	b.WriteString(m.renderProjectEmojiSelector())
-	b.WriteString("\n")
-	b.WriteString(m.renderFormLabel("agent", 15))
-	b.WriteString(m.renderAgentSelector())
-	b.WriteString("\n")
-	b.WriteString(m.renderFormLabel("model", 15))
-	b.WriteString(m.renderProjectModelSelector())
-	b.WriteString("\n")
-	b.WriteString(m.renderFormLabel("dangerous", 15))
-	b.WriteString(m.renderProjectDangerousToggle())
-	b.WriteString("\n")
-	if !project.IsPlain() {
-		b.WriteString(m.renderFormLabel("worktrees", 15))
-		b.WriteString(m.renderWorktreeToggle())
-		b.WriteString("\n")
+	for _, focus := range editProjectFocuses(project) {
+		m.writeProjFormRow(&b, focus)
 	}
 	return b.String()
 }

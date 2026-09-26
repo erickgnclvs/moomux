@@ -2,13 +2,13 @@
 ╭──────────────────────────────────────╮
 │                                      │
 │                                      │
+│  > ticket url (optional)             │
+│                                      │
+│  > PR url (optional)                 │
+│                                      │
 │  agent:  ‹ [opencode] ›              │
 │                                      │
 │  model:  > model (optional, e.g. an  │
-│                                      │
-│  thinking:  ‹ [default] ›            │
-│                                      │
-│  dangerous:  [off]                   │
 │                                      │
 │  open in background:  [off]          │
 │                                      │
@@ -23,14 +23,18 @@
            ╭────────────────────────────────────────────────────────────────────────────╮           
            │                                                                            │           
            │                                                                            │           
-           │  > existing branch (optional)                                              │           
-           │                                                                            │           
-           │  > base branch (optional, defaults to pr…                                  │           
-           │                                                                            │           
            │  > first prompt (optional)                                                 │           
            │  >                                                                         │           
            │  >                                                                         │           
            │  >                                                                         │           
+           │                                                                            │           
+           │  thinking:  [default]  think  think hard  think harder  ultrathink         │           
+           │                                                                            │           
+           │  > session name (optional)                                                 │           
+           │                                                                            │           
+           │  > existing branch (optional)                                              │           
+           │                                                                            │           
+           │  > base branch (optional, defaults to pr…                                  │           
            │                                                                            │           
            │  > ticket url (optional)                                                   │           
            │                                                                            │           
@@ -39,10 +43,6 @@
            │  agent:  claude  codex  [opencode]  antigravity                            │           
            │                                                                            │           
            │  model:  > model (optional, e.g. anthropic/claud…                          │           
-           │                                                                            │           
-           │  thinking:  [default]  think  think hard  think harder  ultrathink         │           
-           │                                                                            │           
-           │  dangerous:  [off]                                                         │           
            │                                                                            │           
            │  open in background:  [off]                                                │           
            │                                                                            │           

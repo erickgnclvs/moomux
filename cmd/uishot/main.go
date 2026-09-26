@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -34,6 +35,9 @@ import (
 // their special tea.KeyType, anything else is typed as literal runes (so a
 // whole word like "demo/Documents/foo" types into the focused input in one
 // step).
+// keys repeats one key n times, for walking a form's focus.
+func keys(key string, n int) []string { return slices.Repeat([]string{key}, n) }
+
 var screens = map[string][]string{
 	"list": {},
 	// Same as "list" but with enough sessions to force scrolling in the
@@ -44,42 +48,52 @@ var screens = map[string][]string{
 	// "long-list" alone only ever shows the ⌄ one, since it starts at the top.
 	"long-list-scrolled": {"down", "down", "down", "down", "down", "down", "down", "down", "down", "down", "down", "down"},
 	"new-session":        {"n"},
+	// The sample data has two projects, so the form opens on the project
+	// row. From there, in newFormFields: prompt 1, thinking 2, name 3,
+	// branch 4, base branch 5, ticket 6, PR 7, agent 8, model 9.
+	//
+	// Name field focused: its hint says what a blank name falls back to.
+	"new-session-name": append([]string{"n"}, keys("tab", 3)...),
 	// Branch field focused, so its hint (the field that most often needs
-	// correcting) is the one on screen — 2 tabs from the project selector.
-	"new-session-branch": {"n", "tab", "tab"},
-	// 9 tabs from the project selector lands on the thinking selector (see
-	// newFormFieldCount) — the field right after the new model selector,
-	// exercising both new rows' scroll-into-view and hint text at once.
-	"new-session-model": {"n", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "tab"},
-	// 7 tabs from the project selector lands on the agent selector, which the
-	// active sample project ("demo") defaults to codex; one "right" cycles it
-	// to opencode, then a final tab lands on the model row, which for
-	// opencode is a free-text input instead of the claude/codex selector —
-	// exercises that per-agent branch.
-	"new-session-model-opencode": {"n", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "right", "tab"},
+	// correcting) is the one on screen.
+	"new-session-branch": append([]string{"n"}, keys("tab", 4)...),
+	// The model selector, the furthest row down with its own scroll-into-view
+	// and hint text.
+	"new-session-model": append([]string{"n"}, keys("tab", 9)...),
+	// The agent selector, which the active sample project ("demo") defaults
+	// to codex; one "right" cycles it to opencode, then a tab lands on the
+	// model row, which for opencode is a free-text input instead of the
+	// claude/codex selector — exercises that per-agent branch.
+	"new-session-model-opencode": append(append([]string{"n"}, keys("tab", 8)...), "right", "tab"),
 	// two "right" presses cycle to antigravity, then tab to model row.
-	"new-session-model-antigravity": {"n", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "right", "right", "tab"},
-	// One more tab lands on the thinking row, whose hint for antigravity says
-	// the effort flag only applies to model "default" — see newFormFieldHint.
-	"new-session-thinking-antigravity": {"n", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "right", "right", "tab", "tab"},
-	// "left" from the sample project's codex is claude; two tabs land on its
+	"new-session-model-antigravity": append(append([]string{"n"}, keys("tab", 8)...), "right", "right", "tab"),
+	// Back up six rows from the agent to the thinking row, whose hint for
+	// antigravity says the effort flag only applies to model "default" — see
+	// newFormFieldHint.
+	"new-session-thinking-antigravity": append(append([]string{"n"}, keys("tab", 8)...), append([]string{"right", "right"}, keys("shift+tab", 6)...)...),
+	// "left" from the sample project's codex is claude; back up to its
 	// thinking row — Claude Code's --effort levels, and a hint saying so.
-	"new-session-thinking-claude": {"n", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "left", "tab", "tab"},
+	"new-session-thinking-claude": append(append([]string{"n"}, keys("tab", 8)...), append([]string{"left"}, keys("shift+tab", 6)...)...),
 	// Named model *and* a thinking level: the model row warns that the level
 	// is about to be dropped, which the thinking row's own hint can't say to
-	// someone who set the level first — see newFormAgyEffortDropped.
-	"new-session-agy-effort-dropped": {"n", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "right", "right", "tab", "right", "tab", "right", "shift+tab"},
-	// The form preselects the active project, so no "right" press is needed
-	// to pick one; 3 tabs from there lands on the first-prompt textarea (see
-	// newFormFieldCount) — both Enter and ctrl+j insert a newline there,
-	// since that field is the one exception to Enter submitting the form.
-	"new-session-multiline": {"n", "tab", "tab", "tab", "first line", "ctrl+j", "second line"},
+	// someone who set the level first — see newFormAgyEffortDropped. Model
+	// picked, up seven rows to thinking, level picked, down seven to model.
+	"new-session-agy-effort-dropped": slices.Concat(
+		[]string{"n"}, keys("tab", 8), []string{"right", "right", "tab", "right"},
+		keys("shift+tab", 7), []string{"right"}, keys("tab", 7)),
+	// A project that asks for the agent every time: the agent and dangerous
+	// rows move up under the project, the dangerous one focused here.
+	"new-session-ask-agent": {"n", "tab", "tab"},
+	// The first tab lands on the first-prompt textarea — both Enter and
+	// ctrl+j insert a newline there, since that field is the one exception
+	// to Enter submitting the form.
+	"new-session-multiline": {"n", "tab", "first line", "ctrl+j", "second line"},
 	// Submitting against a backend whose CreateSession fails: the form stays
-	// open with everything typed still in it, plus the wrapped error. The
-	// trailing tab moves off the prompt textarea first, since Enter there
-	// inserts a newline instead of submitting.
-	"new-session-error":     {"n", "tab", "myfeat", "tab", "tab", "a first prompt that must survive the failure", "tab", "enter"},
-	"new-session-wide-line": {"n", "tab", "tab", "tab", "this is a single long line typed into the first prompt field that should only wrap once it actually reaches the right edge of the box on a wide terminal"},
+	// open with everything typed still in it, plus the wrapped error. Two
+	// tabs move off the prompt textarea to the name first, since Enter in
+	// the prompt inserts a newline instead of submitting.
+	"new-session-error":     {"n", "tab", "a first prompt that must survive the failure", "tab", "tab", "myfeat", "enter"},
+	"new-session-wide-line": {"n", "tab", "this is a single long line typed into the first prompt field that should only wrap once it actually reaches the right edge of the box on a wide terminal"},
 	// Adding/editing a project only happens inside the picker now (P/E were
 	// removed from the main list), so these open it first.
 	"new-project": {"/", "n"},
@@ -123,11 +137,11 @@ var screens = map[string][]string{
 	"multi-view-pin-empty-project": {"/", "down", "enter"},
 	"edit-session":                 {"e"},
 	"edit-project":                 {"/", "e"},
-	// 3 tabs walks focus from repo (1) through base branch (2) and branch
-	// prefix (3) to land on the emoji selector, showing its focused/[glyph]
-	// state rather than the unfocused default the plain "edit-project" and
-	// "new-project" scenarios capture.
-	"edit-project-emoji": {"/", "e", "tab", "tab", "tab"},
+	// The emoji selector focused, showing its focused/[glyph] state rather
+	// than the unfocused default the plain "edit-project" and "new-project"
+	// scenarios capture. It is last in the edit form (see
+	// editProjectFocuses), seven tabs down from the repo it opens on.
+	"edit-project-emoji": append([]string{"/", "e"}, keys("tab", 7)...),
 	"confirm-delete":     {"d"},
 	// Same dialog, but caught mid-flight: the "d" press's fetchGitStatusCmd
 	// (the live re-check kicked off when the dialog opens) is deliberately
@@ -159,7 +173,7 @@ var screens = map[string][]string{
 	// expanded to the real home dir at runtime so the warning actually
 	// triggers regardless of machine. "ctrl+u" clears each field's cwd
 	// prefill (see newProjectForm) before typing over it.
-	"project-init-choice": {"/", "n", "ctrl+u", "demo2", "tab", "ctrl+u", "$HOME/Documents/projects", "enter"},
+	"project-init-choice": {"/", "n", "ctrl+u", "$HOME/Documents/projects", "tab", "ctrl+u", "demo2", "enter"},
 	// no-projects-startup is the actual first screen a zero-projects config
 	// renders (tui.New's zero-projects branch auto-opens the add-project
 	// form before any key is pressed) — no keys, since that's the point.
@@ -500,6 +514,11 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 			BranchPrefix: "feature", Agent: "claude",
 		},
 	}}
+	if screenName == "new-session-ask-agent" {
+		p := cfg.Projects["demo"]
+		p.PromptAgent = true
+		cfg.Projects["demo"] = p
+	}
 	sessions := sampleSessions()
 	switch screenName {
 	case "long-list", "long-list-scrolled":

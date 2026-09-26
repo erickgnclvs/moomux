@@ -2,17 +2,17 @@
 ╭──────────────────────────────────────╮
 │                                      │
 │                                      │
-│  agent:  ‹ [claude] ›                │
-│                                      │
-│  model:  ‹ [default] ›               │
-│                                      │
 │  thinking:  ‹ [default] ›            │
 │                                      │
-│  dangerous:  [off]                   │
+│  > session name (optional)           │
 │                                      │
-│  open in background:  [off]          │
+│  > existing branch (optional)        │
 │                                      │
-│  auto-submit:  [off]                 │
+│  > base branch (optional, defau…     │
+│                                      │
+│  > ticket url (optional)             │
+│                                      │
+│  > PR url (optional)                 │
 │                                      │
 │  optional — claude --effort level;   │
 │  "default" omits it                  │
@@ -23,14 +23,18 @@
            ╭────────────────────────────────────────────────────────────────────────────╮           
            │                                                                            │           
            │                                                                            │           
-           │  > existing branch (optional)                                              │           
-           │                                                                            │           
-           │  > base branch (optional, defaults to pr…                                  │           
-           │                                                                            │           
            │  > first prompt (optional)                                                 │           
            │  >                                                                         │           
            │  >                                                                         │           
            │  >                                                                         │           
+           │                                                                            │           
+           │  thinking:  [default]  low  medium  high  xhigh  max                       │           
+           │                                                                            │           
+           │  > session name (optional)                                                 │           
+           │                                                                            │           
+           │  > existing branch (optional)                                              │           
+           │                                                                            │           
+           │  > base branch (optional, defaults to pr…                                  │           
            │                                                                            │           
            │  > ticket url (optional)                                                   │           
            │                                                                            │           
@@ -39,10 +43,6 @@
            │  agent:  [claude]  codex  opencode  antigravity                            │           
            │                                                                            │           
            │  model:  [default]  sonnet  opus  fable                                    │           
-           │                                                                            │           
-           │  thinking:  [default]  low  medium  high  xhigh  max                       │           
-           │                                                                            │           
-           │  dangerous:  [off]                                                         │           
            │                                                                            │           
            │  open in background:  [off]                                                │           
            │                                                                            │           

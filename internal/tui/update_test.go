@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,8 +19,21 @@ import (
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
-func keyRune(r string) tea.KeyMsg                        { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(r)} }
-func typeText(m *Model, s string)                        { m.Update(keyRune(s)) }
+func keyRune(r string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(r)} }
+func typeText(m *Model, s string) { m.Update(keyRune(s)) }
+
+// tabTo tabs the new-session form forward until field focus has it, so a test
+// names the field it wants rather than counting how many tabs away it is.
+func tabTo(t *testing.T, m *Model, focus int) {
+	t.Helper()
+	for range newFormFieldCount {
+		if m.newFormFocus == focus {
+			return
+		}
+		press(m, tea.KeyTab)
+	}
+	t.Fatalf("field %d is not in the new-session form's tab cycle", focus)
+}
 func press(m *Model, k tea.KeyType) (tea.Model, tea.Cmd) { return m.Update(tea.KeyMsg{Type: k}) }
 
 // run executes a key press and, if it produced a command, feeds the resulting
@@ -50,6 +64,7 @@ func TestNewSessionFormFlow(t *testing.T) {
 		t.Fatalf("new form view missing form copy:\n%s", v)
 	}
 
+	tabTo(t, m, newFormNameFocus)
 	typeText(m, "myfeat")
 	press(m, tea.KeyLeft) // cursor movement in the name input, NOT the agent selector
 	typeText(m, "X")      // lands before the final rune, proving the cursor moved
@@ -58,10 +73,7 @@ func TestNewSessionFormFlow(t *testing.T) {
 	}
 	m.nameInput.SetValue("myfeat")
 	m.nameInput.CursorEnd()
-	press(m, tea.KeyTab) // -> branch
-	for i := 0; i < 5; i++ {
-		press(m, tea.KeyTab) // branch -> base branch -> prompt -> ticket -> PR -> agent selector
-	}
+	tabTo(t, m, newFormAgentFocus)
 	press(m, tea.KeyRight) // claude -> codex
 	if m.agentNames()[m.newFormAgentIdx] != "codex" {
 		t.Fatalf("agent = %q", m.agentNames()[m.newFormAgentIdx])
@@ -70,10 +82,9 @@ func TestNewSessionFormFlow(t *testing.T) {
 	press(m, tea.KeyShiftTab) // agent -> PR
 	press(m, tea.KeyShiftTab) // PR -> ticket
 	typeText(m, "https://t/1")
-	press(m, tea.KeyShiftTab)
-	press(m, tea.KeyShiftTab)
+	press(m, tea.KeyShiftTab) // ticket -> base branch
 	press(m, tea.KeyShiftTab) // -> branch again
-	if m.newFormFocus != 2 {
+	if m.newFormFocus != newFormBranchFocus {
 		t.Fatalf("focus = %d", m.newFormFocus)
 	}
 
@@ -95,12 +106,11 @@ func TestNewSessionFormSendsFirstPrompt(t *testing.T) {
 	m := newTestModel(be)
 
 	m.Update(keyRune("n"))
+	tabTo(t, m, newFormNameFocus)
 	typeText(m, "myfeat")
-	for i := 0; i < 3; i++ {
-		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt
-	}
+	tabTo(t, m, newFormPromptFocus)
 	typeText(m, "do the thing")
-	press(m, tea.KeyTab) // prompt -> ticket, so Enter submits rather than adding a newline
+	press(m, tea.KeyTab) // off the prompt, so Enter submits rather than adding a newline
 
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(be.createCalls) != 1 {
@@ -124,17 +134,11 @@ func TestNewSessionFormAutoSubmitToggle(t *testing.T) {
 	m := newTestModel(be)
 
 	m.Update(keyRune("n"))
+	tabTo(t, m, newFormNameFocus)
 	typeText(m, "myfeat")
-	for i := 0; i < 3; i++ {
-		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt
-	}
+	tabTo(t, m, newFormPromptFocus)
 	typeText(m, "do the thing")
-	for i := 0; i < 8; i++ {
-		press(m, tea.KeyTab) // prompt -> ticket -> PR -> agent -> model -> thinking -> dangerous -> open-in-background -> auto-submit
-	}
-	if m.newFormFocus != newFormAutoSubmitFocus {
-		t.Fatalf("focus = %d, want auto-submit toggle", m.newFormFocus)
-	}
+	tabTo(t, m, newFormAutoSubmitFocus)
 	press(m, tea.KeyRight)
 	if !m.newFormAutoSubmit {
 		t.Fatal("←→ did not toggle auto-submit on")
@@ -167,12 +171,11 @@ func TestNewSessionFormAutoSubmitDefaultsFromConfigAndOnlyPersistsOnChange(t *te
 	if !m.newFormAutoSubmit {
 		t.Fatal("form did not seed auto-submit from cfg.AutoSubmitDefault")
 	}
+	tabTo(t, m, newFormNameFocus)
 	typeText(m, "myfeat")
-	for i := 0; i < 3; i++ {
-		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt
-	}
+	tabTo(t, m, newFormPromptFocus)
 	typeText(m, "do the thing")
-	press(m, tea.KeyTab) // prompt -> ticket, so Enter submits rather than adding a newline
+	press(m, tea.KeyTab) // off the prompt, so Enter submits rather than adding a newline
 
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(be.createCalls) != 1 || !be.createCalls[0].AutoSubmit {
@@ -199,13 +202,9 @@ func TestNewSessionFormPromptSupportsMultilineNavigation(t *testing.T) {
 	m := newTestModel(be)
 
 	m.Update(keyRune("n"))
+	tabTo(t, m, newFormNameFocus)
 	typeText(m, "myfeat")
-	for i := 0; i < 3; i++ {
-		press(m, tea.KeyTab) // name -> branch -> base branch -> prompt
-	}
-	if m.newFormFocus != 4 {
-		t.Fatalf("focus = %d, want prompt field", m.newFormFocus)
-	}
+	tabTo(t, m, newFormPromptFocus)
 
 	typeText(m, "line one")
 	press(m, tea.KeyEnter)
@@ -227,21 +226,18 @@ func TestNewSessionFormPromptSupportsMultilineNavigation(t *testing.T) {
 	}
 
 	press(m, tea.KeyUp)
-	if m.newFormFocus != 4 {
+	if m.newFormFocus != newFormPromptFocus {
 		t.Fatalf("up arrow left the prompt field: focus = %d", m.newFormFocus)
 	}
 	press(m, tea.KeyDown)
-	if m.newFormFocus != 4 {
+	if m.newFormFocus != newFormPromptFocus {
 		t.Fatalf("down arrow left the prompt field: focus = %d", m.newFormFocus)
 	}
 
 	// Every other field still cycles focus on up/down.
-	press(m, tea.KeyTab) // prompt -> ticket
-	if m.newFormFocus != 5 {
-		t.Fatalf("focus = %d, want ticket field", m.newFormFocus)
-	}
+	tabTo(t, m, newFormTicketFocus)
 	press(m, tea.KeyDown)
-	if m.newFormFocus != 6 {
+	if m.newFormFocus != newFormPRFocus {
 		t.Fatalf("down arrow did not advance focus off the ticket field: focus = %d", m.newFormFocus)
 	}
 }
@@ -258,6 +254,7 @@ func TestNewSessionFormShowsHintWithoutFailingTheCreate(t *testing.T) {
 	m := newTestModel(be)
 
 	m.Update(keyRune("n"))
+	tabTo(t, m, newFormNameFocus)
 	typeText(m, "myfeat")
 
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -280,13 +277,9 @@ func TestNewSessionFormClearsPRAndPromptOnReopen(t *testing.T) {
 	m := newTestModel(be)
 
 	m.Update(keyRune("n"))
-	press(m, tea.KeyTab) // -> branch
-	press(m, tea.KeyTab) // -> base branch
-	press(m, tea.KeyTab) // -> prompt
+	tabTo(t, m, newFormPromptFocus)
 	typeText(m, "leftover prompt")
-	for i := 0; i < 2; i++ {
-		press(m, tea.KeyTab) // prompt -> ticket -> PR
-	}
+	tabTo(t, m, newFormPRFocus)
 	typeText(m, "https://github.com/x/y/pull/2")
 	press(m, tea.KeyEsc) // cancel without submitting
 
@@ -304,14 +297,13 @@ func TestNewSessionFormAppendsTicketAndPRToFirstPrompt(t *testing.T) {
 	m := newTestModel(be)
 
 	m.Update(keyRune("n"))
+	tabTo(t, m, newFormNameFocus)
 	typeText(m, "myfeat")
-	press(m, tea.KeyTab) // -> branch
-	press(m, tea.KeyTab) // -> base branch
-	press(m, tea.KeyTab) // -> prompt
+	tabTo(t, m, newFormPromptFocus)
 	typeText(m, "do the thing")
-	press(m, tea.KeyTab) // -> ticket
+	tabTo(t, m, newFormTicketFocus)
 	typeText(m, "https://ticket.example/1")
-	press(m, tea.KeyTab) // -> PR
+	tabTo(t, m, newFormPRFocus)
 	typeText(m, "https://github.com/x/y/pull/2")
 
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -335,6 +327,7 @@ func TestNewSessionCreateInFlightBlocksSecondForm(t *testing.T) {
 	m := newTestModel(be)
 
 	m.Update(keyRune("n"))
+	tabTo(t, m, newFormNameFocus)
 	typeText(m, "myfeat")
 	_, cmd := press(m, tea.KeyEnter)
 	if cmd == nil {
@@ -358,21 +351,17 @@ func TestNewSessionCreateInFlightBlocksSecondForm(t *testing.T) {
 	}
 }
 
-func TestNewSessionFormEmptySubmitIsNoop(t *testing.T) {
+// An entirely blank form still submits: naming the session is the core's
+// (a random session-<hex> when there's no branch or prompt to go on), so the
+// form doesn't keep a second copy of a "name required" rule.
+func TestNewSessionFormEmptySubmitCreates(t *testing.T) {
 	be := &fakeBackend{}
 	m := newTestModel(be)
 	m.Update(keyRune("n"))
-	press(m, tea.KeyEnter)
-	if len(be.createCalls) != 0 || m.mode != ModeNewForm {
-		t.Fatalf("calls=%v mode=%v", be.createCalls, m.mode)
-	}
-	// The rejection must be visible in the form itself, not a discarded flash.
-	if v := m.View(); !strings.Contains(v, "session name or an existing branch") {
-		t.Fatalf("empty-submit error not rendered:\n%s", v)
-	}
-	press(m, tea.KeyEsc)
-	if m.mode != ModeList {
-		t.Fatalf("mode = %v", m.mode)
+	tabTo(t, m, newFormNameFocus) // off the prompt, where Enter is a newline
+	run(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(be.createCalls) != 1 || be.createCalls[0].Name != "" || be.createCalls[0].Prompt != "" {
+		t.Fatalf("createCalls = %+v, want one request with an empty name", be.createCalls)
 	}
 }
 
@@ -384,6 +373,7 @@ func TestNewSessionFormAgentRequiredErrorRendered(t *testing.T) {
 	if m.newFormAgentIdx != -1 {
 		t.Fatalf("agentIdx = %d, want -1 for prompt_agent project", m.newFormAgentIdx)
 	}
+	tabTo(t, m, newFormNameFocus)
 	typeText(m, "myfeat")
 	press(m, tea.KeyEnter)
 	if len(be.createCalls) != 0 {
@@ -409,7 +399,7 @@ func TestNewSessionFormDefaultsToActiveProjectWithMultipleProjects(t *testing.T)
 	if m.projects[m.newFormProjIdx] != "beta" {
 		t.Fatalf("projIdx = %d, want beta after switching", m.newFormProjIdx)
 	}
-	press(m, tea.KeyTab) // -> name
+	tabTo(t, m, newFormNameFocus)
 	typeText(m, "myfeat")
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(be.createCalls) != 1 || be.createCalls[0].Project != "beta" {
@@ -433,6 +423,7 @@ func TestNewSessionCreateErrorKeepsForm(t *testing.T) {
 	be := &fakeBackend{createErr: errors.New("boom")}
 	m := newTestModel(be)
 	m.Update(keyRune("n"))
+	tabTo(t, m, newFormNameFocus)
 	typeText(m, "x")
 	m.promptInput.SetValue("a very long first prompt")
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -444,6 +435,57 @@ func TestNewSessionCreateErrorKeepsForm(t *testing.T) {
 	}
 	if m.nameInput.Value() != "x" || m.promptInput.Value() != "a very long first prompt" {
 		t.Fatalf("inputs cleared: name=%q prompt=%q", m.nameInput.Value(), m.promptInput.Value())
+	}
+}
+
+// A blank name and branch with a prompt submits: the core names the session
+// after the prompt.
+func TestNewSessionBlankNameWithPromptSubmits(t *testing.T) {
+	be := &fakeBackend{}
+	m := newTestModel(be)
+	m.Update(keyRune("n"))
+	tabTo(t, m, newFormNameFocus) // off the prompt, where Enter is a newline
+	m.promptInput.SetValue("add dark mode")
+	run(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(be.createCalls) != 1 || be.createCalls[0].Name != "" || be.createCalls[0].Prompt != "add dark mode" {
+		t.Fatalf("createCalls = %+v", be.createCalls)
+	}
+}
+
+// The dangerous toggle is the project's to set, as on the macOS app: the
+// form only shows it — right under the project, with the agent it goes with —
+// for a project that asks for the agent every time. Anywhere else the request
+// leaves it nil, so the core applies the project's own setting.
+func TestNewSessionDangerousOnlyForAskAgentProjects(t *testing.T) {
+	be := &fakeBackend{}
+	m := newTestModel(be)
+	m.Update(keyRune("n"))
+	if slices.Contains(m.newFormFields(), newFormDangerousFocus) || strings.Contains(m.View(), "dangerous:") {
+		t.Fatalf("dangerous toggle shown for a project with its own agent:\n%s", m.View())
+	}
+	tabTo(t, m, newFormNameFocus)
+	typeText(m, "a")
+	run(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(be.createCalls) != 1 || be.createCalls[0].Dangerous != nil {
+		t.Fatalf("createCalls = %+v, want Dangerous nil", be.createCalls)
+	}
+
+	m.cfg.Projects["demo"] = config.Project{Repo: "/tmp/demo", PromptAgent: true}
+	m.Update(keyRune("n"))
+	if got := m.newFormFields()[:4]; !slices.Equal(got, []int{newFormProjFocus, newFormAgentFocus, newFormDangerousFocus, newFormPromptFocus}) {
+		t.Fatalf("fields start %v, want project, agent, dangerous, prompt", got)
+	}
+	if v := m.View(); strings.Index(v, "dangerous:") > strings.Index(v, "first prompt") {
+		t.Fatalf("agent and dangerous rows should sit above the prompt:\n%s", v)
+	}
+	m.newFormAgentIdx = 0
+	tabTo(t, m, newFormDangerousFocus)
+	press(m, tea.KeyRight)
+	tabTo(t, m, newFormNameFocus)
+	typeText(m, "b")
+	run(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(be.createCalls) != 2 || be.createCalls[1].Dangerous == nil || !*be.createCalls[1].Dangerous {
+		t.Fatalf("createCalls[1] = %+v, want Dangerous true", be.createCalls[1:])
 	}
 }
 
@@ -997,11 +1039,7 @@ func TestEditPlainProjectShowsOnlyRepoAndAgent(t *testing.T) {
 			t.Fatalf("plain project editor contains %q:\n%s", hidden, view)
 		}
 	}
-	press(m, tea.KeyTab)
-	if m.projForm.focus != 4 {
-		t.Fatalf("focus = %d, want emoji field", m.projForm.focus)
-	}
-	press(m, tea.KeyTab)
+	press(m, tea.KeyTab) // repo -> agent: no branch rows in between
 	if m.projForm.focus != projFormInputCount+1 {
 		t.Fatalf("focus = %d, want agent selector", m.projForm.focus)
 	}
@@ -1046,19 +1084,22 @@ func TestNewProjectTabCyclesFocus(t *testing.T) {
 	m := newTestModel(be)
 	m.Update(slashKey())
 	m.Update(keyRune("n"))
-	total := projFormInputCount + 5
-	for i := 1; i < total; i++ {
+	order := newProjectFocuses
+	if m.projForm.focus != order[0] || !m.projForm.inputs[order[0]].Focused() {
+		t.Fatalf("form opened on focus %d, want %d (repo) with its input focused", m.projForm.focus, order[0])
+	}
+	for i := 1; i < len(order); i++ {
 		press(m, tea.KeyTab)
-		if m.projForm.focus != i {
-			t.Fatalf("after %d tabs focus = %d", i, m.projForm.focus)
+		if m.projForm.focus != order[i] {
+			t.Fatalf("after %d tabs focus = %d, want %d", i, m.projForm.focus, order[i])
 		}
 	}
 	press(m, tea.KeyTab) // wraps
-	if m.projForm.focus != 0 {
+	if m.projForm.focus != order[0] {
 		t.Fatalf("focus = %d", m.projForm.focus)
 	}
 	press(m, tea.KeyShiftTab)
-	if m.projForm.focus != total-1 {
+	if m.projForm.focus != order[len(order)-1] {
 		t.Fatalf("focus = %d", m.projForm.focus)
 	}
 	press(m, tea.KeyEsc)
@@ -1512,6 +1553,7 @@ func TestBracketsAreTextInputInForms(t *testing.T) {
 	m := newTestModel(be)
 
 	m.Update(keyRune("n"))
+	tabTo(t, m, newFormNameFocus)
 	typeText(m, "feat[1]")
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
 

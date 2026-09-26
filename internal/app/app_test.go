@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/erickgnclvs/moomux/internal/codexhook"
 	"github.com/erickgnclvs/moomux/internal/config"
@@ -271,6 +272,7 @@ func TestSanitizeName(t *testing.T) {
 		"///":             "session",
 		"":                "session",
 		"under_score_ok9": "under_score_ok9",
+		"修复 bug":          "修复-bug",
 	}
 	for in, want := range cases {
 		if got := sanitizeName(in); got != want {
@@ -288,6 +290,69 @@ func TestDeriveNameFromBranch(t *testing.T) {
 	for in, want := range cases {
 		if got := deriveNameFromBranch(in); got != want {
 			t.Errorf("deriveNameFromBranch(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestDeriveNameFromPrompt(t *testing.T) {
+	cases := map[string]string{
+		"Add dark mode to the settings page":           "add-dark-mode-settings",
+		"Fix the login bug":                            "fix-login-bug",
+		"please, can you fix /tmp/shot.png the header": "fix-header",
+		"Don't retry on 404s\nmore detail below":       "dont-retry-404s",
+		"修复登录错误":                                       "修复登录错误",
+		"Réparer écran accueil":                        "réparer-écran-accueil",
+		"the a to of":                                  "",
+		"/Users/me/Desktop/shot.png":                   "",
+		"":                                             "",
+		// One token past the cap has no boundary: hard-cut.
+		strings.Repeat("x", 150): strings.Repeat("x", 40),
+		// Stops at the word that would cross 40 rather than splitting it.
+		"refactor authentication middleware internationalization": "refactor-authentication-middleware",
+	}
+	for in, want := range cases {
+		got := deriveNameFromPrompt(in)
+		if got != want {
+			t.Errorf("deriveNameFromPrompt(%q) = %q, want %q", in, got, want)
+		}
+		if got != "" && sanitizeName(got) != got {
+			t.Errorf("deriveNameFromPrompt(%q) = %q, which sanitizeName would change", in, got)
+		}
+		if n := utf8.RuneCountInString(got); n > 40 {
+			t.Errorf("deriveNameFromPrompt(%q) is %d runes, over the cap", in, n)
+		}
+	}
+}
+
+// A blank name with no branch but a prompt is named after the prompt, and a
+// prompt that reduces to a name already in use gets a distinct one instead of
+// failing with "already exists".
+func TestCreateSessionNamesFromPrompt(t *testing.T) {
+	a, _, tm := newTestApp(t, map[string]config.Project{
+		"demo": {Repo: t.TempDir(), BaseBranch: "main"},
+	})
+	if err := a.Store.Put(session.Session{ID: session.MakeID("demo", "fix-login-bug"), Project: "demo", Name: "fix-login-bug"}); err != nil {
+		t.Fatal(err)
+	}
+	tmuxName := TmuxSessionName(session.MakeID("demo", "fix-login-bug-2"), "fix-login-bug-2")
+	tm.out["capture-pane -p -t ="+tmuxName+":^"] = "agent-idle"
+
+	s, _, err := a.CreateSession(session.CreateRequest{Project: "demo", Agent: "claude", Prompt: "Fix the login bug"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Name != "fix-login-bug-2" {
+		t.Fatalf("name = %q, want fix-login-bug-2", s.Name)
+	}
+	// Nothing usable in the prompt, or no prompt at all, still creates
+	// under a made-up name rather than failing with "name required".
+	for _, prompt := range []string{"the to of", ""} {
+		s, _, err = a.CreateSession(session.CreateRequest{Project: "demo", Agent: "claude", Prompt: prompt})
+		if err != nil {
+			t.Fatalf("prompt %q: %v", prompt, err)
+		}
+		if !strings.HasPrefix(s.Name, "session-") {
+			t.Fatalf("prompt %q: name = %q, want session-<random>", prompt, s.Name)
 		}
 	}
 }
