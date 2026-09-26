@@ -1201,7 +1201,10 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 // to change at all (proving the agent process actually took over the
 // terminal) before it starts checking for stability, using the whole
 // readiness budget for that wait rather than a shorter carve-out of it.
-const (
+//
+// Vars, not consts, so the test binary can shrink them (TestMain): a fake
+// pane that never changes otherwise sleeps out the full timeout per test.
+var (
 	paneStablePoll   = 300 * time.Millisecond
 	paneStableChecks = 2
 	paneReadyTimeout = 15 * time.Second

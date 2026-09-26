@@ -23,6 +23,16 @@ import (
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
+// TestMain shrinks StartFirstPrompt's readiness timings. The fakes answer
+// instantly, and a pane stubbed with one constant capture never "changes",
+// so at real timings every such test slept out paneReadyTimeout (15s, often
+// twice) — most of this package's runtime.
+func TestMain(m *testing.M) {
+	paneStablePoll = time.Millisecond
+	paneReadyTimeout = 100 * time.Millisecond
+	os.Exit(m.Run())
+}
+
 // fakeGitRunner records git invocations. Keys in failOn (joined args, without
 // the dir) make that call fail, so tests can simulate missing remotes,
 // missing branches, or worktree failures.
