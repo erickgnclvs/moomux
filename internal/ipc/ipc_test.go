@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -45,6 +46,7 @@ type fakeBackend struct {
 	onAddProject      func(string, config.Project)
 	cfg               *config.Config
 	agentOptions      []config.AgentOption
+	paneCwd           func(string) (string, error) // Server.PaneCwd
 	mu                sync.Mutex
 }
 
@@ -208,7 +210,7 @@ func start(t *testing.T, b *fakeBackend, cfg *config.Config, src sessionview.Sou
 	ln := &trackingListener{Listener: raw}
 	t.Cleanup(func() { ln.kill(); os.RemoveAll(dir) })
 	b.cfg = cfg
-	srv := &Server{Backend: b, Config: snapshotter(b, cfg), AgentOptions: func() []config.AgentOption { return b.agentOptions }, Source: src}
+	srv := &Server{Backend: b, Config: snapshotter(b, cfg), AgentOptions: func() []config.AgentOption { return b.agentOptions }, Source: src, PaneCwd: b.paneCwd}
 	go srv.Serve(ln)
 	return &Client{Socket: sock}, ln
 }
@@ -1033,5 +1035,284 @@ func TestClientTimeoutBoundsDial(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("dial ignored Client.Timeout")
+	}
+}
+
+func TestReadFile(t *testing.T) {
+	root := t.TempDir()
+	wt := filepath.Join(root, "wt")
+	tmp := filepath.Join(root, "tmp")
+	outside := filepath.Join(root, "outside")
+	sources := filepath.Join(wt, "Sources")
+	for _, d := range []string{filepath.Join(wt, "src"), filepath.Join(sources, "UI"), tmp, outside} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(p, s string) {
+		if err := os.WriteFile(p, []byte(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(wt, "src", "Foo.swift"), "foo")
+	write(filepath.Join(sources, "UI", "Foo.swift"), "ui")
+	if err := syscall.Mkfifo(filepath.Join(wt, "pipe"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	write(filepath.Join(wt, "log:42"), "colon")
+	write(filepath.Join(tmp, "shot.png"), "png")
+	write(filepath.Join(outside, "secret"), "secret")
+	write(filepath.Join(wt, "locked"), "locked")
+	if err := os.Chmod(filepath.Join(wt, "locked"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "secret"), filepath.Join(wt, "link")); err != nil {
+		t.Fatal(err)
+	}
+	big := filepath.Join(wt, "big.bin")
+	write(big, "")
+	if err := os.Truncate(big, maxSaveFile+1); err != nil {
+		t.Fatal(err)
+	}
+	half := filepath.Join(wt, "half.bin")
+	write(half, "")
+	if err := os.Truncate(half, maxSaveFile+1<<19); err != nil {
+		t.Fatal(err)
+	}
+	// os.UserHomeDir reads $HOME; the worktree stands in for it, so a ~
+	// path inside it is served and one climbing out is refused.
+	t.Setenv("HOME", wt)
+	// What readFile answers is symlink-resolved (t.TempDir is under
+	// /private/var on macOS), so expectations are too.
+	realWT, _ := filepath.EvalSymlinks(wt)
+	realTmp, _ := filepath.EvalSymlinks(tmp)
+	foo := filepath.Join(realWT, "src", "Foo.swift")
+
+	for _, tc := range []struct {
+		name, path, wantPath, wantData, wantErr string
+		bases                                   []string // default: just the worktree
+	}{
+		{"relative", " src/Foo.swift\n", foo, "foo", "", nil},
+		{"absolute in worktree", filepath.Join(wt, "src", "Foo.swift"), foo, "foo", "", nil},
+		{"line suffix", "src/Foo.swift:42", foo, "foo", "", nil},
+		{"line:col suffix", "src/Foo.swift:42:7", foo, "foo", "", nil},
+		{"line:col: as a compiler prints it", "src/Foo.swift:42:7:", foo, "foo", "", nil},
+		{"line: as rg prints it", "src/Foo.swift:42:", foo, "foo", "", nil},
+		{"real file with a colon suffix wins", "log:42", filepath.Join(realWT, "log:42"), "colon", "", nil},
+		{"real colon file wins over a column", "log:42:7", filepath.Join(realWT, "log:42"), "colon", "", nil},
+		{"file used as a folder", "src/Foo.swift/x", "", "", "does not exist", nil},
+		{"unreadable", "locked", "", "", "permission denied", nil},
+		{"../ escape", "../outside/secret", "", "", "outside this session's worktree", nil},
+		{"symlink to outside", "link", "", "", "outside this session's worktree", nil},
+		{"temp dir", filepath.Join(tmp, "shot.png"), filepath.Join(realTmp, "shot.png"), "png", "", nil},
+		{"directory", "src", "", "", "is a folder", nil},
+		{"oversize by a byte", "big.bin", "", "", "32.1 MB is over the 32 MB limit", nil},
+		{"oversize by half a MB", "half.bin", "", "", "32.5 MB is over the 32 MB limit", nil},
+		{"named pipe", "pipe", "", "", "is not a regular file", nil},
+		{"pane cwd first", "UI/Foo.swift", filepath.Join(realWT, "Sources", "UI", "Foo.swift"), "ui", "", []string{sources, wt}},
+		{"worktree after the pane cwd", "src/Foo.swift:3", foo, "foo", "", []string{sources, wt}},
+		{"a pane cwd is not a root", "secret", "", "", "outside this session's worktree", []string{outside, wt}},
+		{"~ inside the worktree", "~/src/Foo.swift", foo, "foo", "", nil},
+		{"~ outside", "~/../outside/secret", "", "", "outside this session's worktree", nil},
+		{"bare ~", "~", "", "", "is a folder", nil},
+		{"missing", "nope.txt:3", "", "", "does not exist", nil},
+		{"empty", "  ", "", "", "empty path", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bases := tc.bases
+			if bases == nil {
+				bases = []string{wt}
+			}
+			// A pipe must be refused, not opened: the open would block.
+			type answer struct {
+				path string
+				data []byte
+				err  error
+			}
+			done := make(chan answer, 1)
+			go func() {
+				p, d, err := readFile(bases, []string{wt, tmp}, tc.path)
+				done <- answer{p, d, err}
+			}()
+			var got answer
+			select {
+			case got = <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatalf("readFile(%q) hung", tc.path)
+			}
+			path, data, err := got.path, got.data, got.err
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("readFile(%q) err = %v, want %q", tc.path, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || path != tc.wantPath || string(data) != tc.wantData {
+				t.Fatalf("readFile(%q) = %q, %q, %v; want %q, %q", tc.path, path, data, err, tc.wantPath, tc.wantData)
+			}
+		})
+	}
+}
+
+// A pipe swapped in after readFile's Stat reaches the open itself, which
+// must not block on it either.
+func TestOpenRegularRefusesAPipeWithoutBlocking(t *testing.T) {
+	dir := t.TempDir()
+	if err := syscall.Mkfifo(filepath.Join(dir, "pipe"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	done := make(chan error, 1)
+	go func() {
+		f, _, err := openRegular(root, "pipe", "pipe")
+		if f != nil {
+			f.Close()
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "is not a regular file") {
+			t.Fatalf("openRegular of a pipe: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("openRegular blocked on a named pipe")
+	}
+}
+
+func TestReadFileOverTheWire(t *testing.T) {
+	wt := t.TempDir()
+	if err := os.WriteFile(filepath.Join(wt, "a.txt"), []byte{0, 1, 0xff}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := start(t, &fakeBackend{sessions: []session.Session{{ID: "s1", WorktreePath: wt}}}, nil, nil)
+	path, data, err := c.ReadFile("s1", "a.txt:9")
+	if err != nil || filepath.Base(path) != "a.txt" || !bytes.Equal(data, []byte{0, 1, 0xff}) {
+		t.Fatalf("ReadFile = %q, %v, %v", path, data, err)
+	}
+	if _, _, err := c.ReadFile("nope", "a.txt"); err == nil || !strings.Contains(err.Error(), "no session") {
+		t.Fatalf("ReadFile of an unknown session: %v", err)
+	}
+}
+
+func TestReadFileOverTheWireUsesThePaneCwdAndTheSaveFileDir(t *testing.T) {
+	wt := t.TempDir()
+	sub := filepath.Join(wt, "Sources")
+	if err := os.MkdirAll(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "Foo.swift"), []byte("foo"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b := &fakeBackend{
+		sessions: []session.Session{{ID: "s1", WorktreePath: wt, TmuxSession: "moomux-s1"}},
+		paneCwd: func(name string) (string, error) {
+			if name != "moomux-s1" {
+				return "", fmt.Errorf("no session %s", name)
+			}
+			return sub, nil
+		},
+	}
+	c, _ := start(t, b, nil, nil)
+	if _, data, err := c.ReadFile("s1", "Foo.swift:1:1:"); err != nil || string(data) != "foo" {
+		t.Fatalf("ReadFile relative to the pane cwd = %q, %v", data, err)
+	}
+
+	// SaveFile's dir is served: a file a phone uploaded can be opened again.
+	saved, err := c.SaveFile("shot.png", []byte("png"))
+	if err != nil {
+		t.Fatalf("SaveFile: %v", err)
+	}
+	t.Cleanup(func() { os.Remove(saved) })
+	if _, data, err := c.ReadFile("s1", saved); err != nil || string(data) != "png" {
+		t.Fatalf("ReadFile of a saved file = %q, %v", data, err)
+	}
+
+	// The rest of os.TempDir() is not — unless it is /tmp itself, as on Linux.
+	tmp, _ := filepath.EvalSymlinks(os.TempDir())
+	slash, _ := filepath.EvalSymlinks("/tmp")
+	if rel, err := filepath.Rel(slash, tmp); err == nil && !strings.HasPrefix(rel, "..") {
+		t.Skip("os.TempDir() is under /tmp here, which is served")
+	}
+	other, err := os.CreateTemp("", "other-app-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other.Close()
+	t.Cleanup(func() { os.Remove(other.Name()) })
+	if _, _, err := c.ReadFile("s1", other.Name()); err == nil || !strings.Contains(err.Error(), "outside") {
+		t.Fatalf("ReadFile of another app's temp file: %v", err)
+	}
+}
+
+func TestResolveFileOverTheWire(t *testing.T) {
+	wt := t.TempDir()
+	sub := filepath.Join(wt, "Sources")
+	if err := os.MkdirAll(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	foo := filepath.Join(sub, "Foo.swift")
+	if err := os.WriteFile(foo, []byte("foo"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Over ReadFile's cap: resolving reads nothing, so it must still answer.
+	big := filepath.Join(wt, "big.bin")
+	if err := os.WriteFile(big, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(big, maxSaveFile+1); err != nil {
+		t.Fatal(err)
+	}
+	b := &fakeBackend{
+		sessions: []session.Session{{ID: "s1", WorktreePath: wt, TmuxSession: "moomux-s1"}},
+		paneCwd:  func(string) (string, error) { return sub, nil },
+	}
+	c, _ := start(t, b, nil, nil)
+	realFoo, _ := filepath.EvalSymlinks(foo)
+	if got, err := c.ResolveFile("s1", "Foo.swift:42:7:"); err != nil || got != realFoo {
+		t.Fatalf("ResolveFile relative = %q, %v; want %q", got, err, realFoo)
+	}
+	realBig, _ := filepath.EvalSymlinks(big)
+	if got, err := c.ResolveFile("s1", big); err != nil || got != realBig {
+		t.Fatalf("ResolveFile over the read cap = %q, %v; want %q", got, err, realBig)
+	}
+	if _, _, err := c.ReadFile("s1", big); err == nil || !strings.Contains(err.Error(), "limit") {
+		t.Fatalf("ReadFile of the same file: %v", err)
+	}
+	if _, err := c.ResolveFile("s1", "/etc/passwd"); err == nil || !strings.Contains(err.Error(), "outside") {
+		t.Fatalf("ResolveFile outside the roots: %v", err)
+	}
+	if _, err := c.ResolveFile("s1", "Sources"); err == nil || !strings.Contains(err.Error(), "is a folder") {
+		t.Fatalf("ResolveFile of a folder: %v", err)
+	}
+	if _, err := c.ResolveFile("nope", "Foo.swift"); err == nil || !strings.Contains(err.Error(), "no session") {
+		t.Fatalf("ResolveFile of an unknown session: %v", err)
+	}
+}
+
+// The two methods share every refusal, but each names itself: the Mac shows
+// a ResolveFile error in an alert, and "ReadFile: …" there would misname it.
+func TestFileErrorsNameTheirMethod(t *testing.T) {
+	wt := t.TempDir()
+	c, _ := start(t, &fakeBackend{sessions: []session.Session{{ID: "s1", WorktreePath: wt}}}, nil, nil)
+	for _, tc := range []struct{ id, path, want string }{
+		{"s1", "/etc/passwd", "is outside this session's worktree"},
+		{"s1", ".", "is a folder, not a file"},
+		{"s1", "nope.txt", "does not exist"},
+		{"s1", " ", "empty path"},
+		{"nope", "a.txt", "no session"},
+	} {
+		_, rerr := c.ResolveFile(tc.id, tc.path)
+		_, _, ferr := c.ReadFile(tc.id, tc.path)
+		for method, err := range map[string]error{"ResolveFile": rerr, "ReadFile": ferr} {
+			if err == nil || !strings.HasPrefix(err.Error(), method+": ") || !strings.Contains(err.Error(), tc.want) ||
+				strings.Count(err.Error(), "File: ") != 1 {
+				t.Errorf("%s(%q, %q) err = %v, want %q prefixed %q once", method, tc.id, tc.path, err, tc.want, method+":")
+			}
+		}
 	}
 }

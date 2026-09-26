@@ -804,7 +804,7 @@ func runServe(args []string) error {
 	}
 	defer ln.Close()
 	fmt.Fprintln(os.Stderr, "moomux: serving on", *sock)
-	srv := &ipc.Server{Backend: a, Config: a.ConfigSnapshot, AgentOptions: a.AgentOptions, Source: buildSource(a, home)}
+	srv := &ipc.Server{Backend: a, Config: a.ConfigSnapshot, AgentOptions: a.AgentOptions, Source: buildSource(a, home), PaneCwd: a.Tmux.ActivePaneCwd}
 	// The tailnet listener is a second front door onto the same handler, for
 	// clients that cannot reach a unix socket (a phone). Its absence is
 	// never fatal — no tailscale, a stopped daemon, a logged-out node — the

@@ -457,3 +457,18 @@ func TestAgentWindowIsReresolvedAfterAFailedCall(t *testing.T) {
 		t.Fatalf("resolved the agent window %d times, want 2 (the stale id was kept)", lookups)
 	}
 }
+
+func TestActivePaneCwdAsksForTheCurrentWindowsActivePane(t *testing.T) {
+	fr := &fakeRunner{out: map[string]string{
+		"display-message -p -t =moomux-foo: #{pane_current_path}": "/wt/Sources\n",
+	}}
+	c := &Client{Runner: fr}
+	got, err := c.ActivePaneCwd("moomux-foo")
+	if err != nil || got != "/wt/Sources" {
+		t.Fatalf("ActivePaneCwd = %q, %v; want /wt/Sources", got, err)
+	}
+	// One call, and not the agent-window lookup PaneCwd goes through.
+	if len(fr.calls) != 1 {
+		t.Fatalf("calls = %v", fr.calls)
+	}
+}
