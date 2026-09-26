@@ -10,11 +10,14 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/erickgnclvs/moomux/internal/antigravity"
 	"github.com/erickgnclvs/moomux/internal/claudehook"
@@ -712,14 +715,16 @@ func (a *App) Sessions() []session.Session {
 	return all
 }
 
-// sanitizeName collapses anything that isn't alphanumeric/-/_ to "-", so the
-// result is safe as a git branch name, filesystem path component, and tmux
-// session name all at once.
+// sanitizeName collapses anything that isn't a letter, digit, - or _ to "-",
+// so the result is safe as a git branch name, filesystem path component, and
+// tmux session name all at once. Letters and digits are Unicode ones: git,
+// the filesystem and tmux all take UTF-8, and an ASCII-only rule turned a
+// name typed in Chinese into nothing at all.
 func sanitizeName(name string) string {
 	var b strings.Builder
 	for _, r := range name {
 		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+		case unicode.IsLetter(r), unicode.IsDigit(r), r == '-', r == '_':
 			b.WriteRune(r)
 		default:
 			b.WriteRune('-')
@@ -742,10 +747,70 @@ func deriveNameFromBranch(branch string) string {
 	return sanitizeName(name)
 }
 
+// promptNameFillers are dropped when naming a session after its prompt:
+// they're most of the words in a request and tell sessions apart least.
+var promptNameFillers = map[string]bool{
+	"a": true, "an": true, "the": true, "to": true, "of": true, "for": true,
+	"please": true, "and": true, "or": true, "in": true, "on": true, "at": true,
+	"with": true, "is": true, "it": true, "this": true, "that": true,
+	"can": true, "could": true, "would": true, "you": true, "i": true,
+	"we": true, "me": true, "my": true, "our": true, "some": true,
+}
+
+const (
+	promptNameMaxWords = 4
+	promptNameMaxRunes = 40
+)
+
+// deriveNameFromPrompt names a session after the first line of its prompt:
+// "Add dark mode to the settings page" becomes "add-dark-mode-settings". It
+// keeps the first few words that aren't filler, skipping any token with a
+// "/" in it (usually the path of a dropped-in image), and cuts at a word
+// boundary to stay under promptNameMaxRunes. Empty means nothing usable was
+// left.
+func deriveNameFromPrompt(prompt string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(prompt), "\n")
+	var words []string
+	runes := 0
+	for _, tok := range strings.Fields(line) {
+		if strings.Contains(tok, "/") {
+			continue
+		}
+		// "don't" is one word, not "don" and "t".
+		tok = strings.NewReplacer("'", "", "\u2019", "").Replace(strings.ToLower(tok))
+		for _, w := range strings.FieldsFunc(tok, func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+		}) {
+			if promptNameFillers[w] {
+				continue
+			}
+			n := utf8.RuneCountInString(w)
+			if len(words) > 0 && runes+n > promptNameMaxRunes {
+				return strings.Join(words, "-")
+			}
+			if n > promptNameMaxRunes {
+				// One token longer than the cap has no boundary to cut at.
+				w, n = string([]rune(w)[:promptNameMaxRunes]), promptNameMaxRunes
+			}
+			words = append(words, w)
+			runes += n + 1
+			if len(words) == promptNameMaxWords {
+				return strings.Join(words, "-")
+			}
+		}
+	}
+	return strings.Join(words, "-")
+}
+
 // uniqueNameFromBranch derives a session name from branch and, if it already
 // collides with an existing session in project, appends -2, -3, ... until free.
 func (a *App) uniqueNameFromBranch(project, branch string) string {
-	base := deriveNameFromBranch(branch)
+	return a.uniqueName(project, deriveNameFromBranch(branch))
+}
+
+// uniqueName returns base, or base-2, base-3, ... — the first that no
+// session in project already uses.
+func (a *App) uniqueName(project, base string) string {
 	name := base
 	for i := 2; ; i++ {
 		if _, ok := a.Store.Get(session.MakeID(project, name)); !ok {
@@ -818,7 +883,22 @@ type CreateReport struct {
 // than flattened into one string.
 func (a *App) CreateSessionReport(req session.CreateRequest) (session.Session, CreateReport, error) {
 	var report CreateReport
-	s, hint, err := a.createSession(req.Project, req.Name, req.Agent, req.Branch, req.Ticket,
+	name := req.Name
+	if name == "" && req.Branch == "" {
+		// Named after the prompt here, in the core, rather than by each
+		// client: only the core can see which names are taken.
+		if req.Prompt != "" {
+			base := deriveNameFromPrompt(req.Prompt)
+			if base == "" {
+				// Nothing usable in it (all filler, or only an image path):
+				// losing the prompt to "name required" would be worse than
+				// an arbitrary name the user can rename later.
+				base = fmt.Sprintf("session-%04x", rand.IntN(0x10000))
+			}
+			name = a.uniqueName(req.Project, base)
+		}
+	}
+	s, hint, err := a.createSession(req.Project, name, req.Agent, req.Branch, req.Ticket,
 		req.OpenTerminal, req.Dangerous, req.BaseBranch, req.Model, req.Thinking)
 	if err != nil {
 		return session.Session{}, report, err

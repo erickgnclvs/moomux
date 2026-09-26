@@ -379,8 +379,12 @@ func TestShortFormViewportKeepsFocusedInputVisible(t *testing.T) {
 	m.resizeFormInputs()
 
 	values := []string{"[demo]", "unique-name", "unique-branch", "unique-basebranch", "unique-prompt", "unique-ticket", "unique-pr", "[claude]", "[default]", "[default]", "[off]", "[off]", "[off]"}
-	hints := []string{"which project", "worktree folder", "existing branch", "project's base branch", "agent's first task", "clickable ticket", "clickable PR", "←→ to choose", "omits the flag", "claude --effort level", "permission prompts", "background", "starts right away"}
+	hints := []string{"which project", "folder name", "existing branch", "project's base branch", "agent's first task", "clickable ticket", "clickable PR", "←→ to choose", "omits the flag", "claude --effort level", "permission prompts", "background", "starts right away"}
 	for focus, value := range values {
+		if focus == newFormDangerousFocus {
+			// Not a row for this project — see TestNewSessionDangerousOnlyForAskAgentProjects.
+			continue
+		}
 		m.newFormBlurAll()
 		m.newFormFocus = focus
 		m.newFormFocusInput()

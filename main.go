@@ -381,7 +381,7 @@ func explicitFlagOverride(fs *flag.FlagSet, name string, value bool) *bool {
 func runSpawn(args []string) error {
 	fs := flag.NewFlagSet("spawn", flag.ExitOnError)
 	project := fs.String("project", "", "project name (required; run -list to see configured projects)")
-	name := fs.String("name", "", "session name (derived from -branch if omitted)")
+	name := fs.String("name", "", "session name (derived from -branch, else -prompt, if omitted)")
 	agent := fs.String("agent", "", "agent override (claude, codex, opencode, antigravity; \"agy\" is accepted as an alias)")
 	model := fs.String("model", "", "model override, passed to the agent as --model (e.g. sonnet, opus, haiku)")
 	thinking := fs.String("thinking", "", "thinking/reasoning level: for codex, a real -c model_reasoning_effort value (minimal, low, medium, high, xhigh); for claude, --effort (low, medium, high, xhigh, max); for antigravity, --effort (low, medium, high), which agy accepts only when no -model is given; for opencode, a phrase prepended to -prompt (e.g. think, think hard, ultrathink) — no effect there without -prompt")

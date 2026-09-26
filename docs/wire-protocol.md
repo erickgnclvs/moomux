@@ -286,6 +286,17 @@ as plain folder" dialog.
 
 `Attach` is a method name too, but it is not on this channel — see below.
 
+`CreateSession`'s `Name` may be empty. With a `Branch`, the core names the
+session after the branch; with no `Branch` but a `Prompt`, after the
+prompt's first line (`"Add dark mode to the settings page"` →
+`add-dark-mode-settings`). Either way it appends `-2`, `-3`, … if the name
+is taken, so a client should send the empty `Name` rather than derive one
+itself: it can't see which names are in use, and a second copy of the rule
+drifts. The name the core picked comes back on the returned session. A
+prompt with no usable words (all filler, or only a dropped image path) gets
+a random `session-<hex>` name rather than an error. With no `Branch` and no
+`Prompt` either, the call fails with `session name required`.
+
 ### `Capture` and `Review`: two holes that used to be shelled out
 
 Both of these were the Mac app running `tmux` itself, which is legal for an

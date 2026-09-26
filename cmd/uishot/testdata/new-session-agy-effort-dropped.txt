@@ -2,13 +2,13 @@
 ╭──────────────────────────────────────╮
 │                                      │
 │                                      │
+│  > ticket url (optional)             │
+│                                      │
+│  > PR url (optional)                 │
+│                                      │
 │  agent:  ‹ [antigravity] ›           │
 │                                      │
 │  model:  [Gemini 3.8 Flash (High)]   │
-│                                      │
-│  thinking:  ‹ [low] ›                │
-│                                      │
-│  dangerous:  [off]                   │
 │                                      │
 │  open in background:  [off]          │
 │                                      │
@@ -23,14 +23,18 @@
            ╭────────────────────────────────────────────────────────────────────────────╮           
            │                                                                            │           
            │                                                                            │           
-           │  > existing branch (optional)                                              │           
-           │                                                                            │           
-           │  > base branch (optional, defaults to pr…                                  │           
-           │                                                                            │           
            │  > first prompt (optional)                                                 │           
            │  >                                                                         │           
            │  >                                                                         │           
            │  >                                                                         │           
+           │                                                                            │           
+           │  thinking:  default  [low]  medium  high                                   │           
+           │                                                                            │           
+           │  > session name (optional)                                                 │           
+           │                                                                            │           
+           │  > existing branch (optional)                                              │           
+           │                                                                            │           
+           │  > base branch (optional, defaults to pr…                                  │           
            │                                                                            │           
            │  > ticket url (optional)                                                   │           
            │                                                                            │           
@@ -39,10 +43,6 @@
            │  agent:  claude  codex  opencode  [antigravity]                            │           
            │                                                                            │           
            │  model:  ‹ [Gemini 3.8 Flash (High)] ›                                     │           
-           │                                                                            │           
-           │  thinking:  default  [low]  medium  high                                   │           
-           │                                                                            │           
-           │  dangerous:  [off]                                                         │           
            │                                                                            │           
            │  open in background:  [off]                                                │           
            │                                                                            │           

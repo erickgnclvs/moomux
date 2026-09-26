@@ -6,13 +6,13 @@
 │                                      │
 │  > base branch (optional, defau…     │
 │                                      │
-│  > first prompt (optional)           │
-│  >                                   │
-│  >                                   │
-│  >                                   │
-│                                      │
 │  > ticket url (optional)             │
 │                                      │
+│  > PR url (optional)                 │
+│                                      │
+│  agent:  ‹ [codex] ›                 │
+│                                      │
+│  model:  ‹ [default] ›               │
 │                                      │
 │  resume an existing branch; blank =  │
 │  new branch off base                 │
@@ -23,14 +23,18 @@
            ╭────────────────────────────────────────────────────────────────────────────╮           
            │                                                                            │           
            │                                                                            │           
-           │  > existing branch (optional)                                              │           
-           │                                                                            │           
-           │  > base branch (optional, defaults to pr…                                  │           
-           │                                                                            │           
            │  > first prompt (optional)                                                 │           
            │  >                                                                         │           
            │  >                                                                         │           
            │  >                                                                         │           
+           │                                                                            │           
+           │  thinking:  [default]  minimal  low  medium  high  xhigh                   │           
+           │                                                                            │           
+           │  > session name (optional)                                                 │           
+           │                                                                            │           
+           │  > existing branch (optional)                                              │           
+           │                                                                            │           
+           │  > base branch (optional, defaults to pr…                                  │           
            │                                                                            │           
            │  > ticket url (optional)                                                   │           
            │                                                                            │           
@@ -39,10 +43,6 @@
            │  agent:  claude  [codex]  opencode  antigravity                            │           
            │                                                                            │           
            │  model:  [default]  gpt-5.6-sol  gpt-5.6-terra  gpt-5.6-luna               │           
-           │                                                                            │           
-           │  thinking:  [default]  minimal  low  medium  high  xhigh                   │           
-           │                                                                            │           
-           │  dangerous:  [off]                                                         │           
            │                                                                            │           
            │  open in background:  [off]                                                │           
            │                                                                            │           
