@@ -242,7 +242,7 @@ func (m *Model) modelNamesFor(agent string) []string {
 
 // thinkingNamesFor returns agent's thinking/reasoning-level choices, with
 // the same core-served fallback as modelNamesFor. What a level *means* per
-// agent — a real -c model_reasoning_effort flag, or a phrase prepended to
+// agent — a real launch flag (-c model_reasoning_effort, --effort), or a phrase prepended to
 // the first prompt — is the core's too; see App.FirstPrompt. "default"
 // always means "pass/prepend nothing".
 func (m *Model) thinkingNamesFor(agent string) []string {

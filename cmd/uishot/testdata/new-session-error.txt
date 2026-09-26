@@ -16,7 +16,7 @@
 │                                      │
 │  optional — the agent's first task;  │
 │  enter for a newline, tab away to    │
-│  tab/↑↓ fields  ←→ choose  enter  e  │
+│  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
 === 100x32 ===

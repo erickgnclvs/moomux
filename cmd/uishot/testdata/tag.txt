@@ -12,7 +12,7 @@
 │                                      │
 │  shown as a clickable ticket icon    │
 │  next to the session                 │
-│  tab/↑↓ fields  enter save  esc can  │
+│  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
                                         

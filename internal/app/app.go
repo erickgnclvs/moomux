@@ -148,15 +148,14 @@ func (a *App) forgetFetch(id string) {
 //
 // opencode has no Models entry: it has no small fixed model list worth
 // hardcoding, so a picker offers a free-text field instead of a selector.
-// Its Thinking list matches claude's — neither has a launch-time
-// reasoning-effort flag, so thinking level is expressed as a phrase
-// prepended to the first prompt instead (see thinkingPromptPrefix in
-// internal/tui), not a real flag like codex's -c model_reasoning_effort.
+// opencode is also the one agent with no launch-time reasoning-effort flag,
+// so its thinking level is a phrase prepended to the first prompt instead
+// (see FirstPrompt). claude's levels are Claude Code's own --effort values.
 var agentOptionsTable = []config.AgentOption{
 	{
 		Name:     "claude",
 		Models:   []string{"default", "sonnet", "opus", "fable"},
-		Thinking: []string{"default", "think", "think hard", "think harder", "ultrathink"},
+		Thinking: []string{"default", "low", "medium", "high", "xhigh", "max"},
 	},
 	{
 		Name:     "codex",
@@ -255,13 +254,11 @@ func shellQuote(s string) string {
 }
 
 // reasoningEffortFlag returns codex's -c model_reasoning_effort="<value>"
-// or antigravity's --effort <value> flag, or "" if thinking is empty/"default"
-// or agent doesn't support reasoning-effort flags. Unlike --model, this isn't
-// assumed to generalize: claude has no CLI flag for extended-thinking effort
-// (it's driven by magic words in the prompt instead, see thinkingPromptPrefix
-// in internal/tui), and opencode's reasoning-effort flag (--variant) only exists
-// on its one-shot `run` subcommand, not the interactive session moomux launches
-// here.
+// or claude's/antigravity's --effort <value> flag, or "" if thinking is
+// empty/"default" or agent doesn't support reasoning-effort flags. Unlike
+// --model, this isn't assumed to generalize: opencode's reasoning-effort flag
+// (--variant) only exists on its one-shot `run` subcommand, not the
+// interactive session moomux launches here.
 func reasoningEffortFlag(agent, thinking string) string {
 	if thinking == "" || thinking == "default" {
 		return ""
@@ -272,7 +269,7 @@ func reasoningEffortFlag(agent, thinking string) string {
 		// value; shellQuote then keeps that whole token from being
 		// re-read by the shell buildAgentCmd's output is typed into.
 		return "-c " + shellQuote(fmt.Sprintf("model_reasoning_effort=%q", thinking))
-	case "antigravity":
+	case "claude", "antigravity":
 		return "--effort " + shellQuote(thinking)
 	default:
 		return ""
@@ -280,7 +277,7 @@ func reasoningEffortFlag(agent, thinking string) string {
 }
 
 // buildAgentCmd returns the shell command that launches agent in its tmux
-// pane, appending its dangerous flag, --model flag, and (codex/antigravity)
+// pane, appending its dangerous flag, --model flag, and (codex/claude/antigravity)
 // reasoning-effort flag when requested and supported.
 func buildAgentCmd(agent string, dangerous bool, model, thinking string) string {
 	cmd := agentCmd(agent)

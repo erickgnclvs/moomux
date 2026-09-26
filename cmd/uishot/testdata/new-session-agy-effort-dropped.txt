@@ -16,7 +16,7 @@
 │                                      │
 │  named model — the thinking level    │
 │  above will be ignored               │
-│  tab/↑↓ fields  ←→ choose  enter  e  │
+│  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
 === 100x32 ===

@@ -16,7 +16,7 @@
 │                                      │
 │  optional — passed as --model to     │
 │  the agent; "default" omits the      │
-│  tab/↑↓ fields  ←→ choose  enter  e  │
+│  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
 === 100x32 ===

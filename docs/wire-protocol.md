@@ -635,8 +635,9 @@ opens a terminal" above.
 Composing that prompt means: prefix the thinking level *for agents with no
 launch-time flag for it*, then append the ticket and PR URLs. Which agents
 those are is derived from `reasoningEffortFlag`, not from a hardcoded name,
-so "codex gets a real `-c model_reasoning_effort` flag, antigravity an
-`--effort` flag, everyone else the magic word" has one source. (The one
+so "codex gets a real `-c model_reasoning_effort` flag, claude and
+antigravity an `--effort` flag, everyone else (opencode) the magic word" has
+one source. (The one
 gap: agy rejects `--effort` alongside `--model`, so a named agy model drops
 the level entirely rather than falling back to the prefix — `buildAgentCmd`
 logs a warning and the new-session form says so on both rows.)

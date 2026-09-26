@@ -15,7 +15,7 @@
 │                                      │
 │  shown instead of the project name   │
 │  in all-sessions — ←→ to choose      │
-│  tab/↑↓  ←→ change  enter save  esc  │
+│  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
                                         

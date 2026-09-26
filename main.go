@@ -384,7 +384,7 @@ func runSpawn(args []string) error {
 	name := fs.String("name", "", "session name (derived from -branch if omitted)")
 	agent := fs.String("agent", "", "agent override (claude, codex, opencode, antigravity; \"agy\" is accepted as an alias)")
 	model := fs.String("model", "", "model override, passed to the agent as --model (e.g. sonnet, opus, haiku)")
-	thinking := fs.String("thinking", "", "thinking/reasoning level: for codex, a real -c model_reasoning_effort value (minimal, low, medium, high, xhigh); for antigravity, --effort (low, medium, high), which agy accepts only when no -model is given; for claude/opencode, a phrase prepended to -prompt (e.g. think, think hard, ultrathink) — no effect there without -prompt")
+	thinking := fs.String("thinking", "", "thinking/reasoning level: for codex, a real -c model_reasoning_effort value (minimal, low, medium, high, xhigh); for claude, --effort (low, medium, high, xhigh, max); for antigravity, --effort (low, medium, high), which agy accepts only when no -model is given; for opencode, a phrase prepended to -prompt (e.g. think, think hard, ultrathink) — no effect there without -prompt")
 	dangerous := fs.Bool("dangerous", false, "run the agent with its permission-skipping flag (claude/antigravity: --dangerously-skip-permissions, codex: --yolo)")
 	branch := fs.String("branch", "", "existing branch to check out, instead of creating a new one")
 	ticket := fs.String("ticket", "", "ticket URL to attach to the session")

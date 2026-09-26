@@ -16,7 +16,7 @@
 │                                      │
 │  resume an existing branch; blank =  │
 │  new branch off base                 │
-│  tab/↑↓ fields  ←→ choose  enter  e  │
+│  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
 === 100x32 ===

@@ -14,7 +14,7 @@
 │                                      │
 │  display name; also renames the      │
 │  live tmux session so it stays       │
-│  tab fields  ←→ change  enter save   │
+│  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
                                         
