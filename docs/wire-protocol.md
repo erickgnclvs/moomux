@@ -294,6 +294,27 @@ a long name is shortened to 100 characters, extension kept. Every request's
 JSON is capped too, at a little over a largest `SaveFile`: past it the server
 answers "request is over the … limit" and stops reading.
 
+`ReadFile` is the mirror: it takes `id` (a session) and `path` (as tapped in
+that session's pane) and answers `path` (resolved, absolute) and `data`
+(base64). It is how the phone shows a file an agent mentioned — it cannot read
+this machine's disk. A leading `~` is expanded to the home dir. A relative path
+resolves against the agent pane's current directory first (an agent that ran
+`cd Sources` prints paths relative to it), then the session's worktree; the
+first that exists wins. A path that does not exist but ends in a compiler or
+grep location — `:42`, `:42:7`, or either with the trailing `:` those tools
+print — is retried with it stripped one piece at a time, so a real file named
+`out:42` still wins over `out:42:7`.
+
+Where a path resolves is not what may be served. After symlinks are resolved,
+the file must be inside the session's worktree, `SaveFile`'s directory, or
+`/tmp` (where agents write screenshots) — not the rest of the per-user temp
+dir, which holds every app's files, and not the pane's cwd, which could be
+anywhere. Neither `../` nor a symlink escapes, and the open goes through an
+`os.Root`, so a symlink swapped in after the check doesn't either. It must be
+a regular file (checked before opening — opening a named pipe would block),
+capped at 32 MB like `SaveFile`. Errors are written to be shown to the user
+as-is.
+
 `Attach` is a method name too, but it is not on this channel — see below.
 
 `CreateSession`'s `Name` may be empty. With a `Branch`, the core names the

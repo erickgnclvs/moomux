@@ -98,6 +98,10 @@ type Args struct {
 	// Data is SaveFile's contents, base64 on the wire (encoding/json's
 	// []byte); Name carries the file's original name.
 	Data []byte `json:"data,omitempty"`
+	// Path is ReadFile's path, as tapped in a pane: absolute, ~-relative,
+	// or relative to the pane's cwd or the session's worktree, possibly
+	// with a ":line:col" on the end.
+	Path string `json:"path,omitempty"`
 }
 
 // Result is the matching union of every return shape. Same trade as Args.
@@ -126,8 +130,11 @@ type Result struct {
 	Files   int               `json:"files,omitempty"`
 	Commits int               `json:"commits,omitempty"`
 	// Path is SaveFile's answer: where the file now lives on the core's
-	// machine, ready to drop into a prompt.
+	// machine, ready to drop into a prompt. For ReadFile, the resolved
+	// absolute path that Data was read from.
 	Path string `json:"path,omitempty"`
+	// Data is ReadFile's file contents, base64 on the wire like Args.Data.
+	Data []byte `json:"data,omitempty"`
 }
 
 // nudgeRequest is the only thing a client sends on a live "Watch"

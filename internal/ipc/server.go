@@ -9,11 +9,16 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"unicode"
 
 	"github.com/erickgnclvs/moomux/internal/config"
@@ -40,6 +45,11 @@ type Server struct {
 	// labels, quips, git/PR status, recovered prompts — computed once here
 	// rather than by each client. Optional; powers the "Watch" stream.
 	Source sessionview.Source
+	// PaneCwd answers the current directory of a tmux session's agent pane,
+	// which ReadFile resolves a relative path against first. Optional;
+	// without it paths resolve against the worktree. tmux.Client.PaneCwd
+	// satisfies this.
+	PaneCwd func(tmuxSession string) (string, error)
 
 	// subMu guards the fan-out below. Source.Run is started once, on the
 	// first "Watch" client, and every later client is added as a subscriber
@@ -235,7 +245,7 @@ func saveFile(tmp, name string, data []byte) (string, error) {
 		return "", errors.New("SaveFile: empty file")
 	}
 	if len(data) > maxSaveFile {
-		return "", fmt.Errorf("SaveFile: %d MB is over the %d MB limit", len(data)>>20, maxSaveFile>>20)
+		return "", fmt.Errorf("SaveFile: %s MB is over the %d MB limit", mb(int64(len(data))), maxSaveFile>>20)
 	}
 	safe := strings.Map(func(r rune) rune {
 		if r < 128 && (unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' || r == '_' || r == '-') {
@@ -273,6 +283,185 @@ func saveFile(tmp, name string, data []byte) (string, error) {
 		return "", err
 	}
 	return f.Name(), nil
+}
+
+// lineSuffix is one piece of a compiler/grep location on the end of a
+// path: the ":42" and ":7" of "Foo.swift:42:7", or the bare ":" that
+// compilers and rg print after it ("main.go:12:5: undefined: x").
+var lineSuffix = regexp.MustCompile(`:\d*$`)
+
+// mb is n bytes in megabytes, rounded up to one decimal place, so a size
+// just over a limit never reads as equal to it: "32.1 MB is over the 32 MB
+// limit", not "32 MB".
+func mb(n int64) string {
+	return strconv.FormatFloat(math.Ceil(float64(n)*10/(1<<20))/10, 'f', -1, 64)
+}
+
+// stripLocation drops a compiler/grep location from a path that isn't
+// there, one piece at a time — trailing ":", then ":col", then ":line" —
+// stopping at the first path that exists, so a real file whose name ends
+// in ":42" wins over stripping.
+func stripLocation(path string) string {
+	for range 3 {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		loc := lineSuffix.FindStringIndex(path)
+		if loc == nil {
+			break
+		}
+		path = path[:loc[0]]
+	}
+	return path
+}
+
+// readFile is SaveFile's mirror: the bytes of a file a path in a session's
+// pane names, for a front end that cannot read this machine's disk (a phone
+// showing a tapped path in Quick Look). It answers the resolved absolute
+// path and the contents.
+//
+// A relative path is tried against each of bases in order — the pane's
+// cwd, then the worktree — and the first that exists wins. Where it
+// resolves is separate from what may be served: only files inside one of
+// roots (the worktree and the temp dirs agents write screenshots to) are,
+// so a pane cd'd to /etc can't widen that. Containment is checked after
+// symlinks are resolved on both sides, so neither "../" nor a symlink
+// pointing out gets past it, and the file is then opened through an
+// os.Root, so a symlink swapped in after the check cannot either. Errors
+// are shown to the user verbatim, so they say what went wrong in plain
+// words.
+func readFile(bases, roots []string, path string) (string, []byte, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", nil, errors.New("ReadFile: empty path")
+	}
+	// Expanded so a ~ path is judged by where it really is: refused as
+	// outside, or served when it is inside the worktree.
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, path[1:])
+		}
+	}
+	if filepath.IsAbs(path) {
+		path = stripLocation(path)
+	} else {
+		rel := path
+		for _, base := range bases {
+			if base == "" {
+				continue
+			}
+			// The last base tried is what a "does not exist" names.
+			path = stripLocation(filepath.Join(base, rel))
+			if _, err := os.Lstat(path); err == nil {
+				break
+			}
+		}
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", nil, readErr(path, err)
+	}
+	var root *os.Root
+	for _, dir := range roots {
+		if dir == "" {
+			continue
+		}
+		dir, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(dir, real)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		if root, err = os.OpenRoot(dir); err != nil {
+			return "", nil, readErr(path, err)
+		}
+		defer root.Close()
+		real = rel
+		break
+	}
+	if root == nil {
+		return "", nil, fmt.Errorf("ReadFile: %s is outside this session's worktree", path)
+	}
+	// Checked before opening, not only after: opening a named pipe blocks
+	// until something writes to it, and the phone would wait forever.
+	info, err := root.Stat(real)
+	if err != nil {
+		return "", nil, readErr(path, err)
+	}
+	if err := regular(path, info); err != nil {
+		return "", nil, err
+	}
+	f, info, err := openRegular(root, real, path)
+	if err != nil {
+		return "", nil, err
+	}
+	defer f.Close()
+	real = filepath.Join(root.Name(), real)
+	if info.Size() > maxSaveFile {
+		return "", nil, fmt.Errorf("ReadFile: %s MB is over the %d MB limit", mb(info.Size()), maxSaveFile>>20)
+	}
+	// Limited in case the file grows between the Stat and the read.
+	data, err := io.ReadAll(io.LimitReader(f, maxSaveFile+1))
+	if err != nil {
+		return "", nil, readErr(path, err)
+	}
+	if len(data) > maxSaveFile {
+		return "", nil, fmt.Errorf("ReadFile: %s MB is over the %d MB limit", mb(int64(len(data))), maxSaveFile>>20)
+	}
+	return real, data, nil
+}
+
+// openRegular opens name under root and refuses it unless it is a plain
+// file. O_NONBLOCK because the Stat before it is not enough on its own: a
+// named pipe swapped in between the two would block a plain open until
+// something wrote to it. Reads of a regular file ignore the flag.
+func openRegular(root *os.Root, name, path string) (*os.File, os.FileInfo, error) {
+	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, nil, readErr(path, err)
+	}
+	info, err := f.Stat()
+	if err == nil {
+		err = regular(path, info)
+	} else {
+		err = readErr(path, err)
+	}
+	if err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	return f, info, nil
+}
+
+// regular refuses anything but a plain file, in the phone's words.
+func regular(path string, info os.FileInfo) error {
+	if info.IsDir() {
+		return fmt.Errorf("ReadFile: %s is a folder, not a file", path)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("ReadFile: %s is not a regular file", path)
+	}
+	return nil
+}
+
+// readErr words a filesystem error for the phone's alert, which shows it
+// as-is: "lstat …: not a directory" means nothing to someone who tapped a
+// path.
+func readErr(path string, err error) error {
+	switch {
+	case errors.Is(err, os.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
+		return fmt.Errorf("ReadFile: %s does not exist", path)
+	case errors.Is(err, os.ErrPermission):
+		return fmt.Errorf("ReadFile: %s can't be read — permission denied", path)
+	case errors.Is(err, syscall.ELOOP):
+		return fmt.Errorf("ReadFile: %s is a symlink that loops back on itself", path)
+	case strings.Contains(err.Error(), "path escapes from parent"):
+		// os.Root's refusal: a symlink changed after the containment check.
+		return fmt.Errorf("ReadFile: %s is outside this session's worktree", path)
+	}
+	return fmt.Errorf("ReadFile: %s can't be read: %w", path, err)
 }
 
 // attachInput is the client's keystroke stream once an Attach request has
@@ -382,6 +571,26 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 	case "SaveFile":
 		path, err := saveFile(os.TempDir(), a.Name, a.Data)
 		return Result{Path: path}, err
+	case "ReadFile":
+		sessions := b.Sessions()
+		i := slices.IndexFunc(sessions, func(s session.Session) bool { return s.ID == a.ID })
+		if i < 0 {
+			return Result{}, fmt.Errorf("ReadFile: no session %q — it may have been deleted", a.ID)
+		}
+		sess := sessions[i]
+		// The pane's cwd first: an agent that ran `cd Sources` prints paths
+		// relative to that. No tmux answer (parked, no hook) is just the
+		// worktree.
+		var cwd string
+		if s.PaneCwd != nil && sess.TmuxSession != "" {
+			cwd, _ = s.PaneCwd(sess.TmuxSession)
+		}
+		// SaveFile's dir rather than all of os.TempDir(), which on macOS is
+		// every app's per-user temp files; /tmp is where agents write
+		// screenshots.
+		roots := []string{sess.WorktreePath, filepath.Join(os.TempDir(), "moomux-images"), "/tmp"}
+		path, data, err := readFile([]string{cwd, sess.WorktreePath}, roots, a.Path)
+		return Result{Path: path, Data: data}, err
 	case "Sessions":
 		return Result{Sessions: b.Sessions()}, nil
 	case "SuggestedProject":
