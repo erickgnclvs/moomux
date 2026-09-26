@@ -12,7 +12,9 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/session"
@@ -164,9 +166,22 @@ func (s *Server) handle(c net.Conn) {
 	// way to write a client — has sent neither. Requiring one made every
 	// pull method hang for such a client, with no error and no refusal:
 	// total, silent, and on every method at once.
-	dec := json.NewDecoder(r)
+	//
+	// Limited, because the decoder holds the whole request in memory before
+	// anything can look at it — a SaveFile's size check would otherwise run
+	// only after an arbitrarily large upload had been buffered. The limit
+	// covers the request alone: a Watch or Attach stream carries on reading
+	// r itself, past it.
+	lim := &io.LimitedReader{R: r, N: maxRequest}
+	dec := json.NewDecoder(lim)
 	var req request
 	if err := dec.Decode(&req); err != nil {
+		if lim.N <= 0 {
+			// Answered, so the client reads a reason rather than a
+			// connection that closed on it.
+			msg := fmt.Sprintf("request is over the %d MB limit", maxRequest>>20)
+			_ = json.NewEncoder(c).Encode(response{Err: msg})
+		}
 		return
 	}
 	if req.Method == "Watch" {
@@ -190,6 +205,74 @@ func (s *Server) handle(c net.Conn) {
 	if err := json.NewEncoder(c).Encode(out); err != nil {
 		slog.Warn("ipc: write response", "method", req.Method, "err", err)
 	}
+}
+
+// maxSaveFile caps one SaveFile upload. A phone photo is a few MB; this is
+// room for a short screen recording without letting a client fill the disk
+// in one call.
+const maxSaveFile = 32 << 20
+
+// maxRequest caps one request's JSON: a largest SaveFile, base64-inflated
+// by 4/3, plus room for the rest of the envelope.
+const maxRequest = maxSaveFile/3*4 + 1<<20
+
+// maxSaveName keeps the saved name well inside a filesystem's 255 bytes,
+// the random prefix included.
+const maxSaveName = 100
+
+// saveFile writes an uploaded file where an agent on this machine can read
+// it, and returns its path. A file picked on a phone has no path the agent
+// could open, so its bytes come over the wire instead — and the Mac app
+// sends its dropped files the same way, so there is one path for both. The
+// ceiling is the system's temp sweep (~3 days unread), long after the agent
+// looked.
+//
+// The name is a random prefix plus the original's, reduced to characters
+// that need no shell quoting, so the path can go into a prompt as-is and two
+// uploads of "image.jpg" never collide.
+func saveFile(tmp, name string, data []byte) (string, error) {
+	if len(data) == 0 {
+		return "", errors.New("SaveFile: empty file")
+	}
+	if len(data) > maxSaveFile {
+		return "", fmt.Errorf("SaveFile: %d MB is over the %d MB limit", len(data)>>20, maxSaveFile>>20)
+	}
+	safe := strings.Map(func(r rune) rune {
+		if r < 128 && (unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' || r == '_' || r == '-') {
+			return r
+		}
+		return '-'
+	}, filepath.Base(name))
+	if strings.Trim(safe, ".-") == "" {
+		safe = "file"
+	}
+	if len(safe) > maxSaveName {
+		// Keep the extension: it is what tells the agent what the file is.
+		ext := filepath.Ext(safe)
+		if len(ext) > maxSaveName/4 {
+			ext = ""
+		}
+		safe = safe[:maxSaveName-len(ext)] + ext
+	}
+	dir := filepath.Join(tmp, "moomux-images")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	// CreateTemp: a random prefix it will not reuse (O_EXCL), mode 0600.
+	f, err := os.CreateTemp(dir, "*-"+safe)
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
 }
 
 // attachInput is the client's keystroke stream once an Attach request has
@@ -296,6 +379,9 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		// internal/app, which this package can't import. This one is static
 		// data in config, which it already does.
 		return Result{Themes: config.Themes()}, nil
+	case "SaveFile":
+		path, err := saveFile(os.TempDir(), a.Name, a.Data)
+		return Result{Path: path}, err
 	case "Sessions":
 		return Result{Sessions: b.Sessions()}, nil
 	case "SuggestedProject":

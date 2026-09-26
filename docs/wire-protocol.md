@@ -284,6 +284,16 @@ as plain folder" dialog.
 **Session lifecycle** — `CreateSession`, `EnsureTmux`, `DeleteSession`,
 `KillTmux` (park), `Review`.
 
+**Files** — `SaveFile` takes `name` and `data` (base64) and answers `path`:
+where the bytes now live on the core's machine, under a name that needs no
+shell quoting. Both front ends attach files to a first prompt this way — a
+photo picked on a phone has no path an agent on this machine could open, and
+the Mac sends its dropped files the same way so there is one path — and put
+the returned path into the prompt the way a terminal takes a dropped file. Capped at 32 MB, and
+a long name is shortened to 100 characters, extension kept. Every request's
+JSON is capped too, at a little over a largest `SaveFile`: past it the server
+answers "request is over the … limit" and stops reading.
+
 `Attach` is a method name too, but it is not on this channel — see below.
 
 `CreateSession`'s `Name` may be empty. With a `Branch`, the core names the
