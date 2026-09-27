@@ -115,6 +115,12 @@ Then run:
 This is fire-and-forget — it creates the worktree/branch, tmux session, and
 agent, types the prompt in, and returns immediately. Don't wait on or try to
 check the spawned session's progress.
+
+**Coordinated work**: if the task is one of several sessions that have to
+agree on a shared contract (one per repo for a cross-repo feature, say), add
+` + "`-peers <other session names, comma-separated> -contract <path to the shared plan>`" + `.
+moomux appends the coordination rules to the prompt itself, so don't paste
+them into ` + "`-prompt`" + `. Leave both out for independent tasks.
 `
 
 // EnsureSpawnCommand installs the /spawn custom command — see ensureCommand.

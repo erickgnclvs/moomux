@@ -211,7 +211,7 @@ moomux spawn -project <project> [-name <name>] [-agent claude|codex|opencode|ant
 
 It's fire-and-forget: prints the new tmux session's name and exits immediately, without waiting for the agent or reporting anything back. Run `moomux spawn -h` for the full flag list, or `moomux --help` for top-level usage.
 
-For a feature that spans several repositories — one spawned session per repo, all of them having to agree with each other — see [Coordinating sessions across several repositories](docs/multi-repo-sessions.md).
+For a feature that spans several repositories — one spawned session per repo, all of them having to agree with each other — pass `-peers <other session names> -contract <path to the shared plan>` and spawn appends the coordination rules to the prompt. See [Coordinating sessions across several repositories](docs/multi-repo-sessions.md) for the rules and why.
 
 ## Userscripts
 
