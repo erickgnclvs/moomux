@@ -1,6 +1,7 @@
 package ipc
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -95,6 +96,9 @@ func (f *fakeBackend) Capture(ids []string) map[string]string {
 func (f *fakeBackend) Review(id string) (string, error)         { return "reviewing " + id, nil }
 func (f *fakeBackend) WorktreeStatus(string) (bool, bool, bool) { return true, false, true }
 func (f *fakeBackend) ChangeSummary(string) (int, int, bool)    { return 7, 3, true }
+func (f *fakeBackend) Diff(string) (gitwt.Patch, bool, error) {
+	return gitwt.Patch{Text: "diff --git a/x b/x\n+<T>&\n", Base: "origin/main", Truncated: true}, true, nil
+}
 func (f *fakeBackend) PRStatus(string) (prstatus.Info, bool) {
 	return prstatus.Info{State: "OPEN", Mergeable: "MERGEABLE", CI: "PASSING"}, true
 }
@@ -414,6 +418,10 @@ func TestRoundTrip(t *testing.T) {
 		}
 		if files, commits, ok := c.ChangeSummary("moomux:a"); files != 7 || commits != 3 || !ok {
 			t.Fatalf("ChangeSummary = %d %d %v, want 7 3 true", files, commits, ok)
+		}
+		want := gitwt.Patch{Text: "diff --git a/x b/x\n+<T>&\n", Base: "origin/main", Truncated: true}
+		if p, ok, err := c.Diff("moomux:a"); p != want || !ok || err != nil {
+			t.Fatalf("Diff = %+v %v %v, want %+v, ok", p, ok, err, want)
 		}
 	})
 
@@ -853,6 +861,30 @@ func TestWatchNudgeInTheSamePacketAsTheRequest(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("nudge sent alongside the request never reached the source")
+}
+
+// Diff's wire shape is a contract with the Swift client, which decodes
+// these exact keys — pinned on the raw bytes, not through Client, which
+// would round-trip a renamed tag without noticing. A patch is mostly code,
+// so <, > and & must go out as themselves, not as six-byte \u003c escapes.
+func TestDiffWireShape(t *testing.T) {
+	c, _ := start(t, &fakeBackend{}, &config.Config{}, nil)
+	conn, err := net.Dial("unix", c.Socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte(`{"method":"Diff","args":{"id":"moomux:a"}}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"result":{"ok":true,"patch":"diff --git a/x b/x\n+<T>&\n","base":"origin/main","truncated":true}}` + "\n"
+	if line != want {
+		t.Fatalf("Diff response\n got: %s\nwant: %s", line, want)
+	}
 }
 
 // TestMoveSessionCompatShim: the macOS app lives in another repo with no CI

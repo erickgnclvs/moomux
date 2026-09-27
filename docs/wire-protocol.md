@@ -279,7 +279,7 @@ as plain folder" dialog.
 ### Methods
 
 **Read** — `Config`, `Sessions`, `AgentOptions`, `Themes`, `SuggestedProject`,
-`WorktreeStatus`, `ChangeSummary`, `Capture`.
+`WorktreeStatus`, `ChangeSummary`, `Capture`, `Diff`.
 
 **Session lifecycle** — `CreateSession`, `EnsureTmux`, `DeleteSession`,
 `KillTmux` (park), `Review`.
@@ -372,6 +372,74 @@ when there was nothing to reuse: killing the last window of a session kills
 the session. Because it selects that window, everything else the core does
 to a session — capture, the status-title rename, sending keys — addresses
 the session's first window explicitly rather than its current one.
+
+### `Diff`: the review as a patch
+
+`Review` needs a tty to put the diff on, and a phone has none, so `Diff`
+serves the same diff as data. It takes `args.id` and answers `result.ok`,
+`result.patch`, `result.base` and `result.truncated`:
+
+```jsonc
+{"method": "Diff", "args": {"id": "moomux:a"}}
+{"result": {"ok": true, "patch": "diff --git a/x.go b/x.go\n…", "base": "origin/main", "truncated": false}}
+```
+
+**What is in `patch`.** Raw `git diff` text, `diff --git` headers included,
+for the client to parse and render: `git diff --merge-base <base>` in the
+session's worktree — commits since the merge base *and* uncommitted work —
+with renames detected, and every untracked file `.gitignore` doesn't exclude
+as a new file (`new file mode`, `--- /dev/null`). Deleted files, binary files
+(`Binary files … differ`, no content) and symlinks (the link target as the
+content, never the file it points at) appear the way `git diff` shows them.
+Nested git repos an agent cloned into the worktree are left out. A type
+change (a file that became a symlink, or back) is two sections under one
+path, a `deleted file mode` then a `new file mode`. Mid-merge, a conflicted
+file arrives as an ordinary two-way diff against the base with its conflict
+markers as added lines — never `diff --cc`, which only a diff without a
+commit argument produces.
+
+**What `base` says.** The ref the patch was taken against. The base branch is
+resolved exactly as `Review`'s is — the session's `base_branch`, then the
+project's, then `main` — and tried as `origin/<base>`, then `<base>`. When
+neither exists, or neither shares history with the branch, the diff falls
+back to `HEAD` and `base` is `"HEAD"`: the patch is then uncommitted work
+only, and a client should say so rather than label it "vs main".
+
+**Untracked files never touch the agent's index.** They are marked
+intent-to-add (`git add -N`) in a throwaway copy of the worktree's index
+(`GIT_INDEX_FILE`), so one diff process covers any number of them, and a file
+moved with plain `mv` still reads as a rename rather than a delete plus a new
+file. The worktree's real index is never written. Per-file
+`git diff --no-index` was the first design; it forked once per untracked
+file, and an agent's unignored build output made a single call take minutes.
+
+**The format is pinned, whatever the user's git config says**, because a
+client parses it: `a/` and `b/` prefixes (overriding `diff.noprefix` and
+`diff.mnemonicPrefix`, which would otherwise produce `x x` or `c/x w/x`), no
+colour, no external diff tool, and `core.quotePath=false`, so a non-ASCII
+name arrives as UTF-8 (`a/café.txt`), not as `"a/caf\303\251.txt"`. A name
+containing a tab, newline, `"` or `\` is still C-quoted by git, so a parser
+needs git's unquoting for those. A name with a space makes the `diff --git`
+line ambiguous (`a/my file b/my file`); the `---`/`+++` lines carry each path
+alone, but git ends them with a tab in that case (`+++ b/my file.txt\t`),
+which a parser has to strip. A new file's `---` is `/dev/null` and a deleted
+one's `+++` is.
+
+**The cap.** 2 MB of patch. Past it, the patch is cut at a file boundary —
+never mid-hunk — and `truncated` is true; a first file over the cap on its
+own leaves `patch` empty with `truncated` true. The wire is JSON, so content
+that isn't valid UTF-8 (a Latin-1 file) arrives with U+FFFD in place of the
+bad bytes. Responses aren't HTML-escaped, so `<`, `>` and `&` in code cost one
+byte each, not six.
+
+**Failure.** `ok` is false, with no error, for a plain project or a worktree
+that isn't (or is no longer) a git repo, matching `ChangeSummary`; an unknown
+session id is an error. It reads the worktree and nothing else, so a parked
+session diffs exactly like a live one and nothing is revived.
+
+All four result fields are `omitempty`, like the rest of `Result`: an absent
+`ok` or `truncated` is `false`, an absent `patch` or `base` is empty — a clean
+worktree answers `{"ok": true, "base": "origin/main"}` with no `patch` at all.
 
 ### `Attach`: the connection becomes the pty
 
@@ -713,6 +781,9 @@ stored it, so a spawned session showed no prompt in the list, ever.
   destructive action. It also refreshes the remote ref, which
   `ChangeSummary` doesn't.
 - **`ChangeSummary`** — file and commit counts for that same dialog.
+- **`Diff`** — the session's patch, fetched when someone opens it. It can be
+  megabytes and costs a git run each time, so it is not streamed on every
+  snapshot.
 
 ## Rules for adding to this
 
@@ -786,6 +857,7 @@ nil. What changed:
 | a client had no way to know a project's fallback emoji | `Result.project_emoji` — additive, so an older client is unaffected |
 | `tmux capture-pane` run by the app, per session, every 5s | `Capture` — `args.ids` in, `result.screens` keyed by **session id** out, one tmux invocation for the set |
 | `tmux new-window`/`respawn-window` run by the app | `Review` — `args.id` in, a `hint` out |
+| a phone had no way to see a session's diff | `Diff` — `args.id` in, `result.patch` / `base` / `truncated` / `ok` out; additive |
 | `tmux attach` via libghostty's `.exec` backend | `Attach` — the connection becomes the pty; there is no local process |
 | the unix socket was the only listener | plus an optional tailnet listener, `tailnet_listen` in `config.toml` |
 

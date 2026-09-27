@@ -305,6 +305,7 @@ func (f *fakeBackend) WorktreeStatus(id string) (dirty, unpushed, ok bool) {
 	}
 	return st.dirty, st.unpushed, true
 }
+func (f *fakeBackend) Diff(string) (gitwt.Patch, bool, error) { return gitwt.Patch{}, false, nil }
 func (f *fakeBackend) ChangeSummary(id string) (filesChanged, unpushedCommits int, ok bool) {
 	st, present := f.changeSummary[id]
 	if !present {

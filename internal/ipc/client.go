@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/erickgnclvs/moomux/internal/config"
+	"github.com/erickgnclvs/moomux/internal/gitwt"
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/tui"
@@ -314,6 +315,11 @@ func (c *Client) Capture(ids []string) map[string]string {
 func (c *Client) Review(id string) (string, error) {
 	r, err := c.call("Review", Args{ID: id})
 	return r.Hint, err
+}
+
+func (c *Client) Diff(id string) (gitwt.Patch, bool, error) {
+	r, err := c.call("Diff", Args{ID: id})
+	return gitwt.Patch{Text: r.Patch, Base: r.Base, Truncated: r.Truncated}, r.OK, err
 }
 
 func (c *Client) SetSessionTags(id, ticket, pr string) (session.Session, error) {

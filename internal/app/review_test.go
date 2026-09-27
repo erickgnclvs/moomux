@@ -1,6 +1,7 @@
 package app
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -192,5 +193,93 @@ func TestCaptureSkipsParkedSessions(t *testing.T) {
 		if strings.Contains(strings.Join(call, " "), "moomux-parked") {
 			t.Fatalf("parked session reached tmux: %v", call)
 		}
+	}
+}
+
+// diffBaseRepo is a worktree on feat, cut from trunk, which is itself one
+// commit (trunk.txt) ahead of main — so whether trunk.txt is in the diff
+// says which base it was taken against.
+func diffBaseRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	id := []string{"-c", "user.name=moomux", "-c", "user.email=moomux@localhost"}
+	mustGit(t, dir, "init", "-b", "main")
+	mustGit(t, dir, append(id, "commit", "--allow-empty", "-m", "init")...)
+	mustGit(t, dir, "checkout", "-b", "trunk")
+	if err := os.WriteFile(filepath.Join(dir, "trunk.txt"), []byte("trunk\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, dir, "add", "trunk.txt")
+	mustGit(t, dir, append(id, "commit", "-m", "trunk")...)
+	mustGit(t, dir, "checkout", "-b", "feat")
+	if err := os.WriteFile(filepath.Join(dir, "feat.txt"), []byte("feat\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// Diff resolves its base exactly as Review does: the session's, then the
+// project's, then main.
+func TestDiffPrefersTheSessionBaseThenTheProjectsThenMain(t *testing.T) {
+	wt := diffBaseRepo(t)
+	for _, tc := range []struct {
+		name, sessionBase, projectBase, wantBase string
+		wantTrunkFile                            bool
+	}{
+		{"session base wins", "trunk", "main", "trunk", false},
+		{"project base is the fallback", "", "trunk", "trunk", false},
+		{"main is the last resort", "", "", "main", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newReviewApp(t, &fakeTmuxRunner{},
+				session.Session{ID: "p:a", Project: "p", WorktreePath: wt, BaseBranch: tc.sessionBase})
+			a.Cfg.Projects["p"] = config.Project{Repo: wt, BaseBranch: tc.projectBase}
+			p, ok, err := a.Diff("p:a")
+			if err != nil || !ok {
+				t.Fatalf("Diff: ok %v, err %v", ok, err)
+			}
+			if p.Base != tc.wantBase {
+				t.Fatalf("Base = %q, want %q", p.Base, tc.wantBase)
+			}
+			if got := strings.Contains(p.Text, "b/trunk.txt"); got != tc.wantTrunkFile {
+				t.Fatalf("trunk.txt in the diff = %v, want %v:\n%s", got, tc.wantTrunkFile, p.Text)
+			}
+			if !strings.Contains(p.Text, "+feat\n") {
+				t.Fatalf("the untracked feat.txt is missing:\n%s", p.Text)
+			}
+		})
+	}
+}
+
+// Unlike Review, Diff has no window to open, so a parked session — tmux
+// long gone — diffs exactly like a live one, and tmux is never asked.
+func TestDiffOnAParkedSessionNeverTouchesTmux(t *testing.T) {
+	wt := diffBaseRepo(t)
+	fr := &fakeTmuxRunner{failOn: map[string]bool{"has-session -t =moomux-a": true}}
+	a := newReviewApp(t, fr,
+		session.Session{ID: "proj:a", Project: "proj", Name: "a", TmuxSession: "moomux-a", WorktreePath: wt})
+	p, ok, err := a.Diff("proj:a")
+	if err != nil || !ok || !strings.Contains(p.Text, "+feat\n") {
+		t.Fatalf("Diff = ok %v, err %v:\n%s", ok, err, p.Text)
+	}
+	if len(fr.calls) != 0 {
+		t.Fatalf("Diff must not touch tmux, called %v", fr.calls)
+	}
+}
+
+// Not a git repo is ok=false, not an error, like ChangeSummary; an
+// unknown session is still an error.
+func TestDiffOnANonRepoIsNotOK(t *testing.T) {
+	a := newReviewApp(t, &fakeTmuxRunner{},
+		session.Session{ID: "notes:a", Project: "notes", WorktreePath: t.TempDir()},
+		session.Session{ID: "proj:gone", Project: "proj", WorktreePath: filepath.Join(t.TempDir(), "missing")},
+	)
+	for _, id := range []string{"notes:a", "proj:gone"} {
+		if _, ok, err := a.Diff(id); ok || err != nil {
+			t.Fatalf("%s: ok %v, err %v, want not ok and no error", id, ok, err)
+		}
+	}
+	if _, _, err := a.Diff("proj:nope"); err == nil {
+		t.Fatal("unknown session should error")
 	}
 }

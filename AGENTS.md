@@ -98,9 +98,10 @@ goes through `terminalBackend` in `main.go` instead: the local TUI, `moomux ui -
 process. It used to, and the `browser.Remote()` guard it needed was the tell.
 `docs/wire-protocol.md` has the longer version.
 
-What stays a pull: `Sessions`, `ChangeSummary`, and the on-demand `WorktreeStatus` the delete
+What stays a pull: `Sessions`, `ChangeSummary`, the on-demand `WorktreeStatus` the delete
 dialog uses (it wants a freshly checked answer before a destructive action, and unlike
-`ChangeSummary` it also refreshes the remote ref). Everything routine rides the stream.
+`ChangeSummary` it also refreshes the remote ref), and `Diff` (a patch can be megabytes, and is
+wanted only when someone opens it). Everything routine rides the stream.
 
 ## Releases and commit messages
 

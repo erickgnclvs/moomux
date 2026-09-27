@@ -136,6 +136,13 @@ type Result struct {
 	Path string `json:"path,omitempty"`
 	// Data is ReadFile's file contents, base64 on the wire like Args.Data.
 	Data []byte `json:"data,omitempty"`
+	// Patch, Base and Truncated are Diff's answer: raw `git diff` text,
+	// headers and all; the ref it was taken against (HEAD means
+	// uncommitted work only); and whether it was cut at a file boundary to
+	// stay under the cap. See gitwt.Patch.
+	Patch     string `json:"patch,omitempty"`
+	Base      string `json:"base,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
 
 // nudgeRequest is the only thing a client sends on a live "Watch"

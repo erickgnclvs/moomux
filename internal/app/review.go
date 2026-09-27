@@ -1,6 +1,13 @@
 package app
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/erickgnclvs/moomux/internal/config"
+	"github.com/erickgnclvs/moomux/internal/gitwt"
+	"github.com/erickgnclvs/moomux/internal/session"
+)
 
 // Capture returns the visible text of each session's active pane, keyed by
 // session id — the session grid a front end draws, without it needing a tmux
@@ -57,15 +64,7 @@ func (a *App) Review(id string) (string, error) {
 	if proj.IsPlain() {
 		return "", fmt.Errorf("%s is not a git project", s.Project)
 	}
-	// The session's own base is what its branch was actually cut from; the
-	// project's is the fallback for a resumed branch that never recorded one.
-	base := s.BaseBranch
-	if base == "" {
-		base = proj.BaseBranch
-	}
-	if base == "" {
-		base = "main"
-	}
+	base := reviewBase(s, proj)
 	// A review window needs a live tmux session to be added to, and both
 	// respawn-window and new-window fail on a parked one with nothing but an
 	// exit status. Deliberately *not* EnsureTmux, unlike Attach: reviving a
@@ -84,6 +83,54 @@ func (a *App) Review(id string) (string, error) {
 		return "", fmt.Errorf("review window: %w", err)
 	}
 	return "Opened a review window in " + s.TmuxSession + ".", nil
+}
+
+// reviewBase is the branch a session's work is diffed against. The
+// session's own base is what its branch was actually cut from; the
+// project's is the fallback for a resumed branch that never recorded one.
+func reviewBase(s session.Session, proj config.Project) string {
+	if s.BaseBranch != "" {
+		return s.BaseBranch
+	}
+	if proj.BaseBranch != "" {
+		return proj.BaseBranch
+	}
+	return "main"
+}
+
+// diffLimit caps Diff's patch: plenty to read on a phone, and well short of
+// a response a client would choke on.
+const diffLimit = 2 << 20
+
+// Diff is the session's worktree diffed against the same base Review uses,
+// as a raw patch a front end renders itself — the phone has no tty to open
+// a review window on. See gitwt.Diff for what is in it and how it is cut
+// at the limit.
+//
+// It reads the worktree and nothing else, so a parked session diffs the
+// same as a live one and nothing is revived. ok is false, not an error, for
+// a worktree that isn't a git repo (a plain project, or one that has gone
+// missing), like ChangeSummary.
+func (a *App) Diff(id string) (gitwt.Patch, bool, error) {
+	s, found := a.Store.Get(id)
+	if !found {
+		return gitwt.Patch{}, false, fmt.Errorf("unknown session %q", id)
+	}
+	proj, found := a.project(s.Project)
+	if !found {
+		return gitwt.Patch{}, false, fmt.Errorf("unknown project %q", s.Project)
+	}
+	if proj.IsPlain() {
+		return gitwt.Patch{}, false, nil
+	}
+	p, err := gitwt.Diff(s.WorktreePath, reviewBase(s, proj), diffLimit)
+	if errors.Is(err, gitwt.ErrNotGitRepo) {
+		return gitwt.Patch{}, false, nil
+	}
+	if err != nil {
+		return gitwt.Patch{}, false, err
+	}
+	return p, true, nil
 }
 
 // ReviewScript is the shell line a review window runs.

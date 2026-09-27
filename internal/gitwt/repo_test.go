@@ -1,11 +1,13 @@
 package gitwt
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // failRunner fails calls whose joined args (without dir) appear in failOn.
@@ -230,5 +232,246 @@ func TestRemoveWorktreeRefusesRealRepo(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); err != nil {
 		t.Fatalf("real repo directory was deleted: %v", err)
+	}
+}
+
+// diffRepo is a linked worktree on branch feat, cut from main — linked,
+// so its index lives under .git/worktrees/ the way a session's does —
+// holding one of each thing Diff has to show: a committed rename, an
+// uncommitted edit, a rename never staged, an untracked file with a
+// non-ASCII name, and an ignored file and a nested repo it must not.
+func diffRepo(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	repo, dir := filepath.Join(root, "repo"), filepath.Join(root, "wt")
+	git := func(in string, args ...string) {
+		t.Helper()
+		args = append([]string{"-c", "user.name=moomux", "-c", "user.email=moomux@localhost"}, args...)
+		if out, err := ExecRunner().Run(in, args...); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+	}
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lines := strings.Repeat("a line long enough to be recognised as the same file\n", 20)
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(repo, "init", "-b", "main")
+	for name, body := range map[string]string{"edited.txt": "one\n", "old.txt": lines, "moved.txt": "moved " + lines, ".gitignore": "*.log\n"} {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(repo, "add", ".")
+	git(repo, "commit", "-m", "init")
+	git(repo, "worktree", "add", "-b", "feat", dir)
+	git(dir, "mv", "old.txt", "new.txt")
+	git(dir, "commit", "-m", "rename")
+	write("edited.txt", "two\n")
+	if err := os.Rename(filepath.Join(dir, "moved.txt"), filepath.Join(dir, "moved-unstaged.txt")); err != nil {
+		t.Fatal(err)
+	}
+	write("café.txt", "fresh\n")
+	write("debug.log", "ignored\n")
+	// An agent's clone with nothing checked out: add -N would record it as
+	// a gitlink, and then the diff dies trying to hash it.
+	if err := os.Mkdir(filepath.Join(dir, "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(filepath.Join(dir, "nested"), "init")
+	return dir
+}
+
+func TestDiffShowsRenamesUncommittedAndUntrackedWork(t *testing.T) {
+	dir := diffRepo(t)
+	index := func() []byte {
+		t.Helper()
+		out, err := ExecRunner().Run(dir, "rev-parse", "--path-format=absolute", "--git-path", "index")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := os.ReadFile(strings.TrimSpace(out))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	before := index()
+	p, err := Diff(dir, "main", 1<<20)
+	if err != nil || p.Truncated || p.Base != "main" {
+		t.Fatalf("Diff = %+v, err %v", p, err)
+	}
+	for _, want := range []string{
+		"diff --git a/old.txt b/new.txt\nsimilarity index 100%\nrename from old.txt\nrename to new.txt\n",
+		"diff --git a/edited.txt b/edited.txt\n",
+		"-one\n+two\n",
+		// Moved without git mv: a delete and an untracked file to git
+		// status, but a rename to anyone reading the diff.
+		"diff --git a/moved.txt b/moved-unstaged.txt\nsimilarity index 100%\n",
+		// core.quotePath off: the name as itself, not "a/caf\303\251.txt".
+		"diff --git a/café.txt b/café.txt\nnew file mode 100644\n",
+		"--- /dev/null\n+++ b/café.txt\n@@ -0,0 +1 @@\n+fresh\n",
+	} {
+		if !strings.Contains(p.Text, want) {
+			t.Errorf("patch is missing %q:\n%s", want, p.Text)
+		}
+	}
+	for _, not := range []string{"debug.log", "nested"} {
+		if strings.Contains(p.Text, not) {
+			t.Errorf("%s made it into the patch:\n%s", not, p.Text)
+		}
+	}
+	// Untracked files are marked in a copy: the agent's index is its own,
+	// byte for byte, and the copy doesn't outlive the call.
+	if !bytes.Equal(index(), before) {
+		t.Error("Diff wrote the worktree's index")
+	}
+	if out, _ := ExecRunner().Run(dir, "status", "--porcelain", "café.txt"); !strings.HasPrefix(out, "??") {
+		t.Errorf("café.txt should still be untracked, status %q", out)
+	}
+	gitDir, _ := ExecRunner().Run(dir, "rev-parse", "--path-format=absolute", "--git-dir")
+	if left, _ := filepath.Glob(filepath.Join(strings.TrimSpace(gitDir), "moomux-diff-index-*")); len(left) > 0 {
+		t.Errorf("scratch index left behind: %v", left)
+	}
+}
+
+// An edit landing in the same instant as the last index write — same size,
+// same mtime as the cached entry — is one git catches only because the
+// entry is no older than the index file ("racy git"). A scratch copy
+// stamped with a fresh mtime would hide it; pinned here deterministically,
+// with ctime out of the comparison and both mtimes set by hand.
+func TestDiffSeesAnEditRacingTheIndexWrite(t *testing.T) {
+	dir := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		args = append([]string{"-c", "user.name=moomux", "-c", "user.email=moomux@localhost"}, args...)
+		out, err := ExecRunner().Run(dir, args...)
+		if err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		return out
+	}
+	f := filepath.Join(dir, "f.txt")
+	if err := os.WriteFile(f, []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("init", "-b", "main")
+	git("config", "core.trustctime", "false")
+	git("config", "core.checkStat", "minimal")
+	// An hour back, before add: an entry stamped in the same instant as
+	// its index write is "smudged" and content-checked forever after,
+	// which would pass this test with or without the fix.
+	at := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(f, at, at); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "f.txt")
+	git("commit", "-m", "init")
+	if err := os.WriteFile(f, []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{f, filepath.Join(dir, ".git", "index")} {
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, err := Diff(dir, "main", 1<<20)
+	if err != nil || !strings.Contains(p.Text, "-one\n+two\n") {
+		t.Fatalf("the racing edit is missing (err %v):\n%s", err, p.Text)
+	}
+}
+
+// A client parses the patch, so the user's diff config must not reshape
+// its headers.
+func TestDiffHeadersIgnoreThePrefixConfig(t *testing.T) {
+	dir := diffRepo(t)
+	for _, kv := range [][]string{{"diff.noprefix", "true"}, {"diff.mnemonicPrefix", "true"}, {"color.diff", "always"}} {
+		if out, err := ExecRunner().Run(dir, "config", kv[0], kv[1]); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+	}
+	p, err := Diff(dir, "main", 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(p.Text, "diff --git a/edited.txt b/edited.txt\n") ||
+		!strings.Contains(p.Text, "--- a/edited.txt\n+++ b/edited.txt\n") {
+		t.Fatalf("want a/ and b/ prefixes whatever the config says:\n%s", p.Text)
+	}
+	if strings.Contains(p.Text, "\x1b[") {
+		t.Fatalf("colour escapes in the patch:\n%s", p.Text)
+	}
+}
+
+func TestDiffFallsBackToHEADWithoutTheBase(t *testing.T) {
+	dir := diffRepo(t)
+	p, err := Diff(dir, "no-such-branch", 1<<20)
+	if err != nil || p.Base != "HEAD" {
+		t.Fatalf("Diff = base %q, err %v", p.Base, err)
+	}
+	// Against HEAD the committed rename is already in, the rest isn't.
+	if strings.Contains(p.Text, "b/new.txt") || !strings.Contains(p.Text, "+two\n") || !strings.Contains(p.Text, "+fresh\n") {
+		t.Fatalf("want uncommitted and untracked work only:\n%s", p.Text)
+	}
+}
+
+// A base that shares no history with the branch has no merge base, and
+// --merge-base fails outright on it. That is a reason to fall back, not to
+// fail the whole diff.
+func TestDiffFallsBackToHEADWithoutAMergeBase(t *testing.T) {
+	dir := diffRepo(t)
+	if out, err := ExecRunner().Run(dir, "-c", "user.name=m", "-c", "user.email=m@m", "commit-tree", "-m", "orphan",
+		"4b825dc642cb6eb9a060e54bf8d69288fbee4904"); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	} else if out, err := ExecRunner().Run(dir, "branch", "orphan", strings.TrimSpace(out)); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	p, err := Diff(dir, "orphan", 1<<20)
+	if err != nil || p.Base != "HEAD" || !strings.Contains(p.Text, "+two\n") {
+		t.Fatalf("Diff = %+v, err %v", p, err)
+	}
+}
+
+// The cap cuts between files, never inside one.
+func TestDiffCutsAtAFileBoundary(t *testing.T) {
+	dir := diffRepo(t)
+	full, err := Diff(dir, "main", 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	starts := []int{}
+	for i := 0; i < len(full.Text); i++ {
+		if strings.HasPrefix(full.Text[i:], "diff --git ") && (i == 0 || full.Text[i-1] == '\n') {
+			starts = append(starts, i)
+		}
+	}
+	if len(starts) != 4 {
+		t.Fatalf("want 4 files in the full patch, got %d:\n%s", len(starts), full.Text)
+	}
+	// Just short of each file's end: that file is dropped, the ones
+	// before it kept whole.
+	ends := append(starts[1:], len(full.Text))
+	for i, end := range ends {
+		p, err := Diff(dir, "main", end-1)
+		if err != nil || !p.Truncated {
+			t.Fatalf("limit %d: %+v, err %v", end-1, p, err)
+		}
+		if p.Text != full.Text[:starts[i]] {
+			t.Fatalf("limit %d: want the first %d files whole, got:\n%s", end-1, i, p.Text)
+		}
+	}
+	if p, _ := Diff(dir, "main", len(full.Text)); p.Truncated || p.Text != full.Text {
+		t.Fatalf("a patch of exactly the limit should come back whole, truncated=%v", p.Truncated)
+	}
+}
+
+func TestDiffOnANonRepoIsErrNotGitRepo(t *testing.T) {
+	if _, err := Diff(t.TempDir(), "main", 1<<20); !errors.Is(err, ErrNotGitRepo) {
+		t.Fatalf("err = %v, want ErrNotGitRepo", err)
 	}
 }
