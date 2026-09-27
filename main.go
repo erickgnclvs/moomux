@@ -389,6 +389,8 @@ func runSpawn(args []string) error {
 	branch := fs.String("branch", "", "existing branch to check out, instead of creating a new one")
 	ticket := fs.String("ticket", "", "ticket URL to attach to the session")
 	prompt := fs.String("prompt", "", "initial prompt to type into the new session's agent pane")
+	peers := fs.String("peers", "", "comma-separated names of the sessions this one has to agree with; appends the coordination rules from docs/multi-repo-sessions.md to -prompt (needs -contract)")
+	contract := fs.String("contract", "", "path (or URL) of the shared contract the -peers sessions work to")
 	list := fs.Bool("list", false, "list configured project names and exit")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -414,6 +416,18 @@ func runSpawn(args []string) error {
 	a, err := newApp()
 	if err != nil {
 		return err
+	}
+
+	// The coordinator is whoever runs spawn. Best-effort: outside a moomux
+	// session the rules fall back to "the session that spawned you".
+	var coordinator string
+	if *peers != "" {
+		if s, err := currentSession(a); err == nil {
+			coordinator = s.Name
+		}
+	}
+	if *prompt, err = coordinatedPrompt(*prompt, *peers, *contract, coordinator); err != nil {
+		return fmt.Errorf("spawn: %w", err)
 	}
 
 	// One call, the same one the TUI makes: composing the first prompt and

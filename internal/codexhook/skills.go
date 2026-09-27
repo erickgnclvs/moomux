@@ -42,6 +42,8 @@ Write a clear, self-contained task prompt because the spawned agent starts with 
     moomux spawn -project <project> -name <name> -prompt "<task prompt>"
 
 This is fire-and-forget. Do not wait for or check the spawned session's progress.
+
+If the task is one of several sessions that have to agree on a shared contract (one per repo for a cross-repo feature, say), add ` + "`-peers <other session names, comma-separated> -contract <path to the shared plan>`" + `. moomux appends the coordination rules to the prompt itself, so do not paste them into ` + "`-prompt`" + `. Leave both out for independent tasks.
 `
 
 	reseedSkillInstructions = `Run ` + "`moomux reseed`" + ` in a shell with ` + "`sandbox_permissions`" + ` set to ` + "`require_escalated`" + `, without asking a separate confirmation question first. This re-runs the current session's worktree-create userscripts with ` + "`MOOMUX_FORCE=1`" + `. Then report what it printed.

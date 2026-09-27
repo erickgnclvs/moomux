@@ -59,6 +59,8 @@ Then run:
     moomux spawn -project <project> -name <name> -prompt "<task prompt>"
 
 This is fire-and-forget — it creates the worktree/branch, tmux session, and agent, types the prompt in, and returns immediately. Don't wait on or try to check the spawned session's progress.
+
+**Coordinated work**: if the task is one of several sessions that have to agree on a shared contract (one per repo for a cross-repo feature, say), add ` + "`-peers <other session names, comma-separated> -contract <path to the shared plan>`" + `. moomux appends the coordination rules to the prompt itself, so don't paste them into ` + "`-prompt`" + `. Leave both out for independent tasks.
 `
 
 	reseedSkillInstructions = `Run ` + "`moomux reseed`" + ` now, without asking a separate confirmation question first. This re-runs this session's worktree-create userscripts with ` + "`MOOMUX_FORCE=1`" + `, which overwrites template-managed files in this worktree. Then report what it printed.
