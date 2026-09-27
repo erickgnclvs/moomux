@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -353,4 +355,187 @@ func isOrphanedWorktreeCheckout(path string) bool {
 func (c *Client) DeleteBranch(repoDir, branch string) error {
 	_, err := c.Runner.Run(repoDir, "branch", "-D", branch)
 	return err
+}
+
+// Patch is Diff's answer.
+type Patch struct {
+	// Text is raw `git diff` output, headers and all.
+	Text string
+	// Base is the ref Text was taken against: origin/<base> or <base>
+	// (from their merge base), or HEAD when neither exists or shares
+	// history with it — in which case Text is uncommitted work only.
+	Base string
+	// Truncated says Text was cut at a file boundary to stay under the
+	// limit.
+	Truncated bool
+}
+
+// Diff is everything in dir not yet on base, as one raw patch: `git diff
+// --merge-base` (commits since the merge base and uncommitted work alike)
+// with every untracked, non-ignored file in it as a new file. The ref is
+// resolved the way the review window does it — origin/<base>, then <base>,
+// then HEAD — except that one sharing no history with HEAD is skipped too,
+// rather than failing the whole diff.
+//
+// Untracked files are marked intent-to-add (`add -N`) in a throwaway copy
+// of the index, so one diff process covers them and a file moved without
+// `git mv` still reads as a rename. The worktree's own index belongs to the
+// agent working in it and is never written. Nested repos are left out: add
+// would record them as gitlinks, and an empty one makes the diff fatal.
+//
+// Output is pinned against the user's config — a/ and b/ prefixes whatever
+// diff.noprefix or diff.mnemonicPrefix say, unquoted UTF-8 paths, no
+// colour, no external diff — because a client parses it. The patch is cut
+// at a file boundary before it passes limit bytes, and Truncated says so;
+// a first file bigger than limit on its own leaves Text empty. A dir that
+// isn't a git repo wraps ErrNotGitRepo.
+//
+// Not through Runner: that returns stderr folded into stdout, and a warning
+// git prints mid-diff would land inside the patch.
+func Diff(dir, base string, limit int) (Patch, error) {
+	if err := IsRepo(dir); err != nil {
+		return Patch{}, err
+	}
+	p := Patch{Base: "HEAD"}
+	against := []string{"HEAD"}
+	for _, ref := range []string{"origin/" + base, base} {
+		if _, _, err := gitStdout(dir, nil, 0, "merge-base", ref, "HEAD"); err == nil {
+			p.Base, against = ref, []string{"--merge-base", ref}
+			break
+		}
+	}
+	index, err := scratchIndex(dir)
+	if err != nil {
+		return Patch{}, err
+	}
+	defer os.Remove(index)
+	defer os.Remove(index + ".lock")
+	env := []string{"GIT_INDEX_FILE=" + index}
+	others, _, err := gitStdout(dir, env, 0, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return Patch{}, err
+	}
+	if others != "" {
+		// `:/` rather than the listed names: a file the agent deletes
+		// before add runs would fail an explicit pathspec, and the whole
+		// diff with it. ls-files ends a nested repo's entry with a slash.
+		add := []string{"add", "-N", "--", ":/"}
+		for _, name := range strings.Split(others, "\x00") {
+			if strings.HasSuffix(name, "/") {
+				add = append(add, ":(top,exclude,literal)"+strings.TrimSuffix(name, "/"))
+			}
+		}
+		if _, _, err := gitStdout(dir, env, 0, add...); err != nil {
+			return Patch{}, err
+		}
+	}
+	args := append([]string{"-c", "core.quotePath=false", "diff", "--no-color", "--no-ext-diff", "-M",
+		"--src-prefix=a/", "--dst-prefix=b/"}, against...)
+	// limit+1 so a patch of exactly limit bytes isn't mistaken for a cut one.
+	out, over, err := gitStdout(dir, env, limit+1, args...)
+	if err != nil {
+		return Patch{}, err
+	}
+	p.Text, p.Truncated = out, over
+	if over {
+		p.Text = cutAtFile(out, limit)
+	}
+	return p, nil
+}
+
+// scratchIndex copies dir's index to a new file beside it and returns the
+// copy's path. Beside it rather than in the temp dir because a split index
+// finds its shared half relative to the index file. A repo with no index
+// yet gets a path with nothing at it, which git reads as an empty index.
+func scratchIndex(dir string) (string, error) {
+	real, _, err := gitStdout(dir, nil, 0, "rev-parse", "--path-format=absolute", "--git-path", "index")
+	if err != nil {
+		return "", err
+	}
+	real = strings.TrimSpace(real)
+	f, err := os.CreateTemp(filepath.Dir(real), "moomux-diff-index-*")
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	src, err := os.Open(real)
+	if errors.Is(err, os.ErrNotExist) {
+		return f.Name(), os.Remove(f.Name())
+	}
+	if err != nil {
+		os.Remove(f.Name())
+		return "", err
+	}
+	defer src.Close()
+	info, err := src.Stat()
+	if err == nil {
+		_, err = io.Copy(f, src)
+	}
+	if err == nil {
+		err = f.Close()
+	}
+	// The copy keeps the original's mtime. Git trusts an entry's cached
+	// stat only if it is older than the index file itself; a copy stamped
+	// "now" makes a file edited in the same instant as the last index
+	// write — same size, same mtime — read as unchanged, and its edit
+	// silently drops out of the diff.
+	if err == nil {
+		err = os.Chtimes(f.Name(), info.ModTime(), info.ModTime())
+	}
+	if err != nil {
+		os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
+}
+
+// cutAtFile is patch's longest prefix of whole files within limit bytes. A
+// "diff --git " at the start of a line is always a header: hunk lines start
+// with a space, a + or a -.
+func cutAtFile(patch string, limit int) string {
+	if len(patch) <= limit {
+		return patch
+	}
+	if i := strings.LastIndex(patch[:limit], "\ndiff --git "); i >= 0 {
+		return patch[:i+1]
+	}
+	return ""
+}
+
+// gitStdout runs git in dir, with env added to its environment, and
+// returns its stdout alone. With max > 0 it
+// reads at most max bytes and reports over — and stops git, rather than
+// buffering a generated file's worth of patch — once there would be more.
+func gitStdout(dir string, env []string, max int, args ...string) (out string, over bool, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
+	cmd.WaitDelay = 2 * time.Second // see execRunner
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", false, err
+	}
+	if err := cmd.Start(); err != nil {
+		return "", false, err
+	}
+	var r io.Reader = stdout
+	if max > 0 {
+		r = io.LimitReader(stdout, int64(max))
+	}
+	data, readErr := io.ReadAll(r)
+	if over = max > 0 && len(data) >= max; over {
+		cancel() // killed on purpose; its exit status means nothing now
+		_ = cmd.Wait()
+		return string(data), true, nil
+	}
+	if err := cmd.Wait(); err != nil {
+		return string(data), false, fmt.Errorf("git %v in %s: %w (%s)", args, dir, err, strings.TrimSpace(stderr.String()))
+	}
+	return string(data), false, readErr
 }

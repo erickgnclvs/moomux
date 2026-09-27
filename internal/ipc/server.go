@@ -213,7 +213,12 @@ func (s *Server) handle(c net.Conn) {
 		out.Err = err.Error()
 		out.Code = codeFor(err)
 	}
-	if err := json.NewEncoder(c).Encode(out); err != nil {
+	// No HTML escaping: nothing here is embedded in a page, and escaping
+	// <, > and & as < turns each into six bytes — a Diff of JSX or
+	// HTML goes out several times the size of the patch it carries.
+	enc := json.NewEncoder(c)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(out); err != nil {
 		slog.Warn("ipc: write response", "method", req.Method, "err", err)
 	}
 }
@@ -673,6 +678,9 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 	case "Review":
 		hint, err := b.Review(a.ID)
 		return Result{Hint: hint}, err
+	case "Diff":
+		p, ok, err := b.Diff(a.ID)
+		return Result{Patch: p.Text, Base: p.Base, Truncated: p.Truncated, OK: ok}, err
 	case "ChangeSummary":
 		files, commits, ok := b.ChangeSummary(a.ID)
 		return Result{Files: files, Commits: commits, OK: ok}, nil

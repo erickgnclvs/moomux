@@ -17,6 +17,7 @@ import (
 
 	"github.com/erickgnclvs/moomux/internal/browser"
 	"github.com/erickgnclvs/moomux/internal/config"
+	"github.com/erickgnclvs/moomux/internal/gitwt"
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/updatecheck"
@@ -75,6 +76,13 @@ type Backend interface {
 	// window and not a rendered patch so the diff reaches a real tty and
 	// the user's own pager.
 	Review(id string) (hint string, err error)
+	// Diff is Review's diff as a raw patch rather than a tmux window, for a
+	// front end with no tty to open one on (the phone): committed and
+	// uncommitted work against the same base, untracked files included,
+	// cut at a file boundary past a size cap — see gitwt.Diff. ok is false
+	// for a worktree that isn't a git repo. It never needs tmux, so a
+	// parked session diffs like a live one.
+	Diff(id string) (patch gitwt.Patch, ok bool, err error)
 	KillTmux(id string) error
 	SetSessionTags(id, ticket, pr string) (session.Session, error)
 	SetSessionPrompt(id, prompt string) (session.Session, error)

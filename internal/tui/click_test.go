@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/erickgnclvs/moomux/internal/config"
+	"github.com/erickgnclvs/moomux/internal/gitwt"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/sessionview"
@@ -247,6 +248,7 @@ func (f *fakeBackend) WorktreeStatus(id string) (dirty, unpushed, ok bool) {
 	}
 	return st.dirty, st.unpushed, st.ok
 }
+func (f *fakeBackend) Diff(string) (gitwt.Patch, bool, error) { return gitwt.Patch{}, false, nil }
 func (f *fakeBackend) ChangeSummary(id string) (filesChanged, unpushedCommits int, ok bool) {
 	f.changeSummaryCalls = append(f.changeSummaryCalls, id)
 	st, present := f.changeSummary[id]

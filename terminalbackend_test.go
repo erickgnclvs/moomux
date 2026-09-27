@@ -296,11 +296,12 @@ func TestTerminalBackendDeleteSessionClosesTabAroundTheDelete(t *testing.T) {
 // member sessions rather than deleting them, so nothing there reaches a
 // tmux session, let alone a terminal. Capture and Review touch tmux but not
 // a terminal: a capture attaches no client, and a review window opens inside
-// the session the user already has open somewhere.
+// the session the user already has open somewhere. Diff touches neither: it
+// only reads the worktree.
 var wantBackendMethods = []string{
 	"AddPlainProject", "AddProject", "Capture", "ChangeSummary", "ConfigSnapshot",
 	"CreateFolder", "CreateSession", "DeleteFolder", "DeleteSession",
-	"EnsureTmux", "InitProjectAndAdd", "KillTmux", "MoveProject",
+	"Diff", "EnsureTmux", "InitProjectAndAdd", "KillTmux", "MoveProject",
 	"OpenSession", "RemoveProject", "RenameFolder", "RenameSession", "Review",
 	"ReorderFolders", "ReorderSessions", "Sessions",
 	"SetAutoSubmitDefault", "SetAutoTmux", "SetCompactDetail", "SetFolderCollapsed", "SetProjectCollapsed",
