@@ -44,6 +44,31 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Darwin builds are signed with a stable self-signed certificate
+      # (hooks.post in .goreleaser.yaml). macOS keys Accessibility / Screen
+      # Recording grants to the signature; the Go linker's ad-hoc one changes
+      # every build, so every upgrade silently dropped them (#304). Fail
+      # rather than ship unsigned: that would drop everyone's grants again.
+      - name: Set up darwin code signing
+        env:
+          P12: ${{ secrets.MACOS_SIGN_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_SIGN_P12_PASSWORD }}
+        run: |
+          if [ -z "$P12" ] || [ -z "$P12_PASSWORD" ]; then
+            echo "::error::MACOS_SIGN_P12 / MACOS_SIGN_P12_PASSWORD secrets are not set" >&2
+            exit 1
+          fi
+          v=0.29.0
+          f=apple-codesign-$v-x86_64-unknown-linux-musl
+          curl -fsSL -o "$RUNNER_TEMP/$f.tar.gz" "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F$v/$f.tar.gz"
+          echo "dbe85cedd8ee4217b64e9a0e4c2aef92ab8bcaaa41f20bde99781ff02e600002  $RUNNER_TEMP/$f.tar.gz" | sha256sum -c -
+          tar xzf "$RUNNER_TEMP/$f.tar.gz" -C "$RUNNER_TEMP"
+          install "$RUNNER_TEMP/$f/rcodesign" /usr/local/bin/rcodesign
+          echo "$P12" | base64 -d > "$RUNNER_TEMP/sign.p12"
+          printf '%s' "$P12_PASSWORD" > "$RUNNER_TEMP/sign.pass"
+          echo "SIGN_P12=$RUNNER_TEMP/sign.p12" >> "$GITHUB_ENV"
+          echo "SIGN_PASS=$RUNNER_TEMP/sign.pass" >> "$GITHUB_ENV"
+
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           version: "~> v2"

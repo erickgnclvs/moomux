@@ -32,6 +32,8 @@ Requires `tmux`, `git`, and `claude` on `$PATH`.
 
 **Linux**: moomux detects the terminal it's running in from environment variables. It opens each session as a **new tab** in GNOME Terminal, Konsole, WezTerm, and kitty (kitty needs `allow_remote_control yes` + `listen_on unix:/tmp/kitty` in `kitty.conf`; without it you get a new window), and as a **new window** in Ghostty, Alacritty, foot, Tilix, and xterm. Other VTE-based terminals (Ptyxis, GNOME Console, Xfce Terminal, ...) open via `gnome-terminal` when it's installed. In anything else — including over SSH — moomux shows a `tmux attach -t <session>` hint instead of failing.
 
+**macOS permissions**: agents running in moomux sessions get Accessibility and Screen Recording through the `moomux` binary itself (macOS checks the process that started the tmux server, not tmux or your terminal). Grant `$(brew --prefix moomux)/bin/moomux` in System Settings → Privacy & Security, then `brew services restart moomux`. Homebrew releases are signed with a stable certificate, so the grant survives upgrades.
+
 **Windows**: tmux has no native Windows build. Run moomux inside [WSL](https://learn.microsoft.com/windows/wsl/install) — the Linux binary above works as-is. In Windows Terminal, moomux opens a new tab and attaches automatically; in any other terminal it prints a `tmux attach -t <session>` hint instead.
 
 ## Session layout

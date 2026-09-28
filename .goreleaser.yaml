@@ -15,6 +15,16 @@ builds:
       - arm64
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+    # Sign darwin binaries with the same certificate and identifier every
+    # release so macOS permission grants survive upgrades (#304). Never
+    # change the identifier or the certificate: either one makes every user
+    # re-grant. SIGN_P12 / SIGN_PASS come from release.yml.
+    hooks:
+      post:
+        - cmd: sh -c 'if [ "{{ .Os }}" = darwin ]; then rcodesign sign --p12-file "$SIGN_P12" --p12-password-file "$SIGN_PASS" --binary-identifier io.github.erickgnclvs.moomux "{{ .Path }}"; fi'
+          env:
+            - SIGN_P12={{ .Env.SIGN_P12 }}
+            - SIGN_PASS={{ .Env.SIGN_PASS }}
 
 archives:
   - formats: [tar.gz]
