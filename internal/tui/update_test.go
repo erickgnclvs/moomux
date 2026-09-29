@@ -1762,18 +1762,49 @@ func TestSessionMovedErrorFlashes(t *testing.T) {
 // TestUpdateKeyOnlyShellsOutWhenNewerVersionKnown covers the "u" hotkey's
 // guard logic without ever actually running `brew upgrade` — that shell-out
 // itself is exercised by runUpdateCmd's own caller, main(), not a unit test.
-func TestUpdateKeyOnlyShellsOutWhenNewerVersionKnown(t *testing.T) {
+// TestUpdateKeyRechecksWhenNothingCached covers a real bug: the background
+// poll is hourly, so a release published since the last poll made u claim
+// "already up to date" while `brew upgrade` would happily install it.
+func TestUpdateKeyRechecksWhenNothingCached(t *testing.T) {
 	be := &fakeBackend{}
 	m := newTestModel(be)
 
-	// No newer version known: no shell-out, just an info flash.
-	_, cmd := m.Update(keyRune("u"))
-	if cmd != nil {
-		t.Fatalf("expected no cmd with no update available")
+	if _, cmd := m.Update(keyRune("u")); cmd == nil {
+		t.Fatalf("expected u to fire a fresh update check")
 	}
-	if !strings.Contains(m.flash, "up to date") {
-		t.Fatalf("flash = %q, want an up-to-date notice", m.flash)
+	if !m.updating {
+		t.Fatalf("expected updating=true while the check is in flight")
 	}
+
+	// Check finds nothing newer: clears state, says so.
+	if _, cmd := m.Update(UpdateCheckedMsg{}); cmd != nil {
+		t.Fatalf("expected no cmd when already current")
+	}
+	if m.updating || !strings.Contains(m.flash, "up to date") {
+		t.Fatalf("updating=%v flash=%q, want cleared + up-to-date notice", m.updating, m.flash)
+	}
+
+	// Check fails: error surfaced, not a false "up to date".
+	m.Update(keyRune("u"))
+	m.Update(UpdateCheckedMsg{Err: errors.New("403 rate limited")})
+	if m.updating || !strings.Contains(m.flash, "rate limited") {
+		t.Fatalf("updating=%v flash=%q, want cleared + error", m.updating, m.flash)
+	}
+
+	// Check finds a newer release: goes straight into the brew upgrade.
+	m.Update(keyRune("u"))
+	if _, cmd := m.Update(UpdateCheckedMsg{Version: "9.9.9"}); cmd == nil {
+		t.Fatalf("expected the brew shell-out once a newer version is found")
+	}
+	if m.UpdateVersion != "9.9.9" || !m.updating {
+		t.Fatalf("UpdateVersion=%q updating=%v, want 9.9.9 + in flight", m.UpdateVersion, m.updating)
+	}
+}
+
+func TestUpdateKeyShellsOutWhenNewerVersionKnown(t *testing.T) {
+	be := &fakeBackend{}
+	m := newTestModel(be)
+	var cmd tea.Cmd
 
 	// A newer version is known: pressing u fires the shell-out and marks
 	// updating so a second press doesn't fire it again concurrently.

@@ -53,6 +53,14 @@ type CreateFailedMsg struct {
 // reports a version newer than the one currently running.
 type UpdateAvailableMsg struct{ Version string }
 
+// UpdateCheckedMsg is delivered by recheckUpdateCmd, the on-demand check
+// behind pressing u. Unlike UpdateAvailableMsg it always arrives: Version is
+// empty when already current, Err is set when GitHub couldn't be reached.
+type UpdateCheckedMsg struct {
+	Version string
+	Err     error
+}
+
 // UpdateCheckTickMsg fires every updateCheckInterval to re-poll GitHub
 // Releases, so long-running sessions still notice new versions.
 type UpdateCheckTickMsg struct{}

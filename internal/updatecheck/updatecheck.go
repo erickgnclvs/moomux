@@ -5,6 +5,7 @@ package updatecheck
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -29,6 +30,9 @@ func Latest(ctx context.Context) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("github releases: %s", resp.Status)
+	}
 
 	var body struct {
 		TagName string `json:"tag_name"`

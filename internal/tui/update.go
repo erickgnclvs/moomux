@@ -26,6 +26,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.UpdateVersion = msg.Version
 		return m, nil
 
+	case UpdateCheckedMsg:
+		if msg.Err != nil || msg.Version == "" {
+			m.updating = false
+			m.busy = false
+			if msg.Err != nil {
+				return m.flashError(fmt.Errorf("update check failed: %w", msg.Err))
+			}
+			m.setFlash("info", "already up to date")
+			return m, nil
+		}
+		m.UpdateVersion = msg.Version
+		m.setFlash("info", "updating to v"+m.UpdateVersion+"…")
+		return m, runUpdateCmd()
+
 	case UpdateCheckTickMsg:
 		return m, tea.Batch(checkUpdateCmd(m.Version), tickUpdateCheck())
 
@@ -822,15 +836,18 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.openSessionCmd(m.sessions[m.cursor].ID)
 		}
 	case key.Matches(msg, m.keys.Update):
-		if m.UpdateVersion == "" {
-			m.setFlash("info", "already up to date")
-			return m, nil
-		}
 		if m.updating {
 			return m, nil
 		}
 		m.updating = true
 		m.busy = true
+		// The background poll only runs hourly, so nothing cached doesn't
+		// mean up to date — ask GitHub now; UpdateCheckedMsg takes it from
+		// there.
+		if m.UpdateVersion == "" {
+			m.setFlash("info", "checking for updates…")
+			return m, recheckUpdateCmd(m.Version)
+		}
 		m.setFlash("info", "updating to v"+m.UpdateVersion+"…")
 		return m, runUpdateCmd()
 	}
