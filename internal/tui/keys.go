@@ -116,8 +116,8 @@ func DefaultKeyMap() KeyMap {
 		AssignFolder: key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "folder")),
 		ToggleFolder: key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "collapse folder")),
 		Folders:      key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "manage folders")),
-		// Only does anything once UpdateVersion is set (a newer release was
-		// found) — see updateList's Update case.
+		// Upgrades to UpdateVersion, or rechecks GitHub first when no newer
+		// release is cached yet — see updateList's Update case.
 		// Launches client.toml's diff_tool on the selected session's worktree.
 		// "d" stays delete-session; this is its shifted neighbour. It took
 		// over "D" from a main-list remove-project shortcut that was a

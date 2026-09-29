@@ -1301,6 +1301,21 @@ func checkUpdateCmd(current string) tea.Cmd {
 	}
 }
 
+// recheckUpdateCmd is checkUpdateCmd for an explicit u press: it always
+// replies, so the user hears "up to date" or the error instead of silence.
+func recheckUpdateCmd(current string) tea.Cmd {
+	return func() tea.Msg {
+		latest, err := updatecheck.Latest(context.Background())
+		if err != nil {
+			return UpdateCheckedMsg{Err: err}
+		}
+		if !updatecheck.Newer(current, latest) {
+			return UpdateCheckedMsg{}
+		}
+		return UpdateCheckedMsg{Version: strings.TrimPrefix(latest, "v")}
+	}
+}
+
 // runUpdateCmd shells out to the same command the footer/help already tell
 // users to run by hand. Homebrew-only: a go install/git clone build has no
 // self-update path, so this just fails with brew's own error in that case,
