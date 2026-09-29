@@ -710,7 +710,10 @@ func AttachCmd(session string) *exec.Cmd {
 	// required (tmux refuses to nest) but takes the server with it, so a
 	// core started inside a `tmux -L foo` session would attach to the
 	// *default* server while every Runner call here still talks to foo.
-	var args []string
+	// -u: tmux infers a UTF-8 client from LC_ALL/LC_CTYPE/LANG, and a core
+	// run by launchd or brew services has none of them, so without it the
+	// phone gets every non-ASCII glyph (❯, ⏵, ·, box drawing) as "_".
+	args := []string{"-u"}
 	if sock, _, _ := strings.Cut(os.Getenv("TMUX"), ","); sock != "" {
 		args = append(args, "-S", sock)
 	}

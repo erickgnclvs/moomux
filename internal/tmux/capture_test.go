@@ -270,7 +270,7 @@ func TestCapturePanesRebatchesWhatTheFirstPassMissed(t *testing.T) {
 func TestAttachCmdKeepsTheServerSocket(t *testing.T) {
 	t.Setenv("TMUX", "/private/tmp/tmux-501/foo,4321,0")
 	args := AttachCmd("moomux-a").Args
-	want := []string{"tmux", "-S", "/private/tmp/tmux-501/foo", "attach", "-d", "-t", "=moomux-a"}
+	want := []string{"tmux", "-u", "-S", "/private/tmp/tmux-501/foo", "attach", "-d", "-t", "=moomux-a"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args = %v, want %v", args, want)
 	}
@@ -281,10 +281,13 @@ func TestAttachCmdKeepsTheServerSocket(t *testing.T) {
 	}
 }
 
+// -u: a core run by launchd has no LANG, so without it tmux decides the
+// client isn't UTF-8 and draws every non-ASCII glyph (❯, ⏵, ·, the Claude
+// logo) as "_" on the phone. The -u in both wants above is that regression.
 func TestAttachCmdOutsideTmuxTargetsTheDefaultServer(t *testing.T) {
 	t.Setenv("TMUX", "")
 	args := AttachCmd("moomux-a").Args
-	want := []string{"tmux", "attach", "-d", "-t", "=moomux-a"}
+	want := []string{"tmux", "-u", "attach", "-d", "-t", "=moomux-a"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args = %v, want %v", args, want)
 	}
