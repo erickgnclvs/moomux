@@ -191,7 +191,7 @@ var newFormFieldHints = []string{
 	1:  "list + folder name — blank: from branch, prompt, or random",
 	2:  "resume an existing branch; blank = new branch off base",
 	3:  "only used for a new branch — blank uses the project's base branch",
-	4:  "optional — the agent's first task; enter for a newline, tab away to submit",
+	4:  "optional — the agent's first task; enter for a newline, tab away to submit, ctrl+v pastes an image",
 	5:  "optional — shown as a clickable ticket icon next to the session",
 	6:  "optional — shown as a clickable PR icon next to the session",
 	7:  "which agent CLI runs in the session's pane — ←→ to choose",

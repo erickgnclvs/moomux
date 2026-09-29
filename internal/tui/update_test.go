@@ -1856,3 +1856,30 @@ func TestUpdateFlashSurvivesWhileBrewRuns(t *testing.T) {
 		t.Fatalf("expected busy to clear once the update finishes")
 	}
 }
+
+// TestNewSessionPromptCtrlVPastesClipboardImagePath guards the image paste:
+// ctrl+v on the prompt with an image on the clipboard inserts the saved
+// file's path (agents read that as the image); with no image it must fall
+// through to the textarea's normal text paste rather than swallow the key.
+func TestNewSessionPromptCtrlVPastesClipboardImagePath(t *testing.T) {
+	orig := clipboardImage
+	t.Cleanup(func() { clipboardImage = orig })
+
+	be := &fakeBackend{}
+	m := newTestModel(be)
+	m.Update(keyRune("n"))
+	tabTo(t, m, newFormPromptFocus)
+	typeText(m, "look at")
+
+	clipboardImage = func() (string, error) { return "/tmp/moomux-paste-1.png", nil }
+	m.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	if got := m.promptInput.Value(); got != "look at /tmp/moomux-paste-1.png " {
+		t.Fatalf("prompt = %q", got)
+	}
+
+	clipboardImage = func() (string, error) { return "", os.ErrNotExist }
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	if cmd == nil {
+		t.Fatal("no image: ctrl+v should fall through to the textarea's text paste")
+	}
+}
