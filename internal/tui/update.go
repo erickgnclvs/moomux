@@ -1419,6 +1419,9 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case newFormBaseBranchFocus:
 		m.baseBranchInput, cmd = m.baseBranchInput.Update(msg)
 	case newFormPromptFocus:
+		if msg.String() == "ctrl+v" && m.pasteClipboardImage() {
+			break
+		}
 		m.promptInput, cmd = m.promptInput.Update(msg)
 	case newFormTicketFocus:
 		m.ticketInput, cmd = m.ticketInput.Update(msg)

@@ -48,7 +48,7 @@
            │                                                                            │           
            │                                                                            │           
            │  optional — the agent's first task; enter for a newline, tab away to       │           
-           │  submit                                                                    │           
+           │  submit, ctrl+v pastes an image                                            │           
            │  tab/↑↓ fields  ←→ choose  enter  esc cancel                               │           
            │                                                                            │           
            ╰────────────────────────────────────────────────────────────────────────────╯           
