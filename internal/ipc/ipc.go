@@ -80,10 +80,13 @@ type Args struct {
 	Theme      string `json:"theme,omitempty"`
 	Appearance string `json:"appearance,omitempty"`
 	Delta      int    `json:"delta,omitempty"`
-	// Cols and Rows are Attach's initial pty size. Zero means "the client
-	// didn't say", which attach reads as 80x24 — see Server.attach.
+	// Cols and Rows are Attach's initial pty size, and ResizeAttach's new
+	// one. Zero means "the client didn't say", which reads as 80x24 — see
+	// winsize.
 	Cols int `json:"cols,omitempty"`
 	Rows int `json:"rows,omitempty"`
+	// Attach is ResizeAttach's token, from Attach's Result.Attach.
+	Attach string `json:"attach,omitempty"`
 	// Req is CreateSession's whole request. One field rather than a dozen
 	// flat ones, because creating a session is a transaction the core runs
 	// end to end — see session.CreateRequest.
@@ -124,6 +127,9 @@ type Result struct {
 	Dirty        bool              `json:"dirty,omitempty"`
 	Unpushed     bool              `json:"unpushed,omitempty"`
 	OK           bool              `json:"ok,omitempty"`
+	// Attach is a live attach's token, for ResizeAttach. Only valid while
+	// that Attach connection is open.
+	Attach string `json:"attach,omitempty"`
 	// Screens is Capture's answer: one session id to the visible text of
 	// its active pane. An id that couldn't be captured is absent.
 	Screens map[string]string `json:"screens,omitempty"`

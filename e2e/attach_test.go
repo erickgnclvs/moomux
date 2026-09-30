@@ -170,6 +170,17 @@ func TestAttachIsAPtyOverTheWire(t *testing.T) {
 		t.Fatalf("window size = %q, want the attached client's 100 columns", got)
 	}
 
+	// A resize lands on the live pty by token, without a reattach.
+	if att.Token == "" {
+		t.Fatal("Attach returned no resize token")
+	}
+	if err := c.ResizeAttach(att.Token, 70, 30); err != nil {
+		t.Fatalf("ResizeAttach: %v", err)
+	}
+	waitFor(t, "window to take the resized 70 columns", func() bool {
+		return strings.HasPrefix(tmuxWindowSize(t, s.TmuxSession), "70x")
+	})
+
 	// Closing the socket is the detach: the copy above must end, and tmux
 	// must lose the client without losing the session.
 	att.Close()
@@ -183,6 +194,49 @@ func TestAttachIsAPtyOverTheWire(t *testing.T) {
 	}
 	if !tmuxHasSession(s.TmuxSession) {
 		t.Fatal("detaching killed the session")
+	}
+	// The token dies with its connection — once the core has noticed the
+	// close, which the client's own read ending doesn't wait for.
+	waitFor(t, "the closed attach's token to be forgotten", func() bool {
+		err := c.ResizeAttach(att.Token, 80, 24)
+		return err != nil && err.Error() == "unknown attach"
+	})
+}
+
+// A second attach is a second client, not a replacement: the phone attaching
+// must not detach the Mac app's pane (or anyone else's).
+func TestAttachDoesNotDetachOtherClients(t *testing.T) {
+	a, s := newCoreSession(t, "two")
+	c := serveOnSocket(t, a)
+	for i := range 2 {
+		att, err := c.Attach(s.ID, 100, 40)
+		if err != nil {
+			t.Fatalf("Attach %d: %v", i, err)
+		}
+		defer att.Close()
+		go func() { _, _ = io.Copy(io.Discard, att) }()
+	}
+	waitFor(t, "both attaches to be tmux clients", func() bool {
+		out, _ := exec.Command("tmux", "list-clients", "-t", s.TmuxSession).Output()
+		return strings.Count(string(out), "\n") == 2
+	})
+	// ...and still both a moment later, rather than the first being kicked
+	// once the second finished attaching.
+	time.Sleep(500 * time.Millisecond)
+	out, _ := exec.Command("tmux", "list-clients", "-t", s.TmuxSession).Output()
+	if n := strings.Count(string(out), "\n"); n != 2 {
+		t.Fatalf("%d tmux clients after two attaches, want 2:\n%s", n, out)
+	}
+}
+
+func waitFor(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !ok() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 

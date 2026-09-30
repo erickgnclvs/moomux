@@ -282,7 +282,7 @@ as plain folder" dialog.
 `WorktreeStatus`, `ChangeSummary`, `Capture`, `Diff`.
 
 **Session lifecycle** — `CreateSession`, `EnsureTmux`, `DeleteSession`,
-`KillTmux` (park), `Review`.
+`KillTmux` (park), `Review`, `ResizeAttach` (see `Attach` below).
 
 **Files** — `SaveFile` takes `name` and `data` (base64) and answers `path`:
 where the bytes now live on the core's machine, under a name that needs no
@@ -448,7 +448,7 @@ worktree answers `{"ok": true, "base": "origin/main"}` with no `patch` at all.
 {"method": "Attach", "args": {"id": "moomux:a", "cols": 100, "rows": 40}}
 
 // response, and the last JSON on this connection
-{"result": {"ok": true}}
+{"result": {"ok": true, "attach": "9f2c…e41a"}}
 
 // ...everything after this line is raw pty bytes, both directions, forever
 ```
@@ -458,6 +458,11 @@ works and its tmux name is read *after* any migration), allocates a pty, runs
 `tmux attach` on it, and copies both ways. **Closing the socket is the
 detach** — there is nothing else to send, and tmux loses the client without
 losing the session.
+
+The attach is one more tmux client, not a replacement: the core runs `tmux
+attach` without `-d`, so a phone attaching leaves the Mac app's pane (and any
+desktop terminal) attached. Neither front end kicks the other; see "Every
+tmux client shares one window size" below for what that does to the size.
 
 No framing, no length prefixes, no multiplexing: a second thing to say means
 a second connection. That is deliberate, and it is what makes a phone's
@@ -502,13 +507,37 @@ for Return.
 An error is only expressible *before* the switch to raw mode, so a failure
 (unknown session, a session with no tmux name, a pty that wouldn't allocate)
 arrives as an ordinary `{"err": ...}` line and the connection closes. After
-`{"ok": true}` there is nowhere to put one.
+the `"ok": true` line there is nowhere to put one. The resize token rides in
+that same single line, so the read-one-line-then-raw split is unchanged.
 
-Resize is the initial size and nothing more: `cols`/`rows` reach
-`pty.Setsize` at start, and a client that changes size mid-attach detaches
-and reattaches. A control connection or an in-band escape is the upgrade if
-that ever grates. A missing or nonsensical size becomes 80x24 — never 0,
-which makes tmux draw nothing at all and reads as a hung connection.
+**Resize.** `cols`/`rows` on the request are the initial size. A later one
+can't ride the attach connection — it has no framing left — so the success
+line carries `attach`, a token naming this attach's pty (128 random bits,
+hex), and a resize is a one-shot call on a connection of its own:
+
+```jsonc
+{"method": "ResizeAttach", "args": {"attach": "9f2c…e41a", "cols": 60, "rows": 20}}
+{"result": {"ok": true}}
+// or, for a token whose attach connection has closed (or never existed):
+{"err": "unknown attach"}
+```
+
+It calls `pty.Setsize` on the live pty, so tmux gets a SIGWINCH and redraws
+in place, where a reattach would repaint the pane from scratch — the
+software keyboard showing or hiding, or a rotation, is exactly that. The
+token is valid only while its attach connection is open and is forgotten
+when it closes. `ResizeAttach` follows the same listener and auth rules as
+every other method; the token is what keeps one client from resizing
+another's attach, so treat it like one.
+
+Both halves are backward compatible. An older client ignores the extra
+result key. A newer client against an older core sees no `attach` (or gets
+`unknown method` from `ResizeAttach`) and falls back to detaching and
+reattaching at the new size, which is all an older core ever offered.
+
+A missing or nonsensical size — on `Attach` or `ResizeAttach` — becomes
+80x24, never 0, which makes tmux draw nothing at all and reads as a hung
+connection.
 
 `TERM` is fixed at `xterm-256color` on the pty. The terminfo entry has to
 exist on the *core's* machine, which is the reason not to take the client's
