@@ -114,6 +114,9 @@ type Result struct {
 	Cfg      *config.Config       `json:"cfg,omitempty"`
 	Agents   []config.AgentOption `json:"agents,omitempty"`
 	Themes   []config.Theme       `json:"themes,omitempty"`
+	// Ghostty is GhosttyConfig's answer, always present for that method —
+	// empty text and no files when there's no config.
+	Ghostty *GhosttyConfig `json:"ghostty,omitempty"`
 	// ProjectEmoji is every project name mapped to Cfg.ProjectEmoji(name):
 	// the glyph a client should draw, including the deterministic palette
 	// fallback for projects that never chose one. Serve-only — the server

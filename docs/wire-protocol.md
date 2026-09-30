@@ -278,8 +278,8 @@ as plain folder" dialog.
 
 ### Methods
 
-**Read** — `Config`, `Sessions`, `AgentOptions`, `Themes`, `SuggestedProject`,
-`WorktreeStatus`, `ChangeSummary`, `Capture`, `Diff`.
+**Read** — `Config`, `Sessions`, `AgentOptions`, `Themes`, `GhosttyConfig`,
+`SuggestedProject`, `WorktreeStatus`, `ChangeSummary`, `Capture`, `Diff`.
 
 **Session lifecycle** — `CreateSession`, `EnsureTmux`, `DeleteSession`,
 `KillTmux` (park), `Review`, `ResizeAttach` (see `Attach` below).
@@ -321,6 +321,26 @@ as-is.
 reading it — so no size cap. It is for the Mac, which shares this machine's
 disk and only needs the core to turn a relative or `:42` path into one it can
 open itself.
+
+`GhosttyConfig` takes no args and answers `ghostty`: `{"text": "...",
+"files": ["/abs/path", ...]}` — the user's Ghostty config files on the core's
+machine, so the phone can style its panes the way the Mac app does by reading
+them locally. `files` is every config file found, in load order; `text` is
+their contents concatenated in that order, each followed by a newline.
+Unreadable and empty files are skipped. No config anywhere is still an
+answer, not an error: `ghostty` present with an empty `text` and no `files`.
+Cores older than this method answer "unknown method", which a client should
+read the same way.
+
+The load order is the contract, because later files override earlier ones.
+It is ghostty's own `Config.loadDefaultFiles`, which the Mac app's
+`AppState.ghosttyConfigPaths` mirrors, and the three must agree:
+`$XDG_CONFIG_HOME/ghostty` (or `~/.config/ghostty` when that is unset or
+empty — it replaces `~/.config`, it does not add to it), then
+`~/Library/Application Support/com.mitchellh.ghostty`; in each, the legacy
+`config` before `config.ghostty`. `config-file =` includes are not followed
+and `theme =` is not resolved: the client handles themes itself, and ghostty's
+embedded loader ignores includes anyway.
 
 `Attach` is a method name too, but it is not on this channel — see below.
 
