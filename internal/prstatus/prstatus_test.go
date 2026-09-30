@@ -141,6 +141,30 @@ func TestAggregateCI(t *testing.T) {
 			"FAILING",
 		},
 		{
+			"run cancelled by a newer successful run of the same job",
+			[]rawCheck{
+				{Name: "build", WorkflowName: "CI", StartedAt: "2026-09-30T12:55:43Z", Status: "COMPLETED", Conclusion: "CANCELLED"},
+				{Name: "build", WorkflowName: "CI", StartedAt: "2026-09-30T12:55:49Z", Status: "COMPLETED", Conclusion: "SUCCESS"},
+			},
+			"PASSING",
+		},
+		{
+			"newer run of a job is queued, older one failed",
+			[]rawCheck{
+				{Name: "build", WorkflowName: "CI", StartedAt: "2026-09-30T12:55:43Z", Status: "COMPLETED", Conclusion: "FAILURE"},
+				{Name: "build", WorkflowName: "CI", StartedAt: "0001-01-01T00:00:00Z", Status: "QUEUED"},
+			},
+			"PENDING",
+		},
+		{
+			"latest run of a job cancelled still fails",
+			[]rawCheck{
+				{Name: "build", WorkflowName: "CI", StartedAt: "2026-09-30T12:55:49Z", Status: "COMPLETED", Conclusion: "CANCELLED"},
+				{Name: "build", WorkflowName: "CI", StartedAt: "2026-09-30T12:55:43Z", Status: "COMPLETED", Conclusion: "SUCCESS"},
+			},
+			"FAILING",
+		},
+		{
 			"legacy StatusContext failure",
 			[]rawCheck{{Typename: "StatusContext", State: "FAILURE"}},
 			"FAILING",

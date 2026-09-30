@@ -88,6 +88,12 @@ type rawCheck struct {
 	Status     string `json:"status"`
 	Conclusion string `json:"conclusion"`
 	State      string `json:"state"`
+	// Name, WorkflowName and StartedAt identify re-runs of the same job:
+	// a run cancelled by a newer one (a concurrency group, a manual
+	// re-run) stays in the rollup alongside its replacement.
+	Name         string `json:"name"`
+	WorkflowName string `json:"workflowName"`
+	StartedAt    string `json:"startedAt"`
 }
 
 // Fetch reports on a pull request via the gh CLI. With prURL set it looks up
@@ -201,7 +207,7 @@ func aggregateCI(checks []rawCheck) string {
 		return "NONE"
 	}
 	pending := false
-	for _, c := range checks {
+	for _, c := range latestRuns(checks) {
 		if c.Typename == "StatusContext" {
 			switch c.State {
 			case "FAILURE", "ERROR":
@@ -226,4 +232,36 @@ func aggregateCI(checks []rawCheck) string {
 		return "PENDING"
 	}
 	return "PASSING"
+}
+
+// latestRuns drops CheckRuns superseded by a newer run of the same job, so a
+// run cancelled in favour of its replacement doesn't mark the PR failing.
+// Unnamed checks and StatusContexts (already latest-per-context) pass through.
+func latestRuns(checks []rawCheck) []rawCheck {
+	started := func(c rawCheck) string {
+		// A queued run has no start time yet (or Go's zero time) but is
+		// the newest of its job.
+		if c.StartedAt == "" || strings.HasPrefix(c.StartedAt, "0001-") {
+			return "9999"
+		}
+		return c.StartedAt // RFC 3339 UTC, so it sorts as a string
+	}
+	latest := map[string]int{}
+	var out []rawCheck
+	for _, c := range checks {
+		if c.Typename == "StatusContext" || c.Name == "" {
+			out = append(out, c)
+			continue
+		}
+		key := c.WorkflowName + "\x00" + c.Name
+		if i, ok := latest[key]; ok {
+			if started(c) > started(out[i]) {
+				out[i] = c
+			}
+			continue
+		}
+		latest[key] = len(out)
+		out = append(out, c)
+	}
+	return out
 }
