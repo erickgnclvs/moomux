@@ -636,6 +636,9 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		// internal/app, which this package can't import. This one is static
 		// data in config, which it already does.
 		return Result{Themes: config.Themes()}, nil
+	case "GhosttyConfig":
+		g := ghosttyConfig()
+		return Result{Ghostty: &g}, nil
 	case "SaveFile":
 		path, err := saveFile(os.TempDir(), a.Name, a.Data)
 		return Result{Path: path}, err
