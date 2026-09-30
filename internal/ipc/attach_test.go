@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/creack/pty"
+
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/session"
 )
@@ -129,7 +131,7 @@ func TestAttachKeepsEveryByteWrittenBehindTheResponseLine(t *testing.T) {
 		defer conn.Close()
 		_, _ = bufio.NewReader(conn).ReadBytes('\n') // the request
 		var out bytes.Buffer
-		out.WriteString(`{"result":{"ok":true}}` + "\n")
+		out.WriteString(`{"result":{"ok":true,"attach":"0123abcd"}}` + "\n")
 		out.Write(want)
 		_, _ = conn.Write(out.Bytes()) // one write: response + first frame
 		time.Sleep(200 * time.Millisecond)
@@ -140,6 +142,10 @@ func TestAttachKeepsEveryByteWrittenBehindTheResponseLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer att.Close()
+	// The resize token rides the same one line; it must not move the split.
+	if att.Token != "0123abcd" {
+		t.Fatalf("token = %q", att.Token)
+	}
 	got := make([]byte, len(want))
 	if _, err := io.ReadFull(att, got); err != nil {
 		t.Fatalf("read %d of %d bytes: %v", len(got), len(want), err)
@@ -189,6 +195,54 @@ func TestAttachHandlesAResponseLineWithNothingBehindIt(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// ResizeAttach reaches the pty of a live attach by its token, with Attach's
+// 80x24 floor, and a token whose attach is gone is an error the client can
+// fall back to a reattach on — never a silent no-op.
+func TestResizeAttachSetsTheLivePtySize(t *testing.T) {
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		t.Skipf("no pty: %v", err)
+	}
+	defer ptmx.Close()
+	defer tty.Close()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	srv := &Server{Backend: &fakeBackend{}}
+	go srv.Serve(ln)
+	c := &Client{Socket: ln.Addr().String()}
+
+	token, err := newAttachToken()
+	if err != nil || len(token) != 32 {
+		t.Fatalf("token %q, %v: want 128 bits of hex", token, err)
+	}
+	srv.attaches.Store(token, ptmx)
+	for _, tc := range []struct{ cols, rows, wantC, wantR int }{
+		{120, 50, 120, 50},
+		{0, 0, 80, 24},
+	} {
+		if err := c.ResizeAttach(token, tc.cols, tc.rows); err != nil {
+			t.Fatal(err)
+		}
+		rows, cols, err := pty.Getsize(tty)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cols != tc.wantC || rows != tc.wantR {
+			t.Fatalf("ResizeAttach(%d,%d): pty is %dx%d", tc.cols, tc.rows, cols, rows)
+		}
+	}
+
+	srv.attaches.Delete(token)
+	for _, tok := range []string{token, ""} {
+		if err := c.ResizeAttach(tok, 100, 40); err == nil || err.Error() != "unknown attach" {
+			t.Fatalf("ResizeAttach(%q) on no live attach: %v", tok, err)
+		}
 	}
 }
 

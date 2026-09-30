@@ -3,11 +3,15 @@ package ipc
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"os"
 
 	"github.com/creack/pty"
 
@@ -22,17 +26,14 @@ import (
 // socket is the detach. A phone cannot run `tmux attach` itself, and this is
 // the whole of what it needs instead.
 //
-// The initial terminal size rides the request (Args.Cols/Rows), which is the
-// cheap half of resize: a client that changes size mid-attach detaches and
-// reattaches. A control connection or an in-band escape is the upgrade if
-// that ever grates.
-//
-// ponytail: no later resize path. Add one when a client actually rotates a
-// phone mid-session and the reattach shows.
+// The initial terminal size rides the request (Args.Cols/Rows). A later
+// resize can't ride this connection — it has no framing left — so the
+// success line carries a token instead, and ResizeAttach on a second
+// connection names it. The token lives exactly as long as this connection.
 func (s *Server) attach(c net.Conn, r io.Reader, a Args) {
 	name, err := s.attachTarget(a.ID)
 	if err == nil {
-		err = attachPTY(c, r, name, a.Cols, a.Rows)
+		err = s.attachPTY(c, r, name, a.Cols, a.Rows)
 	}
 	if err != nil {
 		// The error line is only meaningful before the switch to raw mode;
@@ -66,7 +67,7 @@ func (s *Server) attachTarget(id string) (string, error) {
 // attachPTY runs `tmux attach` on a fresh pty and copies both ways until
 // either end hangs up. It writes the success response itself, so that line
 // is the last thing on the connection that is JSON.
-func attachPTY(c net.Conn, r io.Reader, session string, cols, rows int) error {
+func (s *Server) attachPTY(c net.Conn, r io.Reader, session string, cols, rows int) error {
 	cmd := tmux.AttachCmd(session)
 	f, err := pty.StartWithSize(cmd, winsize(cols, rows))
 	if err != nil {
@@ -81,7 +82,14 @@ func attachPTY(c net.Conn, r io.Reader, session string, cols, rows int) error {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 	}()
-	if err := json.NewEncoder(c).Encode(response{Result: Result{OK: true}}); err != nil {
+	token, err := newAttachToken()
+	if err != nil {
+		_ = f.Close()
+		return err
+	}
+	s.attaches.Store(token, f)
+	defer s.attaches.Delete(token)
+	if err := json.NewEncoder(c).Encode(response{Result: Result{OK: true, Attach: token}}); err != nil {
 		_ = f.Close()
 		return nil // the client is gone; there is nobody to report to
 	}
@@ -100,6 +108,29 @@ func attachPTY(c net.Conn, r io.Reader, session string, cols, rows int) error {
 	return nil
 }
 
+// newAttachToken is 128 random bits in hex. It is the only thing that
+// names a live pty to ResizeAttach, so it must not be guessable by another
+// client of the same listener.
+func newAttachToken() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// resizeAttach applies a new size to a live attach's pty; tmux sees the
+// SIGWINCH and redraws in place, where a reattach would repaint from
+// scratch. A token whose connection has closed is unknown, same as one
+// that never existed.
+func (s *Server) resizeAttach(token string, cols, rows int) error {
+	f, ok := s.attaches.Load(token)
+	if !ok || token == "" {
+		return errors.New("unknown attach")
+	}
+	return pty.Setsize(f.(*os.File), winsize(cols, rows))
+}
+
 // winsize clamps a client's requested size into a pty.Winsize, defaulting
 // anything nonsensical to 80x24 rather than to zero — a zero-sized pty makes
 // tmux draw nothing at all, which reads as a hung connection.
@@ -116,8 +147,11 @@ func winsize(cols, rows int) *pty.Winsize {
 // Attachment is a live pty over the wire: the client half of Attach. Read
 // what the session draws, write keystrokes, Close to detach.
 type Attachment struct {
-	conn net.Conn
-	r    io.Reader
+	// Token names this attach to ResizeAttach. Empty from a core that
+	// predates resize, where the only way to a new size is a reattach.
+	Token string
+	conn  net.Conn
+	r     io.Reader
 }
 
 func (a *Attachment) Read(p []byte) (int, error)  { return a.r.Read(p) }
@@ -162,5 +196,11 @@ func (c *Client) Attach(id string, cols, rows int) (*Attachment, error) {
 		conn.Close()
 		return nil, wireErr{msg: res.Err, sentinel: sentinels[res.Code]}
 	}
-	return &Attachment{conn: conn, r: br}, nil
+	return &Attachment{Token: res.Result.Attach, conn: conn, r: br}, nil
+}
+
+// ResizeAttach sets a live attach's pty to cols x rows.
+func (c *Client) ResizeAttach(token string, cols, rows int) error {
+	_, err := c.call("ResizeAttach", Args{Attach: token, Cols: cols, Rows: rows})
+	return err
 }

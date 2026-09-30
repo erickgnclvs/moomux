@@ -701,10 +701,10 @@ func (c *Client) reviewWindow(session string) string {
 // that owns a pty to run it on (see internal/ipc's Attach). Not a Runner
 // call: attaching is an interactive byte stream, not a captured one-shot.
 func AttachCmd(session string) *exec.Cmd {
-	// -d detaches whoever else is attached. Without it this is a second
-	// client on the same session, and tmux's default window-size latest
-	// reflows the shared window to the newest client — a phone attaching
-	// would shrink the desktop's window to 40 columns and leave it there.
+	// No -d: the phone is one more client beside the Mac app or a desktop
+	// terminal, not a replacement for them. tmux's default window-size
+	// latest follows whoever typed last, so neither shrinks the other for
+	// longer than it takes to press a key.
 	// $TMUX is "<socket path>,<pid>,<session index>", and it is also how
 	// tmux finds its server when -L/-S aren't given. Stripping it below is
 	// required (tmux refuses to nest) but takes the server with it, so a
@@ -717,7 +717,7 @@ func AttachCmd(session string) *exec.Cmd {
 	if sock, _, _ := strings.Cut(os.Getenv("TMUX"), ","); sock != "" {
 		args = append(args, "-S", sock)
 	}
-	args = append(args, "attach", "-d", "-t", Exact(session))
+	args = append(args, "attach", "-t", Exact(session))
 	cmd := exec.Command("tmux", args...)
 	// A `moomux serve` started from inside tmux has $TMUX set and tmux
 	// refuses to nest. The pty here is not a tmux pane, so the inherited

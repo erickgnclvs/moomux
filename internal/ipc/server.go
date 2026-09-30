@@ -58,6 +58,10 @@ type Server struct {
 	subMu       sync.Mutex
 	subs        map[chan sessionview.Snapshot]struct{}
 	watcherOnce bool
+
+	// attaches maps each live Attach's token to its pty master, for
+	// ResizeAttach. Entries go when their connection does.
+	attaches sync.Map // string -> *os.File
 }
 
 // subscribe registers a channel for snapshots, starting the source on the
@@ -675,6 +679,11 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		return Result{Dirty: dirty, Unpushed: unpushed, OK: ok}, nil
 	case "Capture":
 		return Result{Screens: b.Capture(a.IDs)}, nil
+	case "ResizeAttach":
+		if err := s.resizeAttach(a.Attach, a.Cols, a.Rows); err != nil {
+			return Result{}, err
+		}
+		return Result{OK: true}, nil
 	case "Review":
 		hint, err := b.Review(a.ID)
 		return Result{Hint: hint}, err
