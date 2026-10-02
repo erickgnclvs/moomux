@@ -202,6 +202,12 @@ The session's worktree path is appended as the last argument, and the command is
 
 `client.toml` is separate from `config.toml` on purpose: it holds the settings belonging to the machine you're sitting at rather than to the sessions being orchestrated. A TUI attached to a remote `moomux serve` reads and writes its own copy, so it never configures the server's diff tool.
 
+## Claude quota
+
+If [agent-usage](https://github.com/afitzgerald/agent-usage) is installed and running, moomux serves your Claude quota windows to its clients: the 5-hour session, the week, and per-model limits, each with a percent, a reset time and a warn/critical level. The Mac and iPhone apps show them. There's nothing to configure.
+
+moomux only reads the file agent-usage writes, `~/Library/Application Support/AgentUsage/usage.json`, and never touches a credential. Set `MOOMUX_USAGE_FILE` to read a different file instead (handy for trying a hand-written one). Without the file, or with no Claude login on the machine, no usage is shown at all. If the job stops writing, the quota is marked stale after 15 minutes.
+
 ## Spawning a session from the CLI
 
 `moomux spawn` creates a session non-interactively — no TUI, just a worktree + tmux session + agent, same as pressing `n` — and optionally types an initial prompt into the agent's pane. Useful for one agent to delegate a sub-task to a fresh session of its own, or for any script/automation:
