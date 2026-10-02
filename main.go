@@ -30,6 +30,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/tmux"
 	"github.com/erickgnclvs/moomux/internal/tmuxconf"
 	"github.com/erickgnclvs/moomux/internal/tui"
+	"github.com/erickgnclvs/moomux/internal/usage"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
@@ -870,7 +871,10 @@ func runRemote(args []string) error {
 // git/PR status, recovered prompts — so the local TUI and every socket
 // client read the identical thing rather than each deriving its own.
 func buildSource(a *app.App, home string) *sessionview.Watcher {
-	return &sessionview.Watcher{Core: a, Raw: buildWatcher(home), Home: home}
+	return &sessionview.Watcher{
+		Core: a, Raw: buildWatcher(home), Home: home,
+		Usage: &usage.Reader{Path: usage.DefaultPath(home)},
+	}
 }
 
 func buildWatcher(home string) watcher.Watcher {
