@@ -212,7 +212,10 @@ func (c *Client) HasSession(name string) (bool, error) {
 	}
 	diagnostic := strings.TrimSpace(out)
 	lower := strings.ToLower(diagnostic)
-	if diagnostic == "" || strings.Contains(lower, "can't find session") || strings.Contains(lower, "no server running") {
+	// "No such file or directory" is tmux's no-server message when the
+	// socket file itself is gone (a reboot clears /tmp), as opposed to a
+	// stale socket left by a dead server ("no server running").
+	if diagnostic == "" || strings.Contains(lower, "can't find session") || strings.Contains(lower, "no server running") || strings.Contains(lower, "no such file or directory") {
 		return false, nil
 	}
 	return false, fmt.Errorf("%s: %w", diagnostic, err)
