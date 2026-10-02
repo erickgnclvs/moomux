@@ -193,6 +193,19 @@ func TestHasSessionAbsent(t *testing.T) {
 	}
 }
 
+func TestHasSessionAbsentWhenSocketMissing(t *testing.T) {
+	key := "has-session -t =moomux-foo"
+	fr := &fakeRunner{
+		failOn: map[string]bool{key: true},
+		out:    map[string]string{key: "error connecting to /private/tmp/tmux-501/default (No such file or directory)\n"},
+	}
+	c := &Client{Runner: fr}
+	ok, err := c.HasSession("moomux-foo")
+	if err != nil || ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+}
+
 func TestHasSessionReturnsConnectionErrors(t *testing.T) {
 	key := "has-session -t =moomux-foo"
 	fr := &fakeRunner{
