@@ -14,6 +14,7 @@ import (
 	"os"
 
 	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 
 	"github.com/erickgnclvs/moomux/internal/tmux"
 )
@@ -123,12 +124,28 @@ func newAttachToken() (string, error) {
 // SIGWINCH and redraws in place, where a reattach would repaint from
 // scratch. A token whose connection has closed is unknown, same as one
 // that never existed.
+//
+// Not pty.Setsize: it ioctls f.Fd(), which reads the descriptor with no
+// reference held, and attachPTY closes the pty before the token leaves the
+// map — so a resize landing mid-detach raced the close. Control holds a
+// reference for the call, and fails once the file is closed.
 func (s *Server) resizeAttach(token string, cols, rows int) error {
 	f, ok := s.attaches.Load(token)
 	if !ok || token == "" {
 		return errors.New("unknown attach")
 	}
-	return pty.Setsize(f.(*os.File), winsize(cols, rows))
+	rc, err := f.(*os.File).SyscallConn()
+	if err != nil {
+		return err
+	}
+	ws := winsize(cols, rows)
+	var ioErr error
+	if err := rc.Control(func(fd uintptr) {
+		ioErr = unix.IoctlSetWinsize(int(fd), unix.TIOCSWINSZ, &unix.Winsize{Row: ws.Rows, Col: ws.Cols})
+	}); err != nil {
+		return err
+	}
+	return ioErr
 }
 
 // winsize clamps a client's requested size into a pty.Winsize, defaulting
