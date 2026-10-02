@@ -27,6 +27,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/prompt"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/usage"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
@@ -99,9 +100,13 @@ type Snapshot struct {
 	// ipc.Client emits when the connection drops, and every test literal)
 	// reads as "no answer" rather than as an empty config a client would
 	// dutifully apply over the real one.
-	Cfg      *config.Config `json:"cfg,omitempty"`
-	PollTime time.Time      `json:"poll_time"`
-	Err      string         `json:"err,omitempty"`
+	Cfg *config.Config `json:"cfg,omitempty"`
+	// Usage is Claude quota usage from agent-usage's usage.json, absent when
+	// there is nothing to draw (no file, no quota, or idle). See
+	// internal/usage.
+	Usage    *usage.Usage `json:"usage,omitempty"`
+	PollTime time.Time    `json:"poll_time"`
+	Err      string       `json:"err,omitempty"`
 }
 
 // Source is a stream of Snapshots. Implemented by Watcher (the real thing,
@@ -156,6 +161,8 @@ type Watcher struct {
 	Home string
 	// Interval defaults to DefaultInterval.
 	Interval time.Duration
+	// Usage, when set, is read into every snapshot. Owned by the run loop.
+	Usage *usage.Reader
 
 	nudgeOnce sync.Once
 	nudgeCh   chan struct{}
@@ -452,13 +459,19 @@ func (w *Watcher) build() (Snapshot, map[string]watcher.State) {
 		rows[project] = BuildRows(ordered, folders, project)
 	}
 
+	now := time.Now()
+	var u *usage.Usage
+	if w.Usage != nil {
+		u = w.Usage.Read(now)
+	}
 	snap := Snapshot{
+		Usage:      u,
 		Sessions:   ordered,
 		Views:      views,
 		Rows:       rows,
 		FolderRows: BuildFolderRows(ordered, folders, projects),
 		Cfg:        &cfg,
-		PollTime:   time.Now(),
+		PollTime:   now,
 		Err:        w.lastErr,
 	}
 	return snap, changedTitles

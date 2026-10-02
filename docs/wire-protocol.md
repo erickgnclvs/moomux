@@ -149,6 +149,7 @@ the joined state, so a parked session's cow told the Mac app it was working).
     }
   },
   "cfg": { /* the whole config.Config: projects, folders, theme, settings */ },
+  "usage": { /* Claude quota, optional — see below */ },
   "poll_time": "2026-09-06T18:00:00Z",
   "err": ""                                // a scan failure, as text
 }
@@ -202,6 +203,52 @@ What does *not* ride the stream is `config.Client` (`client.toml`): that
 describes the machine a person is sitting at, not the sessions being
 orchestrated, and the core has no method for it at all. See the front-end
 split further down.
+
+### `usage`: Claude quota, read from agent-usage
+
+An optional key: Claude quota windows, read from the `usage.json` that
+[agent-usage](https://github.com/afitzgerald/agent-usage) writes every five
+minutes (`~/Library/Application Support/AgentUsage/usage.json`, or
+`$MOOMUX_USAGE_FILE`). The core only reads that file and never touches a
+credential. `internal/usage` is the whole implementation.
+
+```json
+"usage": {
+  "status": "ok",
+  "updated_at": "2026-09-30T19:24:44Z",
+  "windows": [
+    { "kind": "session", "name": "5h", "percent": 40,
+      "resets_at": "2026-09-30T21:49:59Z", "level": "ok", "headline": true }
+  ]
+}
+```
+
+- **Absent means draw nothing.** The key is left out when there is no file,
+  the file can't be decoded or has a `schema` other than 2, it has no
+  `"agent": "claude"` entry in `agents` (looked up by key; other agents are
+  ignored), that entry has no `quota` yet, or `quota.status` is `idle` (no
+  Claude credential on the machine) or a value this core doesn't know. That
+  covers everyone not running agent-usage, and it is also what a core too old
+  to send the key looks like.
+- `status` is `ok`, `failed` (windows are the last good ones), `signed_out`
+  (windows empty) or `stale`. `stale` replaces the file's own status when
+  `generatedAt` is more than 15 minutes old, meaning three missed runs and a
+  job that has stopped. It is re-evaluated on every snapshot, because a job
+  that stopped writing is exactly the case where the file's mtime never moves.
+  The file itself is re-read only when its mtime changes.
+- `windows` keeps the file's order and is `[]`, never null. `kind` and
+  `resets_at` are verbatim. `percent` is an integer, rounded half-up if the
+  file ever carries a fraction, and `level` comes from the rounded value so
+  the number and its colour always agree. `name` is the display name (`5h`, `Week`, the
+  model for `weekly_scoped`, or the humanised kind for one this core doesn't
+  know, so a new window still gets a row). `headline` marks the ones to show
+  inline. `level` (`ok` / `warn` ≥ 80 / `critical` ≥ 95) is the only place the
+  thresholds live: clients colour by `level`, never by `percent`.
+
+Countdown strings, spend and token counts are deliberately left out. A
+countdown changes every minute, so clients format `resets_at` themselves. The
+shape is shared with moomux-mac, whose `docs/usage-contract.md` is the
+cross-repo contract. Change it there first.
 
 ### `state` is a name, not an integer
 
@@ -931,7 +978,8 @@ writing the old table — so this has to land in the same release window.
 
 So every struct here with a `json` tag is a contract: `sessionview.Snapshot`,
 `View`, `Row` and `FolderRow`, `session.Session` and `CreateRequest`, `config.Config`,
-`config.Project`, `config.AgentOption`, `config.Theme`, `prstatus.Info`, and
+`config.Project`, `config.AgentOption`, `config.Theme`, `prstatus.Info`,
+`usage.Usage` and `usage.Window`, and
 the `Args`/`Result` unions. Check `Sources/Moomux/Core/Models.swift` by hand
 when you touch any of them.
 
