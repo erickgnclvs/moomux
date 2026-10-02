@@ -246,6 +246,29 @@ func TestResizeAttachSetsTheLivePtySize(t *testing.T) {
 	}
 }
 
+// attachPTY closes the pty before its token leaves the map, and a client
+// resizes whenever its window does, so a resize can land on a pty mid-close.
+// That has to be an error, not a read of the fd racing its teardown (which
+// the race detector caught in the e2e suite, as a resize racing the detach).
+func TestResizeAttachRacingTheAttachClosing(t *testing.T) {
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		t.Skipf("no pty: %v", err)
+	}
+	defer tty.Close()
+	srv := &Server{}
+	srv.attaches.Store("tok", ptmx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for srv.resizeAttach("tok", 100, 40) == nil {
+		}
+	}()
+	time.Sleep(10 * time.Millisecond)
+	_ = ptmx.Close()
+	<-done
+}
+
 // A client that writes its request and then reads the answer on the same
 // connection — no trailing newline, no half-close — is an ordinary way to
 // write one, and it is what the Swift client does. Requiring a newline or

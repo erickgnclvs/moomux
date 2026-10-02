@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -116,10 +117,24 @@ func TestAttachIsAPtyOverTheWire(t *testing.T) {
 	a, s := newCoreSession(t, "att")
 	c := serveOnSocket(t, a)
 
-	// A settled baseline, taken before anything attaches: a detached pane
-	// may not have drawn its prompt yet, and this has to be measured on the
-	// far side of that first paint to mean anything.
-	before := settledPaneLines(t, a, s.TmuxSession)
+	// A command typed at the prompt but not submitted, as an agent's input box
+	// would hold a half-written prompt. The request line's terminating newline
+	// must not reach the pty: it would submit this, and its output would show
+	// up on a line of its own. A resize redraw (the attach takes the window
+	// from its detached size to 100x40) can move lines around, but it cannot
+	// run anything, so this oracle doesn't mistake one for a keystroke.
+	unsent := fmt.Sprintf("moomux-e2e-unsent-%d", time.Now().UnixNano())
+	if out, err := exec.Command("tmux", "send-keys", "-t", s.TmuxSession, "-l", "echo "+unsent).CombinedOutput(); err != nil {
+		t.Fatalf("tmux send-keys: %v (%s)", err, out)
+	}
+	// Rows joined before looking: the shell has about two thirds of a fresh
+	// server's 80 columns (NewSession splits the window), so behind a long
+	// prompt the command wraps — and zsh draws that wrap itself, so tmux
+	// can't join the rows back (capture-pane -J) the way it can bash's.
+	waitFor(t, "the unsent command to show at the prompt", func() bool {
+		out, _ := a.Tmux.CapturePane(s.TmuxSession)
+		return strings.Contains(strings.ReplaceAll(out, "\n", ""), unsent)
+	})
 
 	att, err := c.Attach(s.ID, 100, 40)
 	if err != nil {
@@ -134,18 +149,23 @@ func TestAttachIsAPtyOverTheWire(t *testing.T) {
 		screen <- buf.Bytes()
 	}()
 
-	// Nothing may have been typed on our behalf. The request line's
-	// terminating newline must not reach the pty: a shell answers a bare
-	// Enter with a fresh prompt, so a stray one shows up as an extra line —
-	// and in an agent pane it would submit whatever was sitting there.
-	if after := settledPaneLines(t, a, s.TmuxSession); after != before {
-		t.Fatalf("attaching typed something into the pane: %d lines before, %d after", before, after)
+	// Once the client is really attached (the window has its size), give a
+	// stray Enter time to have run the command.
+	waitFor(t, "the attach to size the window", func() bool {
+		return strings.HasPrefix(tmuxWindowSize(t, s.TmuxSession), "100x")
+	})
+	for end := time.Now().Add(2 * time.Second); time.Now().Before(end); time.Sleep(200 * time.Millisecond) {
+		if out, _ := a.Tmux.CapturePane(s.TmuxSession); hasLine(out, unsent) {
+			t.Fatalf("attaching submitted the command sitting at the prompt:\n%s", out)
+		}
 	}
 
 	marker := "moomux-e2e-attach-marker"
 	// Straight into the pty, as a keyboard would: this is the half that
-	// proves the connection is bidirectional.
-	if _, err := att.Write([]byte("echo " + marker + "\n")); err != nil {
+	// proves the connection is bidirectional. It finishes the command still
+	// sitting at the prompt and submits it, so the marker only shows up on a
+	// line of its own if the shell actually ran what came over the wire.
+	if _, err := att.Write([]byte("; echo " + marker + "\n")); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -154,7 +174,7 @@ func TestAttachIsAPtyOverTheWire(t *testing.T) {
 		// The pane itself is the durable record of what the pty received,
 		// and it is readable without racing the stream of draw bytes.
 		out, _ := a.Tmux.CapturePane(s.TmuxSession)
-		if strings.Contains(out, marker) {
+		if hasLine(out, marker) {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -240,41 +260,15 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 	}
 }
 
-// settledPaneLines waits for the pane's line count to stop changing, then
-// returns it — a pane repaints on its own after creation and after a client
-// attaches, and neither is something being typed.
-func settledPaneLines(t *testing.T, a *app.App, sess string) int {
-	t.Helper()
-	last, stable := -1, 0
-	for range 60 {
-		time.Sleep(250 * time.Millisecond)
-		n := paneLines(t, a, sess)
-		if n == last && n > 0 {
-			if stable++; stable == 3 {
-				return n
-			}
-			continue
-		}
-		last, stable = n, 0
-	}
-	t.Fatalf("pane never settled (last count %d)", last)
-	return 0
-}
-
-// paneLines counts the non-blank rows of a session's active pane.
-func paneLines(t *testing.T, a *app.App, sess string) int {
-	t.Helper()
-	out, err := a.Tmux.CapturePane(sess)
-	if err != nil {
-		t.Fatalf("capture-pane: %v", err)
-	}
-	n := 0
-	for _, line := range strings.Split(out, "\n") {
-		if strings.TrimSpace(line) != "" {
-			n++
+// hasLine reports whether some row of a captured pane is exactly want — a
+// command's output, as opposed to the command line that merely mentions it.
+func hasLine(pane, want string) bool {
+	for _, line := range strings.Split(pane, "\n") {
+		if strings.TrimSpace(line) == want {
+			return true
 		}
 	}
-	return n
+	return false
 }
 
 func tmuxWindowNames(t *testing.T, sess string) string {
