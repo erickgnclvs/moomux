@@ -127,9 +127,13 @@ func TestAttachIsAPtyOverTheWire(t *testing.T) {
 	if out, err := exec.Command("tmux", "send-keys", "-t", s.TmuxSession, "-l", "echo "+unsent).CombinedOutput(); err != nil {
 		t.Fatalf("tmux send-keys: %v (%s)", err, out)
 	}
+	// Rows joined before looking: the shell has about two thirds of a fresh
+	// server's 80 columns (NewSession splits the window), so behind a long
+	// prompt the command wraps — and zsh draws that wrap itself, so tmux
+	// can't join the rows back (capture-pane -J) the way it can bash's.
 	waitFor(t, "the unsent command to show at the prompt", func() bool {
 		out, _ := a.Tmux.CapturePane(s.TmuxSession)
-		return strings.Contains(out, "echo "+unsent)
+		return strings.Contains(strings.ReplaceAll(out, "\n", ""), unsent)
 	})
 
 	att, err := c.Attach(s.ID, 100, 40)
