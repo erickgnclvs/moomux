@@ -26,6 +26,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/tui"
+	"github.com/erickgnclvs/moomux/internal/usage"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
@@ -167,6 +168,13 @@ var screens = map[string][]string{
 	// right beside the now-green done dot. No keys: the states arrive as a
 	// StatusTickMsg, see screenStates.
 	"states": {},
+	// usage puts the core's Claude quota on screen (header right when wide,
+	// footer when narrow) with one window at each level, plus a non-headline
+	// one still at ok that must stay hidden. No keys: it arrives on the
+	// StatusTickMsg, see screenUsage. usage-stale is the same windows once
+	// agent-usage has stopped writing.
+	"usage":       {},
+	"usage-stale": {},
 	// Submits the new-project form with a path under ~/Documents that isn't
 	// a git repo, landing on the "skip git" choice screen with its macOS
 	// Files-and-Folders warning (see App.PathWarning in internal/app). "$HOME" is
@@ -495,6 +503,28 @@ var screenStates = map[string][]watcher.State{
 	"states":      {watcher.Working, watcher.Done, watcher.NeedsInput},
 }
 
+// usageNow pins the clock the usage countdowns are measured against, so the
+// goldens don't change by the minute.
+var usageNow = time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+
+// screenUsage is the Claude quota a scenario's snapshot carries.
+func screenUsage(screenName string) *usage.Usage {
+	if screenName != "usage" && screenName != "usage-stale" {
+		return nil
+	}
+	at := func(d time.Duration) string { return usageNow.Add(d).Format(time.RFC3339) }
+	u := &usage.Usage{Status: "ok", Windows: []usage.Window{
+		{Kind: "session", Name: "5h", Percent: 41, ResetsAt: at(2*time.Hour + 41*time.Minute), Level: "ok", Headline: true},
+		{Kind: "weekly_all", Name: "Week", Percent: 83, ResetsAt: at(6*24*time.Hour + 3*time.Hour), Level: "warn", Headline: true},
+		{Kind: "weekly_scoped", Name: "Fable", Percent: 96, ResetsAt: at(6*24*time.Hour + 3*time.Hour), Level: "critical"},
+		{Kind: "weekly_scoped", Name: "Opus", Percent: 12, ResetsAt: at(6*24*time.Hour + 3*time.Hour), Level: "ok"},
+	}}
+	if screenName == "usage-stale" {
+		u.Status = "stale"
+	}
+	return u
+}
+
 // renderScreen drives a freshly created Model through the key sequence
 // registered for screenName against canned sample data, returning its final
 // rendered view. It's the piece scripts/screenshot.sh's pty/HTML/Chromium
@@ -720,7 +750,10 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 			states[sessions[i].WorktreePath] = st
 		}
 	}
-	m.Update(tui.StatusTickMsg{Snap: sessionview.Once(be, "", states)})
+	m.Now = func() time.Time { return usageNow }
+	snap := sessionview.Once(be, "", states)
+	snap.Usage = screenUsage(screenName)
+	m.Update(tui.StatusTickMsg{Snap: snap})
 	for _, k := range keys {
 		msg := keyMsgFor(strings.ReplaceAll(k, "$HOME", home))
 		if screenName == "confirm-delete-checking" {

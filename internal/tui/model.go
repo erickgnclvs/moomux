@@ -21,6 +21,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/updatecheck"
+	"github.com/erickgnclvs/moomux/internal/usage"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 	"sort"
 )
@@ -418,6 +419,12 @@ type Model struct {
 	settingsEditing bool
 	// Version is shown in the bottom-right corner of the footer; empty hides it.
 	Version string
+	// Now is the clock usage countdowns are measured against; nil means
+	// time.Now. Pinned by cmd/uishot so its goldens don't drift.
+	Now func() time.Time
+	// usage is the core's Claude quota from the last real snapshot, nil when
+	// the core sent none. See usageCandidates.
+	usage *usage.Usage
 	// UpdateVersion is the latest GitHub release, set by checkUpdateCmd once
 	// it resolves; empty unless it's newer than Version.
 	UpdateVersion string

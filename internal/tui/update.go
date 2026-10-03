@@ -80,6 +80,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Snap.Views != nil {
 			mergedNote = newlyMergedFlash(m.views, msg.Snap.Views, msg.Snap.Sessions)
 			m.views = msg.Snap.Views
+			m.usage = msg.Snap.Usage
 		}
 		if msg.Snap.Sessions != nil {
 			m.snapSessions = msg.Snap.Sessions
