@@ -55,9 +55,21 @@ func TestUsageCandidates(t *testing.T) {
 		{Name: "Opus", Percent: 12, Level: "ok"}, // not headline, not warn: hidden
 	}
 	got := plainUsage(usageModel(&usage.Usage{Status: "ok", Windows: windows}, 100))
-	want := []string{"used 5h 41% ↻41m  Week 83%  Fable 96%", "5h 41% ↻41m  Week 83%  Fable 96%", "5h 41%  Week 83%  Fable 96%"}
+	want := []string{"5h 41% ↻41m  Week 83%  Fable 96% used", "5h 41% ↻41m  Week 83%  Fable 96%", "5h 41%  Week 83%  Fable 96%"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("ok = %q, want %q", got, want)
+	}
+
+	// The week and its carve-out, stamped a second apart, share one countdown
+	// after the last of them; a window resetting at another time keeps its own.
+	grouped := []usage.Window{
+		{Name: "Week", Percent: 83, ResetsAt: "2026-10-09T13:59:59Z", Level: "warn", Headline: true},
+		{Name: "5h", Percent: 41, ResetsAt: "2026-10-03T14:41:00Z", Level: "ok", Headline: true},
+		{Name: "Fable", Percent: 96, ResetsAt: "2026-10-09T14:00:00Z", Level: "critical"},
+	}
+	got = plainUsage(usageModel(&usage.Usage{Status: "ok", Windows: grouped}, 100))
+	if want := "Week 83%  Fable 96% ↻6d  5h 41% ↻2h41m used"; got[0] != want {
+		t.Errorf("grouped = %q, want %q", got[0], want)
 	}
 
 	got = plainUsage(usageModel(&usage.Usage{Status: "stale", Windows: windows}, 100))

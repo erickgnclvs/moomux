@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -9,15 +10,16 @@ import (
 )
 
 // usageCandidates renders the core's Claude quota (sessionview.Snapshot.Usage)
-// from most to least detailed (labelled "used", then bare, then without
-// countdowns), so a caller can take the first that fits instead of clipping
-// it mid-word. Nil when there's nothing to draw — the
-// core omits usage for everyone not running agent-usage.
+// from most to least detailed (with a trailing "used", then without, then
+// without countdowns), so a caller can take the first that fits instead of
+// clipping it mid-word. Nil when there's nothing to draw — the core omits
+// usage for everyone not running agent-usage.
 //
 // Everything here is served: which windows are headline, their level and
 // display name. The TUI only filters (headline windows, plus any other one
 // that has reached warn) and formats the countdown, which the core leaves to
-// clients because it changes every minute.
+// clients because it changes every minute. Same line as the Mac and iPhone
+// apps' UsageLine.
 func (m *Model) usageCandidates() []string {
 	u := m.usage
 	if u == nil {
@@ -30,29 +32,50 @@ func (m *Model) usageCandidates() []string {
 	if m.Now != nil {
 		now = m.Now()
 	}
-	var full, short []string
+	// Windows that reset together share one countdown, printed after the
+	// group's last window. Grouped by the phrase, not the timestamp: the
+	// server stamps the week and its carve-outs a second apart.
+	type group struct {
+		left    string
+		windows []string
+	}
+	var groups []group
 	for _, w := range u.Windows {
 		if !w.Headline && w.Level == "ok" {
 			continue
 		}
-		style := muteStyle
+		// The name is the label and the number the reading, so the number
+		// carries the weight and the level's colour.
+		style := infoFlashStyle
 		switch {
 		case u.Status == "stale":
 			// Old numbers in warning colours would read as current.
+			style = muteStyle.Bold(true)
 		case w.Level == "critical":
 			style = errorFlashStyle
 		case w.Level == "warn":
 			style = warnStyle
 		}
-		pct := fmt.Sprintf("%s %d%%", w.Name, w.Percent)
-		short = append(short, style.Render(pct))
-		if left := countdown(w.ResetsAt, now); left != "" {
-			pct += " " + muteStyle.Render("↻"+left)
+		text := muteStyle.Render(w.Name+" ") + style.Render(fmt.Sprintf("%d%%", w.Percent))
+		left := countdown(w.ResetsAt, now)
+		i := slices.IndexFunc(groups, func(g group) bool { return g.left == left })
+		if i < 0 {
+			groups = append(groups, group{left: left})
+			i = len(groups) - 1
 		}
-		full = append(full, style.Render(pct))
+		groups[i].windows = append(groups[i].windows, text)
 	}
-	if len(full) == 0 {
+	if len(groups) == 0 {
 		return nil
+	}
+	var full, short []string
+	for _, g := range groups {
+		windows := strings.Join(g.windows, "  ")
+		short = append(short, windows)
+		if g.left != "" {
+			windows += " " + muteStyle.Render("↻"+g.left)
+		}
+		full = append(full, windows)
 	}
 	suffix := ""
 	if u.Status == "stale" {
@@ -61,7 +84,7 @@ func (m *Model) usageCandidates() []string {
 	// "used" is said once per line, not per window, and is the first detail
 	// to go when space is short.
 	return []string{
-		muteStyle.Render("used ") + strings.Join(full, "  ") + suffix,
+		strings.Join(full, "  ") + muteStyle.Render(" used") + suffix,
 		strings.Join(full, "  ") + suffix,
 		strings.Join(short, "  ") + suffix,
 	}
