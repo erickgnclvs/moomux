@@ -9,8 +9,9 @@ import (
 )
 
 // usageCandidates renders the core's Claude quota (sessionview.Snapshot.Usage)
-// from most to least detailed, so a caller can take the first that fits
-// instead of clipping it mid-word. Nil when there's nothing to draw — the
+// from most to least detailed (labelled "used", then bare, then without
+// countdowns), so a caller can take the first that fits instead of clipping
+// it mid-word. Nil when there's nothing to draw — the
 // core omits usage for everyone not running agent-usage.
 //
 // Everything here is served: which windows are headline, their level and
@@ -57,7 +58,10 @@ func (m *Model) usageCandidates() []string {
 	if u.Status == "stale" {
 		suffix = muteStyle.Render(" · stale")
 	}
+	// "used" is said once per line, not per window, and is the first detail
+	// to go when space is short.
 	return []string{
+		muteStyle.Render("used ") + strings.Join(full, "  ") + suffix,
 		strings.Join(full, "  ") + suffix,
 		strings.Join(short, "  ") + suffix,
 	}

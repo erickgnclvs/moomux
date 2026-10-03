@@ -28,13 +28,13 @@ type Usage struct {
 type Window struct {
 	Kind     string `json:"kind"`
 	Name     string `json:"name"`
-	Percent  int    `json:"percent"`
+	Percent  int    `json:"percent"` // used, not remaining
 	ResetsAt string `json:"resets_at,omitempty"`
 	Level    string `json:"level"` // ok | warn | critical
 	Headline bool   `json:"headline"`
 }
 
-// file is the slice of usage.json (schema 2) the core reads. Dates stay
+// file is the slice of usage.json (schema 3) the core reads. Dates stay
 // strings so updated_at and resets_at go out verbatim.
 type file struct {
 	Schema      int       `json:"schema"`
@@ -53,7 +53,7 @@ type quota struct {
 	Windows   []struct {
 		Kind     string  `json:"kind"`
 		Model    string  `json:"model"`
-		Percent  float64 `json:"percent"`
+		Percent  float64 `json:"percentUsed"`
 		ResetsAt string  `json:"resetsAt"`
 	} `json:"windows"`
 }
@@ -109,7 +109,7 @@ func (r *Reader) Read(now time.Time) *Usage {
 }
 
 func build(f *file, now time.Time) *Usage {
-	if f == nil || f.Schema != 2 {
+	if f == nil || f.Schema != 3 {
 		return nil
 	}
 	q := f.claude()

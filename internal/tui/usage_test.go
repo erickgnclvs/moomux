@@ -55,14 +55,14 @@ func TestUsageCandidates(t *testing.T) {
 		{Name: "Opus", Percent: 12, Level: "ok"}, // not headline, not warn: hidden
 	}
 	got := plainUsage(usageModel(&usage.Usage{Status: "ok", Windows: windows}, 100))
-	want := []string{"5h 41% ↻41m  Week 83%  Fable 96%", "5h 41%  Week 83%  Fable 96%"}
+	want := []string{"used 5h 41% ↻41m  Week 83%  Fable 96%", "5h 41% ↻41m  Week 83%  Fable 96%", "5h 41%  Week 83%  Fable 96%"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("ok = %q, want %q", got, want)
 	}
 
 	got = plainUsage(usageModel(&usage.Usage{Status: "stale", Windows: windows}, 100))
-	if len(got) != 2 || !strings.HasSuffix(got[0], " · stale") || !strings.HasSuffix(got[1], " · stale") {
-		t.Errorf("stale = %q, want both marked stale", got)
+	if len(got) != 3 || !strings.HasSuffix(got[0], " · stale") || !strings.HasSuffix(got[2], " · stale") {
+		t.Errorf("stale = %q, want all marked stale", got)
 	}
 
 	if got := plainUsage(usageModel(&usage.Usage{Status: "signed_out", Windows: []usage.Window{}}, 100)); len(got) != 1 || got[0] != "claude signed out" {

@@ -224,7 +224,7 @@ credential. `internal/usage` is the whole implementation.
 ```
 
 - **Absent means draw nothing.** The key is left out when there is no file,
-  the file can't be decoded or has a `schema` other than 2, it has no
+  the file can't be decoded or has a `schema` other than 3, it has no
   `"agent": "claude"` entry in `agents` (looked up by key; other agents are
   ignored), that entry has no `quota` yet, or `quota.status` is `idle` (no
   Claude credential on the machine) or a value this core doesn't know. That
@@ -237,7 +237,8 @@ credential. `internal/usage` is the whole implementation.
   that stopped writing is exactly the case where the file's mtime never moves.
   The file itself is re-read only when its mtime changes.
 - `windows` keeps the file's order and is `[]`, never null. `kind` and
-  `resets_at` are verbatim. `percent` is an integer, rounded half-up if the
+  `resets_at` are verbatim. `percent` is the share used, not remaining (the
+  file's `percentUsed`); an integer, rounded half-up if the
   file ever carries a fraction, and `level` comes from the rounded value so
   the number and its colour always agree. `name` is the display name (`5h`, `Week`, the
   model for `weekly_scoped`, or the humanised kind for one this core doesn't

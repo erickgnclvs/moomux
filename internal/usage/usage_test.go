@@ -12,20 +12,20 @@ import (
 var now = time.Date(2026, 9, 30, 19, 30, 0, 0, time.UTC)
 
 const sample = `{
-  "schema": 2,
+  "schema": 3,
   "generatedAt": "2026-09-30T19:25:03Z",
   "agents": [
-  { "agent": "codex", "quota": { "status": "ok", "windows": [{ "kind": "session", "percent": 99 }] } },
+  { "agent": "codex", "quota": { "status": "ok", "windows": [{ "kind": "session", "percentUsed": 99 }] } },
   { "agent": "claude", "quota": {
     "status": "ok",
     "updatedAt": "2026-09-30T19:24:44Z",
     "windows": [
-      { "kind": "session", "percent": 40, "resetsAt": "2026-09-30T21:49:59Z" },
-      { "kind": "weekly_all", "percent": 80, "resetsAt": "2026-10-02T13:59:59Z" },
-      { "kind": "weekly_scoped", "model": "Fable", "percent": 95 },
-      { "kind": "weekly_scoped", "percent": 79.9 },
-      { "kind": "weekly_scoped", "percent": 79.4 },
-      { "kind": "monthly_extra", "percent": 0 }
+      { "kind": "session", "percentUsed": 40, "resetsAt": "2026-09-30T21:49:59Z" },
+      { "kind": "weekly_all", "percentUsed": 80, "resetsAt": "2026-10-02T13:59:59Z" },
+      { "kind": "weekly_scoped", "model": "Fable", "percentUsed": 95 },
+      { "kind": "weekly_scoped", "percentUsed": 79.9 },
+      { "kind": "weekly_scoped", "percentUsed": 79.4 },
+      { "kind": "monthly_extra", "percentUsed": 0 }
     ],
     "spend": { "x": 1 }
   },
@@ -48,10 +48,10 @@ func TestOmitted(t *testing.T) {
 	for name, body := range map[string]string{
 		"no file":   "",
 		"bad json":  "{not json",
-		"schema 1":  strings.Replace(sample, `"schema": 2`, `"schema": 1`, 1),
-		"no agents": `{"schema": 2, "generatedAt": "2026-09-30T19:25:03Z", "agents": []}`,
+		"schema 2":  strings.Replace(sample, `"schema": 3`, `"schema": 2`, 1),
+		"no agents": `{"schema": 3, "generatedAt": "2026-09-30T19:25:03Z", "agents": []}`,
 		"no claude": strings.Replace(sample, `"agent": "claude"`, `"agent": "gemini"`, 1),
-		"no quota":  `{"schema": 2, "generatedAt": "2026-09-30T19:25:03Z", "agents": [{"agent": "claude"}]}`,
+		"no quota":  `{"schema": 3, "generatedAt": "2026-09-30T19:25:03Z", "agents": [{"agent": "claude"}]}`,
 		"idle": strings.Replace(sample, `"status": "ok",
     "updatedAt"`, `"status": "idle",
     "updatedAt"`, 1),
@@ -115,7 +115,7 @@ func TestStale(t *testing.T) {
 }
 
 func TestSignedOut(t *testing.T) {
-	u := read(t, `{"schema":2,"generatedAt":"2026-09-30T19:25:03Z","agents":[{"agent":"claude","quota":{"status":"signedOut","windows":[]}}]}`)
+	u := read(t, `{"schema":3,"generatedAt":"2026-09-30T19:25:03Z","agents":[{"agent":"claude","quota":{"status":"signedOut","windows":[]}}]}`)
 	if u == nil || u.Status != "signed_out" || u.Windows == nil || len(u.Windows) != 0 {
 		t.Fatalf("got %+v", u)
 	}
