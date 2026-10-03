@@ -614,6 +614,9 @@ func (m *Model) renderHeader() string {
 	var right string
 	if len(m.projects) == 0 && remaining > 2 {
 		right = muteStyle.Render(truncateToWidth("/ projects", remaining))
+	} else if m.width >= narrowWidthBreak {
+		// Narrower than this, the quota moves to the footer (hintRowWithVersion).
+		right = m.fitUsage(remaining)
 	}
 
 	// Tabs that don't fit are clipped rather than allowed to widen the row
@@ -645,17 +648,49 @@ func (m *Model) renderFooter() string {
 }
 
 // hintRowWithVersion places hint on the left and the app version flush
-// against the bottom-right corner of the screen. On a terminal too narrow
-// for both, the version is dropped rather than truncated mid-word.
+// against the bottom-right corner of the screen, with the Claude quota
+// between them on a terminal too narrow for the header to hold it. Each
+// gives up detail a step at a time rather than truncating mid-word, in
+// this order of worth: the quota's numbers, then an available update, then
+// the quota's countdowns, then the bare version string.
 func (m *Model) hintRowWithVersion(hint string, width int) string {
-	if m.Version == "" {
-		return lipgloss.NewStyle().Width(width).Render(hint)
+	usages := []string{""}
+	if m.width < narrowWidthBreak {
+		if c := m.usageCandidates(); c != nil {
+			usages = c
+		}
 	}
-	for _, text := range m.versionCandidates() {
-		version := helpDescStyle.Render(text)
-		gap := width - lipgloss.Width(hint) - lipgloss.Width(version)
-		if gap >= 1 {
-			return hint + strings.Repeat(" ", gap) + version
+	type pair struct{ usage, version string }
+	var order []pair
+	vc := []string{}
+	if m.Version != "" {
+		vc = m.versionCandidates()
+	}
+	if len(vc) > 1 { // an update is available: its notice outranks countdowns
+		for _, v := range vc[:len(vc)-1] {
+			for _, u := range usages {
+				order = append(order, pair{u, v})
+			}
+		}
+	}
+	plain := []string{""}
+	if len(vc) > 0 {
+		plain = []string{vc[len(vc)-1], ""}
+	}
+	for _, u := range append(usages, "") {
+		for _, v := range plain {
+			order = append(order, pair{u, v})
+		}
+	}
+	for _, p := range order {
+		mid := ""
+		if p.usage != "" {
+			mid = "  " + p.usage
+		}
+		version := helpDescStyle.Render(p.version)
+		gap := width - lipgloss.Width(hint) - lipgloss.Width(mid) - lipgloss.Width(version)
+		if gap >= 1 || (p.version == "" && gap >= 0) {
+			return hint + mid + strings.Repeat(" ", max(gap, 0)) + version
 		}
 	}
 	return lipgloss.NewStyle().Width(width).Render(hint)

@@ -204,7 +204,7 @@ The session's worktree path is appended as the last argument, and the command is
 
 ## Claude quota
 
-If [agent-usage](https://github.com/afitzgerald/agent-usage) is installed and running, moomux serves your Claude quota windows to its clients: the 5-hour session, the week, and per-model limits, each with a percent, a reset time and a warn/critical level. The Mac and iPhone apps show them. There's nothing to configure.
+If [agent-usage](https://github.com/afitzgerald/agent-usage) is running, moomux serves your Claude quota windows to its clients: the 5-hour session, the week, and per-model limits, each with a percent, a reset time and a warn/critical level. The Mac and iPhone apps show them, and the TUI shows them in its header (or footer, on a narrow terminal). It's a separate tool, not part of moomux or installed with it — see [its README](https://github.com/afitzgerald/agent-usage#install) to set it up. On the moomux side there's nothing to configure.
 
 moomux only reads the file agent-usage writes, `~/Library/Application Support/AgentUsage/usage.json`, and never touches a credential. Set `MOOMUX_USAGE_FILE` to read a different file instead (handy for trying a hand-written one). Without the file, or with no Claude login on the machine, no usage is shown at all. If the job stops writing, the quota is marked stale after 15 minutes.
 
