@@ -4,7 +4,8 @@ By default every session is a single tmux window split into two panes (see
 the main [README](../README.md#session-layout)). A project can override this
 per worktree by dropping a `.moomux-panes.toml` file at the worktree root —
 moomux checks for it each time a session's tmux window is (re)created and
-falls back to the default two-pane layout if the file is missing or invalid.
+falls back to the default layout if the file is missing or invalid — two
+panes, or the agent alone when the "terminal pane" setting is off.
 
 ## Shape
 

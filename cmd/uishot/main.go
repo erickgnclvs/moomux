@@ -198,12 +198,12 @@ var screens = map[string][]string{
 	"project-picker-emptied": {"/", "d", "y"},
 	"settings":               {"s"},
 	// settings-usage-setup is the settings screen on a machine without
-	// agent-usage, cursor on the Claude usage row (index 6) so its install
-	// commands show under the list.
+	// agent-usage, cursor on the Claude usage row (index 7, the last; "up"
+	// wraps to it) so its install commands show under the list.
 	"settings-usage-setup": {"s", "up"},
-	// Diff tool is the settings screen's last row (index 5): five "down"s
+	// Diff tool is the settings screen's row at index 6: six "down"s
 	// from sort mode, then enter opens its inline text editor.
-	"settings-difftool": {"s", "down", "down", "down", "down", "down", "enter"},
+	"settings-difftool": {"s", "down", "down", "down", "down", "down", "down", "enter"},
 	// Theme is the settings screen's second row (index 1): one "down" from
 	// sort mode, then enter drills into the existing theme picker.
 	"theme-picker": {"s", "down", "enter"},
@@ -434,6 +434,13 @@ func (f *fakeBackend) SetAutoSubmitDefault(autoSubmit bool) error {
 func (f *fakeBackend) SetCompactDetail(compact bool) error {
 	if f.cfg != nil {
 		f.cfg.CompactDetail = compact
+	}
+	return nil
+}
+
+func (f *fakeBackend) SetTerminalPane(on bool) error {
+	if f.cfg != nil {
+		f.cfg.NoTerminalPane = !on
 	}
 	return nil
 }

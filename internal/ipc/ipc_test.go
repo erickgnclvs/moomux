@@ -178,6 +178,7 @@ func (f *fakeBackend) SetAutoSubmitDefault(bool) error { return nil }
 func (f *fakeBackend) SetSortRecentFirst(bool) error   { return nil }
 func (f *fakeBackend) SetAutoTmux(bool) error          { return nil }
 func (f *fakeBackend) SetCompactDetail(bool) error     { return nil }
+func (f *fakeBackend) SetTerminalPane(bool) error      { return nil }
 
 // ConfigSnapshot satisfies tui.Backend; unused here — these tests exercise
 // the wire protocol (Client/Server), not tui.Update()'s Msg.Cfg handling.

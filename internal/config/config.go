@@ -254,6 +254,11 @@ type Config struct {
 	// panel stays short even when a session has both a ticket and a PR
 	// attached. pr status (merged/CI state) is left alone either way.
 	CompactDetail bool `toml:"compact_detail,omitempty" json:"compact_detail,omitempty"`
+	// NoTerminalPane, when true, opens new tmux sessions as a single agent
+	// pane instead of the default agent + shell split. Stored negated so
+	// the zero value keeps the split everyone had before it existed. A
+	// worktree's .moomux-panes.toml still wins.
+	NoTerminalPane bool `toml:"no_terminal_pane,omitempty" json:"no_terminal_pane,omitempty"`
 	// TailnetListen, when true, makes `moomux serve` bind a second listener
 	// on this machine's Tailscale address (ipc.TailnetPort) alongside the
 	// unix socket, so a phone on the same tailnet reaches the same core.

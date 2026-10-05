@@ -111,6 +111,20 @@ var settingsRows = []settingsRow{
 		renderValue: func(m *Model) string { return renderToggle(m.cfg.CompactDetail, false) },
 	},
 	{
+		label:   "terminal pane",
+		kind:    settingsRowToggle,
+		get:     func(c *config.Config) bool { return !c.NoTerminalPane },
+		set:     func(c *config.Config, v bool) { c.NoTerminalPane = !v },
+		persist: func(b Backend, v bool) error { return b.SetTerminalPane(v) },
+		flash: func(next bool) string {
+			if next {
+				return "terminal pane: on — new sessions open with a shell beside the agent"
+			}
+			return "terminal pane: off — new sessions open as the agent alone"
+		},
+		renderValue: func(m *Model) string { return renderToggle(!m.cfg.NoTerminalPane, false) },
+	},
+	{
 		label: "diff tool",
 		kind:  settingsRowText,
 		renderValue: func(m *Model) string {

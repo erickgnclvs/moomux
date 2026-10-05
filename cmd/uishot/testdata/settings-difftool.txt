@@ -10,13 +10,13 @@
 │     auto-tmux                [off]   │
 │     auto-submit default      [off]   │
 │     compact detail view      [off]   │
+│     terminal pane             [on]   │
 │   ▸ diff tool       > diffier        │
 │     Claude usage     not available   │
 │                                      │
 │  enter save  esc cancel              │
 │                                      │
 ╰──────────────────────────────────────╯
-                                        
                                         
                                         
 === 100x32 ===
@@ -37,13 +37,13 @@
            │     auto-tmux                                                      [off]   │           
            │     auto-submit default                                            [off]   │           
            │     compact detail view                                            [off]   │           
+           │     terminal pane                                                   [on]   │           
            │   ▸ diff tool           > diffier                                          │           
            │     Claude usage                                           not available   │           
            │                                                                            │           
            │  enter save  esc cancel                                                    │           
            │                                                                            │           
            ╰────────────────────────────────────────────────────────────────────────────╯           
-                                                                                                    
                                                                                                     
                                                                                                     
                                                                                                     

@@ -1,13 +1,13 @@
 === 40x20 ===
 ╭──────────────────────────────────────╮
 │                                      │
-│  SETTINGS                            │
 │                                      │
 │     sort mode    manual (shift+↑↓)   │
 │     theme & appear… default / auto   │
 │     auto-tmux                [off]   │
 │     auto-submit default      [off]   │
 │     compact detail view      [off]   │
+│     terminal pane             [on]   │
 │     diff tool              not set   │
 │   ▸ Claude usage        not set up   │
 │                                      │
@@ -35,6 +35,7 @@
            │     auto-tmux                                                      [off]   │           
            │     auto-submit default                                            [off]   │           
            │     compact detail view                                            [off]   │           
+           │     terminal pane                                                   [on]   │           
            │     diff tool                                                    not set   │           
            │   ▸ Claude usage                                              not set up   │           
            │                                                                            │           
@@ -45,7 +46,6 @@
            │  ↑↓ select  enter/←→ change  esc close                                     │           
            │                                                                            │           
            ╰────────────────────────────────────────────────────────────────────────────╯           
-                                                                                                    
                                                                                                     
                                                                                                     
                                                                                                     

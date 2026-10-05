@@ -2168,6 +2168,44 @@ func TestSetAutoTmux(t *testing.T) {
 	}
 }
 
+// TestSetTerminalPaneDropsTheShellSplit guards the "terminal pane" setting:
+// on (the zero value) keeps the agent + shell split, off opens the agent
+// alone, and the choice survives a reload.
+func TestSetTerminalPaneDropsTheShellSplit(t *testing.T) {
+	a, _, tm := newTestApp(t, map[string]config.Project{
+		"demo": {Kind: "git", Repo: t.TempDir(), Agent: "claude"},
+	})
+	splits := func() int {
+		n := 0
+		for _, c := range tm.calls {
+			if len(c) > 0 && c[0] == "split-window" {
+				n++
+			}
+		}
+		return n
+	}
+
+	if err := a.newTmuxSession("moomux-a", t.TempDir(), "", "a"); err != nil {
+		t.Fatal(err)
+	}
+	if splits() != 1 {
+		t.Fatalf("default: %d split-window calls, want 1", splits())
+	}
+
+	if err := a.SetTerminalPane(false); err != nil {
+		t.Fatal(err)
+	}
+	if loaded, err := config.Load(a.CfgPath); err != nil || !loaded.NoTerminalPane {
+		t.Fatalf("NoTerminalPane not persisted (err %v)", err)
+	}
+	if err := a.newTmuxSession("moomux-b", t.TempDir(), "", "b"); err != nil {
+		t.Fatal(err)
+	}
+	if splits() != 1 {
+		t.Fatalf("terminal pane off: %d split-window calls total, want still 1", splits())
+	}
+}
+
 func TestSessionsSortsByLastOpenedWhenSortRecentFirstIsOn(t *testing.T) {
 	a, _, _ := newTestApp(t, map[string]config.Project{
 		"demo": {Kind: "git", Repo: t.TempDir(), Agent: "claude"},
