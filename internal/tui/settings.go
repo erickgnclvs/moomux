@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/erickgnclvs/moomux/internal/config"
+	"github.com/erickgnclvs/moomux/internal/usage"
 )
 
 // settingsRowMarker prefixes the currently highlighted row so
@@ -19,6 +20,7 @@ const (
 	settingsRowToggle settingsRowKind = iota
 	settingsRowDrill
 	settingsRowText
+	settingsRowInfo // read-only; enter does nothing
 )
 
 // settingsRow describes one row of the settings screen. Toggle rows flip a
@@ -135,6 +137,36 @@ var settingsRows = []settingsRow{
 			return m.client.DiffTool
 		},
 	},
+	{
+		label:       "Claude usage",
+		kind:        settingsRowInfo,
+		renderValue: func(m *Model) string { return usageStatus(m).value },
+	},
+}
+
+// usageHelp is the Claude usage row's value and, when it isn't showing, the
+// fix printed under the list. Keyed by sessionview.Snapshot.UsageSetup.
+type usageHelp struct{ value, fix string }
+
+func usageStatus(m *Model) usageHelp {
+	if m.usage != nil {
+		return usageHelp{value: "showing"}
+	}
+	switch m.usageSetup {
+	case usage.NotInstalled:
+		return usageHelp{"not set up", "To show it, install agent-usage:\n" +
+			"brew install afitzgerald/agent-usage/agent-usage\n" +
+			"brew services start agent-usage"}
+	case usage.Unreadable:
+		return usageHelp{"can't read file", "agent-usage's file is unreadable. Check its log:\n" +
+			"~/Library/Logs/agent-usage.log"}
+	case usage.Unsupported:
+		return usageHelp{"version mismatch", "Update moomux and agent-usage; their versions don't match."}
+	case usage.NoClaude:
+		return usageHelp{"no Claude login", "Sign in to Claude Code on this Mac, then wait ~5 minutes."}
+	}
+	// A core too old to say why.
+	return usageHelp{value: "not available"}
 }
 
 // settingsInputWidth sizes the inline editor so the row still fits its
@@ -189,6 +221,12 @@ func (m *Model) renderSettings() string {
 			line = listRow.Render(line)
 		}
 		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	// The fix only while its row is selected, so it reads as that row's hint.
+	if fix := usageStatus(m).fix; fix != "" && settingsRows[m.settingsCursor].kind == settingsRowInfo {
+		b.WriteString("\n")
+		b.WriteString(muteStyle.Width(rowWidth).Render(fix))
 		b.WriteString("\n")
 	}
 	return b.String()

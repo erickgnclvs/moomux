@@ -30,6 +30,13 @@ git clone https://github.com/erickgnclvs/moomux && cd moomux && make install
 
 Requires `tmux`, `git`, and `claude` on `$PATH`.
 
+**Claude quota (optional, macOS)**: to see your Claude usage windows, also install [agent-usage](https://github.com/afitzgerald/agent-usage) — see [Claude quota](#claude-quota):
+
+```bash
+brew install afitzgerald/agent-usage/agent-usage
+brew services start agent-usage
+```
+
 **Linux**: moomux detects the terminal it's running in from environment variables. It opens each session as a **new tab** in GNOME Terminal, Konsole, WezTerm, and kitty (kitty needs `allow_remote_control yes` + `listen_on unix:/tmp/kitty` in `kitty.conf`; without it you get a new window), and as a **new window** in Ghostty, Alacritty, foot, Tilix, and xterm. Other VTE-based terminals (Ptyxis, GNOME Console, Xfce Terminal, ...) open via `gnome-terminal` when it's installed. In anything else — including over SSH — moomux shows a `tmux attach -t <session>` hint instead of failing.
 
 **macOS permissions**: agents running in moomux sessions get Accessibility and Screen Recording through the `moomux` binary itself (macOS checks the process that started the tmux server, not tmux or your terminal). Grant `$(brew --prefix moomux)/bin/moomux` in System Settings → Privacy & Security, then `brew services restart moomux`. Homebrew releases are signed with a stable certificate, so the grant survives upgrades.
@@ -204,9 +211,9 @@ The session's worktree path is appended as the last argument, and the command is
 
 ## Claude quota
 
-If [agent-usage](https://github.com/afitzgerald/agent-usage) is running, moomux serves your Claude quota windows to its clients: the 5-hour session, the week, and per-model limits, each with the percent used, a reset time and a warn/critical level. The Mac and iPhone apps show them, and the TUI shows them in its header (or footer, on a narrow terminal). It's a separate tool, not part of moomux or installed with it — see [its README](https://github.com/afitzgerald/agent-usage#install) to set it up. On the moomux side there's nothing to configure.
+moomux shows your Claude quota (the 5-hour session, the week, per-model limits) in the TUI header and the Mac and iPhone apps. It reads the file [agent-usage](https://github.com/afitzgerald/agent-usage) writes — a separate tool, installed as above — and never touches a credential. If nothing shows, the settings screen (`s`, the "Claude usage" row) says why and how to fix it.
 
-moomux only reads the file agent-usage writes, `~/Library/Application Support/AgentUsage/usage.json`, and never touches a credential. Set `MOOMUX_USAGE_FILE` to read a different file instead (handy for trying a hand-written one). Without the file, or with no Claude login on the machine, no usage is shown at all. If the job stops writing, the quota is marked stale after 15 minutes.
+`MOOMUX_USAGE_FILE` overrides the file read (default `~/Library/Application Support/AgentUsage/usage.json`). The quota is marked stale after 15 minutes without a write.
 
 ## Spawning a session from the CLI
 

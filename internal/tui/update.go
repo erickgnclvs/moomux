@@ -81,6 +81,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			mergedNote = newlyMergedFlash(m.views, msg.Snap.Views, msg.Snap.Sessions)
 			m.views = msg.Snap.Views
 			m.usage = msg.Snap.Usage
+			m.usageSetup = msg.Snap.UsageSetup
 		}
 		if msg.Snap.Sessions != nil {
 			m.snapSessions = msg.Snap.Sessions
@@ -2203,6 +2204,8 @@ func (m *Model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) applySettingsRow(i int) (tea.Model, tea.Cmd) {
 	row := settingsRows[i]
 	switch row.kind {
+	case settingsRowInfo:
+		return m, nil
 	case settingsRowDrill:
 		m.openThemePicker()
 		return m, nil

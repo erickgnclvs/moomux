@@ -35,6 +35,12 @@ const sample = `{
 
 func read(t *testing.T, body string) *Usage {
 	t.Helper()
+	u, _ := readWhy(t, body)
+	return u
+}
+
+func readWhy(t *testing.T, body string) (*Usage, string) {
+	t.Helper()
 	p := filepath.Join(t.TempDir(), "usage.json")
 	if body != "" {
 		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
@@ -45,23 +51,30 @@ func read(t *testing.T, body string) *Usage {
 }
 
 func TestOmitted(t *testing.T) {
-	for name, body := range map[string]string{
-		"no file":   "",
-		"bad json":  "{not json",
-		"schema 2":  strings.Replace(sample, `"schema": 3`, `"schema": 2`, 1),
-		"no agents": `{"schema": 3, "generatedAt": "2026-09-30T19:25:03Z", "agents": []}`,
-		"no claude": strings.Replace(sample, `"agent": "claude"`, `"agent": "gemini"`, 1),
-		"no quota":  `{"schema": 3, "generatedAt": "2026-09-30T19:25:03Z", "agents": [{"agent": "claude"}]}`,
-		"idle": strings.Replace(sample, `"status": "ok",
+	for name, c := range map[string]struct{ body, why string }{
+		"no file":   {"", NotInstalled},
+		"bad json":  {"{not json", Unreadable},
+		"schema 2":  {strings.Replace(sample, `"schema": 3`, `"schema": 2`, 1), Unsupported},
+		"no agents": {`{"schema": 3, "generatedAt": "2026-09-30T19:25:03Z", "agents": []}`, NoClaude},
+		"no claude": {strings.Replace(sample, `"agent": "claude"`, `"agent": "gemini"`, 1), NoClaude},
+		"no quota":  {`{"schema": 3, "generatedAt": "2026-09-30T19:25:03Z", "agents": [{"agent": "claude"}]}`, NoClaude},
+		"idle": {strings.Replace(sample, `"status": "ok",
     "updatedAt"`, `"status": "idle",
-    "updatedAt"`, 1),
-		"unknown status": strings.Replace(sample, `"status": "ok",
+    "updatedAt"`, 1), NoClaude},
+		"unknown status": {strings.Replace(sample, `"status": "ok",
     "updatedAt"`, `"status": "rateLimited",
-    "updatedAt"`, 1),
+    "updatedAt"`, 1), NoClaude},
 	} {
-		if u := read(t, body); u != nil {
-			t.Errorf("%s: got %+v, want omitted", name, u)
+		if u, why := readWhy(t, c.body); u != nil || why != c.why {
+			t.Errorf("%s: got %+v, %q; want omitted, %q", name, u, why, c.why)
 		}
+	}
+	// A path that exists but can't be read as a file.
+	if u, why := (&Reader{Path: t.TempDir()}).Read(now); u != nil || why != Unreadable {
+		t.Errorf("directory: got %+v, %q; want omitted, %q", u, why, Unreadable)
+	}
+	if _, why := readWhy(t, sample); why != "" {
+		t.Errorf("served usage has reason %q, want none", why)
 	}
 }
 
@@ -106,10 +119,10 @@ func TestStale(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "usage.json")
 	os.WriteFile(p, []byte(sample), 0o644)
 	r := &Reader{Path: p}
-	if s := r.Read(now).Status; s != "ok" {
+	if s := first(r.Read(now)).Status; s != "ok" {
 		t.Fatalf("first read %q", s)
 	}
-	if s := r.Read(now.Add(time.Hour)).Status; s != "stale" {
+	if s := first(r.Read(now.Add(time.Hour))).Status; s != "stale" {
 		t.Errorf("an hour later on the same file: %q, want stale", s)
 	}
 }
@@ -129,18 +142,20 @@ func TestRereadsOnMtime(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "usage.json")
 	os.WriteFile(p, []byte(sample), 0o644)
 	r := &Reader{Path: p}
-	if r.Read(now) == nil {
+	if first(r.Read(now)) == nil {
 		t.Fatal("first read nil")
 	}
 	os.WriteFile(p, []byte(strings.Replace(sample, `"status": "ok",
     "updatedAt"`, `"status": "failed",
     "updatedAt"`, 1)), 0o644)
 	os.Chtimes(p, now, now.Add(time.Minute))
-	if s := r.Read(now).Status; s != "failed" {
+	if s := first(r.Read(now)).Status; s != "failed" {
 		t.Errorf("after rewrite: %q, want failed", s)
 	}
 	os.Remove(p)
-	if u := r.Read(now); u != nil {
-		t.Errorf("after delete: %+v, want omitted", u)
+	if u, why := r.Read(now); u != nil || why != NotInstalled {
+		t.Errorf("after delete: %+v, %q; want omitted, %q", u, why, NotInstalled)
 	}
 }
+
+func first(u *Usage, _ string) *Usage { return u }

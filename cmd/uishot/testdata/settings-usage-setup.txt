@@ -1,9 +1,6 @@
 === 40x20 ===
-                                        
-                                        
 ╭──────────────────────────────────────╮
 │                                      │
-│  SETTINGS                            │
 │                                      │
 │     sort mode    manual (shift+↑↓)   │
 │     theme & appear… default / auto   │
@@ -11,17 +8,18 @@
 │     auto-submit default      [off]   │
 │     compact detail view      [off]   │
 │     terminal pane             [on]   │
-│   ▸ diff tool       > diffier        │
-│     Claude usage     not available   │
+│     diff tool              not set   │
+│   ▸ Claude usage        not set up   │
 │                                      │
-│  enter save  esc cancel              │
+│  To show it, install agent-usage:    │
+│  brew install afitzgerald/agent-     │
+│  usage/agent-usage                   │
+│  brew services start agent-usage     │
+│                                      │
+│  esc close  enter change             │
 │                                      │
 ╰──────────────────────────────────────╯
-                                        
-                                        
 === 100x32 ===
-                                                                                                    
-                                                                                                    
                                                                                                     
                                                                                                     
                                                                                                     
@@ -38,14 +36,16 @@
            │     auto-submit default                                            [off]   │           
            │     compact detail view                                            [off]   │           
            │     terminal pane                                                   [on]   │           
-           │   ▸ diff tool           > diffier                                          │           
-           │     Claude usage                                           not available   │           
+           │     diff tool                                                    not set   │           
+           │   ▸ Claude usage                                              not set up   │           
            │                                                                            │           
-           │  enter save  esc cancel                                                    │           
+           │  To show it, install agent-usage:                                          │           
+           │  brew install afitzgerald/agent-usage/agent-usage                          │           
+           │  brew services start agent-usage                                           │           
+           │                                                                            │           
+           │  ↑↓ select  enter/←→ change  esc close                                     │           
            │                                                                            │           
            ╰────────────────────────────────────────────────────────────────────────────╯           
-                                                                                                    
-                                                                                                    
                                                                                                     
                                                                                                     
                                                                                                     

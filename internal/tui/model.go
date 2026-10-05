@@ -428,6 +428,9 @@ type Model struct {
 	// usage is the core's Claude quota from the last real snapshot, nil when
 	// the core sent none. See usageCandidates.
 	usage *usage.Usage
+	// usageSetup is why usage is nil (Snapshot.UsageSetup), for the
+	// settings screen's Claude usage row.
+	usageSetup string
 	// UpdateVersion is the latest GitHub release, set by checkUpdateCmd once
 	// it resolves; empty unless it's newer than Version.
 	UpdateVersion string

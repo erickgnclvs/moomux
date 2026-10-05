@@ -150,6 +150,7 @@ the joined state, so a parked session's cow told the Mac app it was working).
   },
   "cfg": { /* the whole config.Config: projects, folders, theme, settings */ },
   "usage": { /* Claude quota, optional — see below */ },
+  "usage_setup": "not_installed",          // why usage is absent, optional — see below
   "poll_time": "2026-09-06T18:00:00Z",
   "err": ""                                // a scan failure, as text
 }
@@ -230,6 +231,22 @@ credential. `internal/usage` is the whole implementation.
   Claude credential on the machine) or a value this core doesn't know. That
   covers everyone not running agent-usage, and it is also what a core too old
   to send the key looks like.
+- **`usage_setup` says why.** A sibling string key, set only when `usage` is
+  omitted, so a client can tell the user how to turn it on instead of drawing
+  nothing. Clients decode these strings verbatim:
+  - `"not_installed"`: the file does not exist (agent-usage not installed, or
+    never ran). Fix: `brew install afitzgerald/agent-usage/agent-usage` then
+    `brew services start agent-usage`.
+  - `"unreadable"`: the file exists but can't be read or decoded as JSON. Fix:
+    check `~/Library/Logs/agent-usage.log`.
+  - `"unsupported"`: it decodes but its `schema` isn't one this core reads.
+    Fix: update moomux and agent-usage.
+  - `"no_claude"`: no `claude` entry, no quota yet, or a status of `idle` or
+    one this core doesn't know. Fix: sign in to Claude Code on this Mac and
+    wait ~5 minutes.
+
+  Both keys absent means a core too old to send either; treat it like
+  `usage` absent with no reason. Old clients ignore `usage_setup`.
 - `status` is `ok`, `failed` (windows are the last good ones), `signed_out`
   (windows empty) or `stale`. `stale` replaces the file's own status when
   `generatedAt` is more than 15 minutes old, meaning three missed runs and a
