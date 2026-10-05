@@ -1,7 +1,6 @@
 === 40x20 ===
                                         
                                         
-                                        
 ╭──────────────────────────────────────╮
 │                                      │
 │  SETTINGS                            │
@@ -11,6 +10,7 @@
 │     auto-tmux                [off]   │
 │     auto-submit default      [off]   │
 │     compact detail view      [off]   │
+│     terminal pane             [on]   │
 │     diff tool              not set   │
 │                                      │
 │  esc close  enter change             │
@@ -28,7 +28,6 @@
                                                                                                     
                                                                                                     
                                                                                                     
-                                                                                                    
            ╭────────────────────────────────────────────────────────────────────────────╮           
            │                                                                            │           
            │  SETTINGS                                                                  │           
@@ -38,6 +37,7 @@
            │     auto-tmux                                                      [off]   │           
            │     auto-submit default                                            [off]   │           
            │     compact detail view                                            [off]   │           
+           │     terminal pane                                                   [on]   │           
            │     diff tool                                                    not set   │           
            │                                                                            │           
            │  ↑↓ select  enter/←→ change  esc close                                     │           

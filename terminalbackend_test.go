@@ -306,7 +306,7 @@ var wantBackendMethods = []string{
 	"ReorderFolders", "ReorderSessions", "Sessions",
 	"SetAutoSubmitDefault", "SetAutoTmux", "SetCompactDetail", "SetFolderCollapsed", "SetProjectCollapsed",
 	"SetSessionAgent", "SetSessionArchived", "SetSessionFolder",
-	"SetSessionPrompt", "SetSessionTags", "SetSortRecentFirst", "SetTheme",
+	"SetSessionPrompt", "SetSessionTags", "SetSortRecentFirst", "SetTerminalPane", "SetTheme",
 	"SuggestedProject", "UpdateProject", "WorktreeStatus",
 }
 

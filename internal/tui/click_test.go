@@ -575,6 +575,8 @@ func (f *fakeBackend) SetAutoTmux(autoTmux bool) error {
 	return f.setAutoTmuxErr
 }
 
+func (f *fakeBackend) SetTerminalPane(bool) error { return nil }
+
 func (f *fakeBackend) SetCompactDetail(compact bool) error {
 	f.setCompactDetailCalls = append(f.setCompactDetailCalls, compact)
 	return f.setCompactDetailErr

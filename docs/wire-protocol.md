@@ -822,7 +822,7 @@ that; over the wire it is still just `ReorderSessions` with the full list.
 `UpdateProject`, `RemoveProject`, `MoveProject`.
 
 **Settings** — `SetTheme`, `SetAutoSubmitDefault`, `SetSortRecentFirst`,
-`SetAutoTmux`, `SetCompactDetail`.
+`SetAutoTmux`, `SetCompactDetail`, `SetTerminalPane`.
 
 Front-end-owned settings deliberately have no method here — see "act on the
 right one" below.
