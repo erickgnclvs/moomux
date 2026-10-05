@@ -207,6 +207,10 @@ var screens = map[string][]string{
 	// Theme is the settings screen's second row (index 1): one "down" from
 	// sort mode, then enter drills into the existing theme picker.
 	"theme-picker": {"s", "down", "enter"},
+	// Terminal pane is row 5; the backend refuses the write the way a core
+	// older than SetTerminalPane does, so the row stays put and the error
+	// flashes instead of a success message.
+	"settings-save-error": {"s", "down", "down", "down", "down", "down", "enter"},
 	// "down" moves the cursor onto "bugfix-timeout", the sample session with
 	// a PR attached, so its detail panel shows the PR status row (see
 	// renderScreen's prStatus wiring below).
@@ -302,6 +306,8 @@ type fakeBackend struct {
 	// createErr, when set, makes CreateSession fail — for scenarios that
 	// show what the new-session form looks like after a failed create.
 	createErr error
+	// terminalPaneErr, when set, makes SetTerminalPane fail.
+	terminalPaneErr error
 }
 
 func (f *fakeBackend) CreateSession(req session.CreateRequest) (session.Session, string, error) {
@@ -439,6 +445,9 @@ func (f *fakeBackend) SetCompactDetail(compact bool) error {
 }
 
 func (f *fakeBackend) SetTerminalPane(on bool) error {
+	if f.terminalPaneErr != nil {
+		return f.terminalPaneErr
+	}
 	if f.cfg != nil {
 		f.cfg.NoTerminalPane = !on
 	}
@@ -681,6 +690,9 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 	be := &fakeBackend{sessions: sessions, cfg: cfg}
 	if screenName == "new-session-error" {
 		be.createErr = errors.New("no branch \"merchant-physcal\" in /tmp/demo (checked local and origin) — fix the name, or clear the branch field to start a new branch off main")
+	}
+	if screenName == "settings-save-error" {
+		be.terminalPaneErr = errors.New("unknown method SetTerminalPane")
 	}
 	if screenName == "confirm-delete" && len(sessions) > 0 {
 		// Must be set before the initial drive() below: git status is

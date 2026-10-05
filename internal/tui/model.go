@@ -1329,18 +1329,51 @@ func recheckUpdateCmd(current string) tea.Cmd {
 	}
 }
 
-// runUpdateCmd shells out to the same command the footer/help already tell
-// users to run by hand. Homebrew-only: a go install/git clone build has no
+// runUpdateCmd runs the same commands the footer/help already tell users to
+// run by hand. Homebrew-only: a go install/git clone build has no
 // self-update path, so this just fails with brew's own error in that case,
 // which flashError surfaces as-is.
 func runUpdateCmd() tea.Cmd {
-	return func() tea.Msg {
-		out, err := exec.Command("sh", "-c", "brew update && brew upgrade moomux").CombinedOutput()
-		if err != nil {
-			return UpdateAppliedMsg{Err: fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))}
+	return func() tea.Msg { return UpdateAppliedMsg{Err: applyUpdate()} }
+}
+
+// brew runs one Homebrew command; a var so tests can stand in for it.
+var brew = func(args ...string) ([]byte, error) {
+	return exec.Command("brew", args...).CombinedOutput()
+}
+
+// applyUpdate upgrades moomux and then restarts its `brew services` core,
+// if one is running: relaunching only the TUI left the old binary saving
+// settings and creating sessions, and the new TUI's calls to methods it
+// didn't know yet failed. The restart doesn't touch agent sessions — tmux
+// daemonizes into its own process group, which launchd leaves alone when
+// it stops the job. A service that isn't started stays that way; starting
+// a daemon the user never asked for isn't an update's call.
+func applyUpdate() error {
+	for _, args := range [][]string{{"update"}, {"upgrade", "moomux"}} {
+		if out, err := brew(args...); err != nil {
+			return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 		}
-		return UpdateAppliedMsg{}
 	}
+	// No `brew services` (Linux without it, say) reads as no service.
+	if out, err := brew("services", "list"); err != nil || !serviceStarted(out) {
+		return nil
+	}
+	if out, err := brew("services", "restart", "moomux"); err != nil {
+		return fmt.Errorf("updated, but restarting the background core failed — run `brew services restart moomux`: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// serviceStarted reports whether `brew services list` output shows the
+// moomux service started (columns: Name Status User File).
+func serviceStarted(list []byte) bool {
+	for line := range strings.Lines(string(list)) {
+		if f := strings.Fields(line); len(f) >= 2 && f[0] == "moomux" {
+			return f[1] == "started"
+		}
+	}
+	return false
 }
 
 // tickUpdateCheck schedules the next recheck; see UpdateCheckTickMsg handling

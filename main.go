@@ -790,6 +790,13 @@ func runProgram(cfg *config.Config, core tui.Backend, agentOptions []config.Agen
 	}
 	cancel()
 	if m.Relaunch {
+		// The update may have just restarted the `brew services` core this
+		// TUI was attached to. Exec'ing before it listens again would make
+		// the new process's connect fail and fall back to being a second,
+		// local core beside it.
+		if c, ok := core.(*ipc.Client); ok {
+			waitForCore(c.Socket, coreRestartTimeout)
+		}
 		self, err := os.Executable()
 		if err != nil {
 			return err
@@ -797,6 +804,22 @@ func runProgram(cfg *config.Config, core tui.Backend, agentOptions []config.Agen
 		return syscall.Exec(self, os.Args, os.Environ())
 	}
 	return nil
+}
+
+// coreRestartTimeout bounds how long a relaunch waits for a restarted core.
+const coreRestartTimeout = 15 * time.Second
+
+// waitForCore polls sock until a core answers or timeout passes. Giving up
+// is not fatal: the relaunched TUI then runs its own core, as it would with
+// no serve at all.
+// ponytail: launchctl bootout returns once the old serve is gone, so the
+// first answer is the new one; if that ever stops holding, compare versions.
+func waitForCore(sock string, timeout time.Duration) {
+	for deadline := time.Now().Add(timeout); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+		if _, _, _, err := connect(sock); err == nil {
+			return
+		}
+	}
 }
 
 // runServe implements `moomux serve`: expose the orchestration core on a

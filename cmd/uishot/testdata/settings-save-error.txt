@@ -1,0 +1,54 @@
+=== 40x20 ===
+                                        
+╭──────────────────────────────────────╮
+│                                      │
+│  SETTINGS                            │
+│                                      │
+│     sort mode    manual (shift+↑↓)   │
+│     theme & appear… default / auto   │
+│     auto-tmux                [off]   │
+│     auto-submit default      [off]   │
+│     compact detail view      [off]   │
+│   ▸ terminal pane             [on]   │
+│     diff tool              not set   │
+│     Claude usage     not available   │
+│                                      │
+│  ✖ terminal pane: unknown method     │
+│  SetTerminalPane                     │
+│  esc close  enter change             │
+│                                      │
+╰──────────────────────────────────────╯
+                                        
+=== 100x32 ===
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+           ╭────────────────────────────────────────────────────────────────────────────╮           
+           │                                                                            │           
+           │  SETTINGS                                                                  │           
+           │                                                                            │           
+           │     sort mode                                          manual (shift+↑↓)   │           
+           │     theme & appearance                                    default / auto   │           
+           │     auto-tmux                                                      [off]   │           
+           │     auto-submit default                                            [off]   │           
+           │     compact detail view                                            [off]   │           
+           │   ▸ terminal pane                                                   [on]   │           
+           │     diff tool                                                    not set   │           
+           │     Claude usage                                           not available   │           
+           │                                                                            │           
+           │  ✖ terminal pane: unknown method SetTerminalPane                           │           
+           │  ↑↓ select  enter/←→ change  esc close                                     │           
+           │                                                                            │           
+           ╰────────────────────────────────────────────────────────────────────────────╯           
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
