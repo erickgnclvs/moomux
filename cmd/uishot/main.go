@@ -197,9 +197,9 @@ var screens = map[string][]string{
 	// guard), hence the dedicated single-project config below.
 	"project-picker-emptied": {"/", "d", "y"},
 	"settings":               {"s"},
-	// Diff tool is the settings screen's last row (index 5): five "down"s
+	// Diff tool is the settings screen's last row (index 6): six "down"s
 	// from sort mode, then enter opens its inline text editor.
-	"settings-difftool": {"s", "down", "down", "down", "down", "down", "enter"},
+	"settings-difftool": {"s", "down", "down", "down", "down", "down", "down", "enter"},
 	// Theme is the settings screen's second row (index 1): one "down" from
 	// sort mode, then enter drills into the existing theme picker.
 	"theme-picker": {"s", "down", "enter"},
@@ -430,6 +430,13 @@ func (f *fakeBackend) SetAutoSubmitDefault(autoSubmit bool) error {
 func (f *fakeBackend) SetCompactDetail(compact bool) error {
 	if f.cfg != nil {
 		f.cfg.CompactDetail = compact
+	}
+	return nil
+}
+
+func (f *fakeBackend) SetTerminalPane(on bool) error {
+	if f.cfg != nil {
+		f.cfg.NoTerminalPane = !on
 	}
 	return nil
 }

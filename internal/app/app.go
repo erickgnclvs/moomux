@@ -315,8 +315,9 @@ func buildAgentCmd(agent string, dangerous bool, model, thinking string) string 
 
 // newTmuxSession creates tmuxName's tmux session at cwd, using the pane
 // layout defined by cwd's optional .moomux-panes.toml if present and valid,
-// falling back to the default two-pane split otherwise — a malformed layout
-// file only logs a warning, it never blocks session creation.
+// falling back to the default two-pane split otherwise (or a lone agent
+// pane when Cfg.NoTerminalPane is set) — a malformed layout file only logs
+// a warning, it never blocks session creation.
 func (a *App) newTmuxSession(tmuxName, cwd, cmd, windowName string) error {
 	spec, err := layout.Load(cwd)
 	if err != nil {
@@ -324,25 +325,35 @@ func (a *App) newTmuxSession(tmuxName, cwd, cmd, windowName string) error {
 		spec = nil
 	}
 	if spec == nil {
-		if err := a.Tmux.NewSession(tmuxName, cwd, cmd, windowName); err != nil {
-			return err
+		a.cfgMu.RLock()
+		agentOnly := a.Cfg.NoTerminalPane
+		a.cfgMu.RUnlock()
+		if agentOnly {
+			spec = []layout.WindowSpec{{PaneSpec: layout.PaneSpec{Agent: true}}}
 		}
-		// The launch command is typed into a shell that has *just* forked
-		// (see NewSession's send-keys) — if that shell hasn't finished its
-		// own startup (rc files, prompt theme) by the time the command and
-		// Enter land, the Enter keypress can be swallowed by the shell's
-		// still-initializing line editor, leaving the command sitting typed
-		// but never run. waitForPaneReady then observes the shell's own late
-		// prompt render as "the pane changed and stabilized" and wrongly
-		// declares the agent ready — so StartFirstPrompt pastes the user's
-		// task into a bare shell prompt instead of the agent, with no error
-		// anywhere. Confirming the command actually left the input line
-		// here, and retrying Enter if it didn't, closes that race at its
-		// source rather than papering over it in the readiness check.
-		a.confirmLaunchCommandSubmitted(tmuxName, cmd)
-		return nil
 	}
-	return a.Tmux.NewSessionWithLayout(tmuxName, cwd, windowName, spec, cmd)
+	if spec == nil {
+		err = a.Tmux.NewSession(tmuxName, cwd, cmd, windowName)
+	} else {
+		err = a.Tmux.NewSessionWithLayout(tmuxName, cwd, windowName, spec, cmd)
+	}
+	if err != nil {
+		return err
+	}
+	// The launch command is typed into a shell that has *just* forked
+	// (see NewSession's send-keys) — if that shell hasn't finished its
+	// own startup (rc files, prompt theme) by the time the command and
+	// Enter land, the Enter keypress can be swallowed by the shell's
+	// still-initializing line editor, leaving the command sitting typed
+	// but never run. waitForPaneReady then observes the shell's own late
+	// prompt render as "the pane changed and stabilized" and wrongly
+	// declares the agent ready — so StartFirstPrompt pastes the user's
+	// task into a bare shell prompt instead of the agent, with no error
+	// anywhere. Confirming the command actually left the input line
+	// here, and retrying Enter if it didn't, closes that race at its
+	// source rather than papering over it in the readiness check.
+	a.confirmLaunchCommandSubmitted(tmuxName, cmd)
+	return nil
 }
 
 // confirmLaunchCommandSubmitted polls tmuxName's pane and, if it still shows
@@ -2311,6 +2322,24 @@ func (a *App) SetAutoTmux(autoTmux bool) error {
 	a.Cfg.AutoTmux = autoTmux
 	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
 		a.Cfg.AutoTmux = prev
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
+}
+
+// SetTerminalPane persists whether new tmux sessions get a shell pane beside
+// the agent, following the same reload -> mutate -> save idiom as
+// SetSortRecentFirst. Sessions already running keep the layout they have.
+func (a *App) SetTerminalPane(on bool) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
+		return fmt.Errorf("reload config: %w", err)
+	}
+	prev := a.Cfg.NoTerminalPane
+	a.Cfg.NoTerminalPane = !on
+	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
+		a.Cfg.NoTerminalPane = prev
 		return fmt.Errorf("save config: %w", err)
 	}
 	return nil

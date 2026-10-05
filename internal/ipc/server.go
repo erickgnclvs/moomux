@@ -769,6 +769,8 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		return s.mutResult(b.SetAutoTmux(a.On))
 	case "SetCompactDetail":
 		return s.mutResult(b.SetCompactDetail(a.On))
+	case "SetTerminalPane":
+		return s.mutResult(b.SetTerminalPane(a.On))
 	}
 	return Result{}, fmt.Errorf("unknown method %q", method)
 }

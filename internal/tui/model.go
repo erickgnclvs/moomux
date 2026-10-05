@@ -153,6 +153,9 @@ type Backend interface {
 	// SetCompactDetail persists whether the detail panel trims itself to the
 	// fields most useful at a glance.
 	SetCompactDetail(compact bool) error
+	// SetTerminalPane persists whether new sessions get a shell pane beside
+	// the agent.
+	SetTerminalPane(on bool) error
 	// ConfigSnapshot returns the backend's current config. Only ever call
 	// this from inside a tea.Cmd closure, after the mutation it's reporting
 	// on — never from Update()/View() directly (it may do I/O, e.g. an IPC

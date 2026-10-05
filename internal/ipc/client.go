@@ -439,6 +439,10 @@ func (c *Client) SetCompactDetail(compact bool) error {
 	return c.mut("SetCompactDetail", Args{On: compact})
 }
 
+func (c *Client) SetTerminalPane(on bool) error {
+	return c.mut("SetTerminalPane", Args{On: on})
+}
+
 // Nudge implements sessionview.Source, asking the server for a snapshot now
 // instead of at its next tick. Handed to the live stream goroutine rather
 // than written to the connection here, so it can't race that goroutine's
