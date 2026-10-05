@@ -2,12 +2,15 @@ package tui
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/erickgnclvs/moomux/internal/config"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
+	"github.com/erickgnclvs/moomux/internal/usage"
 )
 
 func TestSettingsScreenTogglesAutoTmux(t *testing.T) {
@@ -141,5 +144,41 @@ func TestSettingsDiffToolEdit(t *testing.T) {
 	}
 	if m.mode != ModeSettings {
 		t.Fatalf("mode = %v", m.mode)
+	}
+}
+
+func TestSettingsClaudeUsageRow(t *testing.T) {
+	m := newTestModel(&fakeBackend{})
+	m.width = 100
+	for _, c := range []struct {
+		u        *usage.Usage
+		setup    string
+		value    string
+		fixHints []string
+	}{
+		{&usage.Usage{Status: "ok"}, "", "showing", nil},
+		{nil, usage.NotInstalled, "not set up", []string{"brew install afitzgerald/agent-usage/agent-usage", "brew services start agent-usage"}},
+		{nil, usage.Unreadable, "can't read file", []string{"~/Library/Logs/agent-usage.log"}},
+		{nil, usage.Unsupported, "version mismatch", []string{"Update moomux and agent-usage"}},
+		{nil, usage.NoClaude, "no Claude login", []string{"Sign in to Claude Code", "5 minutes"}},
+	} {
+		m.Update(StatusTickMsg{Snap: sessionview.Snapshot{Views: map[string]sessionview.View{}, Usage: c.u, UsageSetup: c.setup}})
+		out := strings.Join(strings.Fields(m.renderSettings()), " ")
+		if !strings.Contains(out, "Claude usage") || !strings.Contains(out, c.value) {
+			t.Errorf("%q: row missing value %q:\n%s", c.setup, c.value, out)
+		}
+		for _, h := range c.fixHints {
+			if !strings.Contains(out, h) {
+				t.Errorf("%q: fix missing %q:\n%s", c.setup, h, out)
+			}
+		}
+	}
+
+	// Read-only: enter on it changes nothing and doesn't panic.
+	m.Update(runeKey('s'))
+	m.settingsCursor = len(settingsRows) - 1
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mode != ModeSettings || m.settingsEditing {
+		t.Fatalf("enter on the usage row: mode %v, editing %v", m.mode, m.settingsEditing)
 	}
 }

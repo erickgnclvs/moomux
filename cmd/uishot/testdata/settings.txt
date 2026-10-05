@@ -1,7 +1,6 @@
 === 40x20 ===
                                         
                                         
-                                        
 ╭──────────────────────────────────────╮
 │                                      │
 │  SETTINGS                            │
@@ -12,6 +11,7 @@
 │     auto-submit default      [off]   │
 │     compact detail view      [off]   │
 │     diff tool              not set   │
+│     Claude usage     not available   │
 │                                      │
 │  esc close  enter change             │
 │                                      │
@@ -20,7 +20,6 @@
                                         
                                         
 === 100x32 ===
-                                                                                                    
                                                                                                     
                                                                                                     
                                                                                                     
@@ -39,6 +38,7 @@
            │     auto-submit default                                            [off]   │           
            │     compact detail view                                            [off]   │           
            │     diff tool                                                    not set   │           
+           │     Claude usage                                           not available   │           
            │                                                                            │           
            │  ↑↓ select  enter/←→ change  esc close                                     │           
            │                                                                            │           

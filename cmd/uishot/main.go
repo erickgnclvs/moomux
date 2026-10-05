@@ -197,6 +197,9 @@ var screens = map[string][]string{
 	// guard), hence the dedicated single-project config below.
 	"project-picker-emptied": {"/", "d", "y"},
 	"settings":               {"s"},
+	// settings-usage-setup is the settings screen on a machine without
+	// agent-usage: the Claude usage row plus the install commands under it.
+	"settings-usage-setup": {"s"},
 	// Diff tool is the settings screen's last row (index 5): five "down"s
 	// from sort mode, then enter opens its inline text editor.
 	"settings-difftool": {"s", "down", "down", "down", "down", "down", "enter"},
@@ -753,6 +756,9 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 	m.Now = func() time.Time { return usageNow }
 	snap := sessionview.Once(be, "", states)
 	snap.Usage = screenUsage(screenName)
+	if screenName == "settings-usage-setup" {
+		snap.UsageSetup = usage.NotInstalled
+	}
 	m.Update(tui.StatusTickMsg{Snap: snap})
 	for _, k := range keys {
 		msg := keyMsgFor(strings.ReplaceAll(k, "$HOME", home))

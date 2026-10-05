@@ -86,15 +86,28 @@ type Reader struct {
 	f     *file // nil: missing or undecodable
 }
 
-// Read returns the usage to serve at now, or nil when there is none to show.
-// It stats the file every call but decodes only on an mtime change; stale is
-// re-evaluated every call, since a job that stopped writing is exactly the
-// case where the mtime never moves.
-func (r *Reader) Read(now time.Time) *Usage {
+// Why usage is omitted: Snapshot.UsageSetup on the wire. Clients decode
+// these verbatim.
+const (
+	NotInstalled = "not_installed" // no file: agent-usage not installed or never ran
+	Unreadable   = "unreadable"    // the file can't be read or isn't JSON
+	Unsupported  = "unsupported"   // a schema this core doesn't read
+	NoClaude     = "no_claude"     // no Claude entry or quota yet, or idle
+)
+
+// Read returns the usage to serve at now, or nil and the reason (one of the
+// constants above) when there is none to show. It stats the file every call
+// but decodes only on an mtime change; stale is re-evaluated every call,
+// since a job that stopped writing is exactly the case where the mtime never
+// moves.
+func (r *Reader) Read(now time.Time) (*Usage, string) {
 	st, err := os.Stat(r.Path)
 	if err != nil {
 		r.mtime, r.f = time.Time{}, nil
-		return nil
+		if os.IsNotExist(err) {
+			return nil, NotInstalled
+		}
+		return nil, Unreadable
 	}
 	if !st.ModTime().Equal(r.mtime) {
 		r.mtime, r.f = st.ModTime(), nil
@@ -108,13 +121,16 @@ func (r *Reader) Read(now time.Time) *Usage {
 	return build(r.f, now)
 }
 
-func build(f *file, now time.Time) *Usage {
-	if f == nil || f.Schema != 3 {
-		return nil
+func build(f *file, now time.Time) (*Usage, string) {
+	if f == nil {
+		return nil, Unreadable
+	}
+	if f.Schema != 3 {
+		return nil, Unsupported
 	}
 	q := f.claude()
 	if q == nil {
-		return nil
+		return nil, NoClaude
 	}
 	u := &Usage{UpdatedAt: q.UpdatedAt, Windows: []Window{}}
 	switch q.Status {
@@ -123,14 +139,14 @@ func build(f *file, now time.Time) *Usage {
 	case "signedOut":
 		u.Status = "signed_out"
 	default: // idle, or a status this core doesn't know
-		return nil
+		return nil, NoClaude
 	}
 	// A missing generatedAt can't prove the file fresh, so it reads as stale.
 	if now.Sub(f.GeneratedAt) > StaleAfter {
 		u.Status = "stale"
 	}
 	if u.Status == "signed_out" {
-		return u
+		return u, ""
 	}
 	for _, w := range q.Windows {
 		// Rounded half-up, and level taken from the rounded value, so the
@@ -145,7 +161,7 @@ func build(f *file, now time.Time) *Usage {
 			Headline: w.Kind == "session" || w.Kind == "weekly_all",
 		})
 	}
-	return u
+	return u, ""
 }
 
 func name(kind, model string) string {

@@ -104,9 +104,12 @@ type Snapshot struct {
 	// Usage is Claude quota usage from agent-usage's usage.json, absent when
 	// there is nothing to draw (no file, no quota, or idle). See
 	// internal/usage.
-	Usage    *usage.Usage `json:"usage,omitempty"`
-	PollTime time.Time    `json:"poll_time"`
-	Err      string       `json:"err,omitempty"`
+	Usage *usage.Usage `json:"usage,omitempty"`
+	// UsageSetup says why Usage is omitted (usage.NotInstalled et al.), so a
+	// client can tell the user how to turn it on; empty whenever Usage is set.
+	UsageSetup string    `json:"usage_setup,omitempty"`
+	PollTime   time.Time `json:"poll_time"`
+	Err        string    `json:"err,omitempty"`
 }
 
 // Source is a stream of Snapshots. Implemented by Watcher (the real thing,
@@ -461,11 +464,13 @@ func (w *Watcher) build() (Snapshot, map[string]watcher.State) {
 
 	now := time.Now()
 	var u *usage.Usage
+	var setup string
 	if w.Usage != nil {
-		u = w.Usage.Read(now)
+		u, setup = w.Usage.Read(now)
 	}
 	snap := Snapshot{
 		Usage:      u,
+		UsageSetup: setup,
 		Sessions:   ordered,
 		Views:      views,
 		Rows:       rows,
