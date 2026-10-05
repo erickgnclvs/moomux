@@ -109,7 +109,7 @@ func TestSettingsDiffToolEdit(t *testing.T) {
 	m.clientPath = filepath.Join(t.TempDir(), "client.toml")
 
 	m.Update(keyRune("s"))
-	for i := 0; i < len(settingsRows)-1; i++ { // diff tool is the last row
+	for settingsRows[m.settingsCursor].kind != settingsRowText {
 		press(m, tea.KeyDown)
 	}
 	if settingsRows[m.settingsCursor].kind != settingsRowText {
