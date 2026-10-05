@@ -357,3 +357,45 @@ func TestConnectFallsBackWhenNothingIsServing(t *testing.T) {
 		}
 	})
 }
+
+// TestWaitForCoreOutlastsARestart: after `u` restarts the brew-services
+// core, the relaunched TUI's connect probe used to race the new serve's
+// startup, lose, and fall back to running a second core beside it.
+func TestWaitForCoreOutlastsARestart(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+	cfg := &config.Config{}
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	store := &session.Store{Path: filepath.Join(dir, "sessions.json")}
+	if err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	a := &app.App{Store: store, Cfg: cfg, CfgPath: cfgPath, Tmux: &tmux.Client{Runner: stubTmuxRunner{}}}
+
+	sockDir, err := os.MkdirTemp("", "mx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(sockDir)
+	sock := filepath.Join(sockDir, "s")
+
+	// The restarted core comes up a moment after the relaunch begins.
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		ln, err := ipc.Listen(sock)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		t.Cleanup(func() { ln.Close() })
+		srv := &ipc.Server{Backend: a, Config: a.ConfigSnapshot, AgentOptions: a.AgentOptions}
+		go srv.Serve(ln)
+	}()
+
+	waitForCore(sock, 10*time.Second)
+	if _, _, _, err := connect(sock); err != nil {
+		t.Fatalf("relaunch would not attach to the restarted core: %v", err)
+	}
+}

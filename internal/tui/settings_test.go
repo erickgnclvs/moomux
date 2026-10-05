@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -184,5 +185,25 @@ func TestSettingsClaudeUsageRow(t *testing.T) {
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if m.mode != ModeSettings || m.settingsEditing {
 		t.Fatalf("enter on the usage row: mode %v, editing %v", m.mode, m.settingsEditing)
+	}
+}
+
+// TestSettingsToggleRevertsWhenPersistFails: an older core rejected
+// SetTerminalPane as an unknown method, and the row still claimed the new
+// value with a success flash until the next snapshot flipped it back.
+func TestSettingsToggleRevertsWhenPersistFails(t *testing.T) {
+	be := &fakeBackend{setAutoTmuxErr: errors.New("unknown method SetAutoTmux")}
+	m := newTestModel(be)
+
+	m.Update(runeKey('s'))
+	m.Update(tea.KeyMsg{Type: tea.KeyDown}) // sort mode -> theme
+	m.Update(tea.KeyMsg{Type: tea.KeyDown}) // theme -> auto-tmux
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.cfg.AutoTmux {
+		t.Error("row kept the value the core refused to save")
+	}
+	if m.flashKind != "error" || !strings.Contains(m.flash, "unknown method") {
+		t.Errorf("flash = %q (%s), want the persist error", m.flash, m.flashKind)
 	}
 }

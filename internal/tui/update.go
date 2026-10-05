@@ -2220,10 +2220,17 @@ func (m *Model) applySettingsRow(i int) (tea.Model, tea.Cmd) {
 		m.settingsEditing = true
 		return m, textinput.Blink
 	}
-	next := !row.get(m.cfg)
+	prev := row.get(m.cfg)
+	next := !prev
 	row.set(m.cfg, next)
+	// A core that refuses the write (an older `moomux serve` that doesn't
+	// know the method yet) must not leave the row showing a value nothing
+	// saved — the next streamed snapshot would silently flip it back.
+	if err := row.persist(m.backend, next); err != nil {
+		row.set(m.cfg, prev)
+		return m.flashError(fmt.Errorf("%s: %w", row.label, err))
+	}
 	m.setFlash("info", row.flash(next))
-	_ = row.persist(m.backend, next)
 	// After persist, not before: any snapshot built while that round trip
 	// was in flight predates this write and must not be allowed to land.
 	m.cfgAppliedAt = time.Now()
