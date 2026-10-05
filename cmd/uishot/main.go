@@ -198,8 +198,9 @@ var screens = map[string][]string{
 	"project-picker-emptied": {"/", "d", "y"},
 	"settings":               {"s"},
 	// settings-usage-setup is the settings screen on a machine without
-	// agent-usage: the Claude usage row plus the install commands under it.
-	"settings-usage-setup": {"s"},
+	// agent-usage, cursor on the Claude usage row (index 6) so its install
+	// commands show under the list.
+	"settings-usage-setup": {"s", "up"},
 	// Diff tool is the settings screen's last row (index 5): five "down"s
 	// from sort mode, then enter opens its inline text editor.
 	"settings-difftool": {"s", "down", "down", "down", "down", "down", "enter"},

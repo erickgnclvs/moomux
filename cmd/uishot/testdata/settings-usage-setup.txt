@@ -3,13 +3,13 @@
 │                                      │
 │  SETTINGS                            │
 │                                      │
-│   ▸ sort mode    manual (shift+↑↓)   │
+│     sort mode    manual (shift+↑↓)   │
 │     theme & appear… default / auto   │
 │     auto-tmux                [off]   │
 │     auto-submit default      [off]   │
 │     compact detail view      [off]   │
 │     diff tool              not set   │
-│     Claude usage        not set up   │
+│   ▸ Claude usage        not set up   │
 │                                      │
 │  To show it, install agent-usage:    │
 │  brew install afitzgerald/agent-     │
@@ -30,13 +30,13 @@
            │                                                                            │           
            │  SETTINGS                                                                  │           
            │                                                                            │           
-           │   ▸ sort mode                                          manual (shift+↑↓)   │           
+           │     sort mode                                          manual (shift+↑↓)   │           
            │     theme & appearance                                    default / auto   │           
            │     auto-tmux                                                      [off]   │           
            │     auto-submit default                                            [off]   │           
            │     compact detail view                                            [off]   │           
            │     diff tool                                                    not set   │           
-           │     Claude usage                                              not set up   │           
+           │   ▸ Claude usage                                              not set up   │           
            │                                                                            │           
            │  To show it, install agent-usage:                                          │           
            │  brew install afitzgerald/agent-usage/agent-usage                          │           

@@ -209,7 +209,8 @@ func (m *Model) renderSettings() string {
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
-	if fix := usageStatus(m).fix; fix != "" {
+	// The fix only while its row is selected, so it reads as that row's hint.
+	if fix := usageStatus(m).fix; fix != "" && settingsRows[m.settingsCursor].kind == settingsRowInfo {
 		b.WriteString("\n")
 		b.WriteString(muteStyle.Width(rowWidth).Render(fix))
 		b.WriteString("\n")

@@ -150,6 +150,12 @@ func TestSettingsDiffToolEdit(t *testing.T) {
 func TestSettingsClaudeUsageRow(t *testing.T) {
 	m := newTestModel(&fakeBackend{})
 	m.width = 100
+	m.Update(runeKey('s'))
+	m.Update(StatusTickMsg{Snap: sessionview.Snapshot{Views: map[string]sessionview.View{}, UsageSetup: usage.NotInstalled}})
+	if strings.Contains(m.renderSettings(), "brew") {
+		t.Error("fix shown while another row is selected")
+	}
+	m.settingsCursor = len(settingsRows) - 1
 	for _, c := range []struct {
 		u        *usage.Usage
 		setup    string
@@ -175,8 +181,6 @@ func TestSettingsClaudeUsageRow(t *testing.T) {
 	}
 
 	// Read-only: enter on it changes nothing and doesn't panic.
-	m.Update(runeKey('s'))
-	m.settingsCursor = len(settingsRows) - 1
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if m.mode != ModeSettings || m.settingsEditing {
 		t.Fatalf("enter on the usage row: mode %v, editing %v", m.mode, m.settingsEditing)
