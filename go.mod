@@ -1,6 +1,6 @@
 module github.com/erickgnclvs/moomux
 
-go 1.24.4
+go 1.26.0
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -13,7 +13,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/mattn/go-isatty v0.0.24
 	github.com/muesli/termenv v0.16.0
-	golang.org/x/sys v0.38.0
+	golang.org/x/sys v0.48.0
 )
 
 require (
