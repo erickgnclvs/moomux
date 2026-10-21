@@ -162,6 +162,13 @@ func TestWatcherIgnoresLeftoverClaudeMarkers(t *testing.T) {
 	}
 }
 
+// Claude Code writes "shell" while a background shell outlives the turn.
+func TestClassifyShellIsBackground(t *testing.T) {
+	if got := classify(rawSession{Status: "shell"}); got != Background {
+		t.Fatalf("status shell: got %v", got)
+	}
+}
+
 func TestClassifyUnrecognizedIsUnknown(t *testing.T) {
 	// A status we don't recognize is not evidence of idleness; Unknown loses
 	// the max-merge against any real signal instead of masquerading as Done.
@@ -205,7 +212,7 @@ func TestWatcherSurfacesParseErrors(t *testing.T) {
 // name, so re-ranking the iota (which the enum invites — see NeedsInput's
 // comment) can't silently reassign what a second front end renders.
 func TestStateJSONRoundTrip(t *testing.T) {
-	for _, st := range []State{Unknown, Parked, Done, Working, NeedsInput} {
+	for _, st := range []State{Unknown, Parked, Done, Background, Working, NeedsInput} {
 		b, err := json.Marshal(st)
 		if err != nil {
 			t.Fatalf("marshal %v: %v", st, err)

@@ -137,6 +137,8 @@ func (m *Model) renderDetailContent(s session.Session, view sessionview.View, ha
 		dot = dotWorking
 	case watcher.Done:
 		dot = dotDone
+	case watcher.Background:
+		dot = dotBackground
 	case watcher.NeedsInput:
 		dot = dotNeedsInput
 	}

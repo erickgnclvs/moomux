@@ -33,7 +33,7 @@ func TestThemesComplete(t *testing.T) {
 		// The whole point of serving this: the same color must not mean two
 		// different agent states, in any theme or in any front end.
 		states := map[string]Color{
-			"working": th.Working, "done": th.Done,
+			"working": th.Working, "done": th.Done, "background": th.Background,
 			"needsInput": th.NeedsInput, "parked": th.Parked,
 		}
 		seen := map[string]string{}
@@ -60,11 +60,11 @@ func TestDefaultThemeCarriesSystemColors(t *testing.T) {
 		t.Fatalf("ThemeByName(\"\") = %q, want default", d.Name)
 	}
 	want := map[string]string{
-		"working": "accent", "done": "green",
+		"working": "accent", "done": "green", "background": "teal",
 		"needsInput": "orange", "parked": "secondary",
 	}
 	got := map[string]string{
-		"working": d.Working.System, "done": d.Done.System,
+		"working": d.Working.System, "done": d.Done.System, "background": d.Background.System,
 		"needsInput": d.NeedsInput.System, "parked": d.Parked.System,
 	}
 	if !reflect.DeepEqual(got, want) {

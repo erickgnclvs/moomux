@@ -15,6 +15,11 @@ const (
 	Unknown State = iota
 	Parked
 	Done
+	// Background is a finished turn with a shell the agent started still
+	// running — Claude Code's "shell" status. Not waiting on the user, so a
+	// front end treats it like Working (no banner, no badge); ranked between
+	// Done and Working because it is more than idle and less than a turn.
+	Background
 	Working
 	// NeedsInput means the agent is waiting on the user: a permission prompt
 	// or other dialog, or a finished turn that ended by asking a question.
@@ -38,7 +43,7 @@ func (s State) MarshalJSON() ([]byte, error) {
 
 func (s *State) UnmarshalJSON(b []byte) error {
 	name := strings.Trim(string(b), `"`)
-	for _, st := range []State{Unknown, Parked, Done, Working, NeedsInput} {
+	for _, st := range []State{Unknown, Parked, Done, Background, Working, NeedsInput} {
 		if st.String() == name {
 			*s = st
 			return nil
@@ -53,6 +58,8 @@ func (s State) String() string {
 		return "parked"
 	case Done:
 		return "done"
+	case Background:
+		return "background"
 	case Working:
 		return "working"
 	case NeedsInput:

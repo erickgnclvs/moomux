@@ -22,6 +22,14 @@ var quipsDone = []string{
 	"that'll do, cow, that'll do",
 }
 
+var quipsBackground = []string{
+	"grazing in the back pasture",
+	"something's simmering in the barn",
+	"left the tractor running",
+	"one hoof still in the shell",
+	"the herd's still out",
+}
+
 var quipsNeedsInput = []string{
 	"udderly stuck without you",
 	"moo-ve this along, please",
@@ -45,6 +53,8 @@ func quipPool(st watcher.State) []string {
 		return quipsWorking
 	case watcher.Done:
 		return quipsDone
+	case watcher.Background:
+		return quipsBackground
 	case watcher.NeedsInput:
 		return quipsNeedsInput
 	default:
@@ -81,6 +91,8 @@ func Label(st watcher.State) string {
 		return "grazing"
 	case watcher.Done:
 		return "chewing cud"
+	case watcher.Background:
+		return "keeping an ear out"
 	case watcher.NeedsInput:
 		return "mooing for you"
 	default:

@@ -57,6 +57,7 @@ func applyTheme(name string) {
 	colAccent = adaptive(p.Accent)
 	colWorking = adaptive(p.Working)
 	colDone = adaptive(p.Done)
+	colBackground = adaptive(p.Background)
 	colNeedsInput = adaptive(p.NeedsInput)
 	colParked = adaptive(p.Parked)
 	colWarn = adaptive(p.Warn)
