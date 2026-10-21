@@ -1540,6 +1540,8 @@ func titleGlyph(st watcher.State, name string) string {
 		return "⚠ " + name
 	case watcher.Done:
 		return "✓ " + name
+	case watcher.Background:
+		return "◐ " + name
 	default:
 		return name
 	}

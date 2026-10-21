@@ -22,9 +22,10 @@ type Color struct {
 // over internal/ipc so neither the TUI nor a native app keeps its own copy —
 // the same reason AgentOption is served rather than duplicated.
 //
-// Working/Done/NeedsInput/Parked are the agent-state colors (the TUI's ⬤
+// Working/Done/Background/NeedsInput/Parked are the agent-state colors (the TUI's ⬤
 // dots, the Mac app's state icon). Every theme uses the same *meaning* for
-// them — working is blue, done is green, needs-input is orange — expressed in
+// them — working is blue, done is green, background is the teal between
+// them, needs-input is orange — expressed in
 // that theme's own palette. That consistency is the point: green previously
 // meant "working" in the TUI and "done" in the Mac app.
 type Theme struct {
@@ -41,6 +42,7 @@ type Theme struct {
 
 	Working    Color `json:"working"`
 	Done       Color `json:"done"`
+	Background Color `json:"background"`
 	NeedsInput Color `json:"needs_input"`
 	Parked     Color `json:"parked"`
 
@@ -61,7 +63,7 @@ type Theme struct {
 // to.
 //
 // "default"'s four state colors are the macOS app's, backported: they are
-// AppKit's controlAccentColor / systemGreen / systemOrange /
+// AppKit's controlAccentColor / systemGreen / systemTeal / systemOrange /
 // secondaryLabelColor, read off a Mac (secondaryLabelColor's 50%/55% alpha
 // flattened over the window background, since a terminal cell has nothing to
 // blend with). controlAccentColor is whatever accent the *user* has picked
@@ -76,6 +78,7 @@ var themes = []Theme{
 		Accent:     Color{Light: "#2952cc", Dark: "#7aa2f7"},
 		Working:    Color{Light: "#007aff", Dark: "#007aff", System: "accent"},
 		Done:       Color{Light: "#34c759", Dark: "#30d158", System: "green"},
+		Background: Color{Light: "#30b0c7", Dark: "#40c8e0", System: "teal"},
 		NeedsInput: Color{Light: "#ff8d28", Dark: "#ff9230", System: "orange"},
 		Parked:     Color{Light: "#808080", Dark: "#99999a", System: "secondary"},
 		Warn:       Color{Light: "#946f1a", Dark: "#e0af68"},
@@ -94,6 +97,7 @@ var themes = []Theme{
 		Accent:     Color{Light: "12", Dark: "12"},
 		Working:    Color{Light: "12", Dark: "12"},
 		Done:       Color{Light: "10", Dark: "10"},
+		Background: Color{Light: "14", Dark: "14"},
 		NeedsInput: Color{Light: "11", Dark: "11"}, // no orange in ANSI 16; bright yellow is the nearest
 		Parked:     Color{Light: "7", Dark: "7"},
 		Warn:       Color{Light: "11", Dark: "11"},
@@ -108,6 +112,7 @@ var themes = []Theme{
 		Accent:     Color{Light: "#076678", Dark: "#83a598"},
 		Working:    Color{Light: "#076678", Dark: "#83a598"},
 		Done:       Color{Light: "#79740e", Dark: "#b8bb26"},
+		Background: Color{Light: "#427b58", Dark: "#8ec07c"},
 		NeedsInput: Color{Light: "#af3a03", Dark: "#fe8019"},
 		Parked:     Color{Light: "#a89984", Dark: "#665c54"},
 		Warn:       Color{Light: "#b57614", Dark: "#fabd2f"},
@@ -122,6 +127,7 @@ var themes = []Theme{
 		Accent:     Color{Light: "#1e66f5", Dark: "#89b4fa"},
 		Working:    Color{Light: "#1e66f5", Dark: "#89b4fa"},
 		Done:       Color{Light: "#40a02b", Dark: "#a6e3a1"},
+		Background: Color{Light: "#179299", Dark: "#94e2d5"},
 		NeedsInput: Color{Light: "#fe640b", Dark: "#fab387"},
 		Parked:     Color{Light: "#9ca0b0", Dark: "#6c7086"},
 		Warn:       Color{Light: "#df8e1d", Dark: "#f9e2af"},

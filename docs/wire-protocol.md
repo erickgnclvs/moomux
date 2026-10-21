@@ -270,8 +270,11 @@ cross-repo contract. Change it there first.
 
 ### `state` is a name, not an integer
 
-`watcher.State` marshals as `"unknown"` / `"parked"` / `"done"` / `"working"`
-/ `"needs-input"`.
+`watcher.State` marshals as `"unknown"` / `"parked"` / `"done"` / `"background"`
+/ `"working"` / `"needs-input"`. `"background"` is a finished turn with a
+shell the agent started still running; it is not waiting on the user, so a
+client that notifies should treat it like `"working"`. A client that predates
+a state must render an unrecognised name as unknown rather than fail.
 
 The Go enum behind it is deliberately *ranked* — `NeedsInput` sits above
 `Working` so a stale "busy" write can't hide it — which means those integers

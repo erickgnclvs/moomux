@@ -53,6 +53,8 @@ func classify(rs rawSession) State {
 		return NeedsInput
 	case rs.Status == "busy", rs.Status == "working", rs.State == "busy":
 		return Working
+	case rs.Status == "shell":
+		return Background
 	case rs.Status == "idle", rs.State == "idle":
 		return Done
 	}

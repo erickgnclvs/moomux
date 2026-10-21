@@ -10,6 +10,7 @@ var (
 	colAccent     lipgloss.AdaptiveColor
 	colWorking    lipgloss.AdaptiveColor
 	colDone       lipgloss.AdaptiveColor
+	colBackground lipgloss.AdaptiveColor
 	colNeedsInput lipgloss.AdaptiveColor
 	colParked     lipgloss.AdaptiveColor
 	colWarn       lipgloss.AdaptiveColor
@@ -33,10 +34,12 @@ var (
 
 	dotWorkingStyle    lipgloss.Style
 	dotDoneStyle       lipgloss.Style
+	dotBackgroundStyle lipgloss.Style
 	dotNeedsInputStyle lipgloss.Style
 	dotParkedStyle     lipgloss.Style
 	dotWorking         string
 	dotDone            string
+	dotBackground      string
 	dotNeedsInput      string
 	dotParked          string
 
@@ -96,10 +99,12 @@ func buildStyles() {
 
 	dotWorkingStyle = lipgloss.NewStyle().Foreground(colWorking)
 	dotDoneStyle = lipgloss.NewStyle().Foreground(colDone)
+	dotBackgroundStyle = lipgloss.NewStyle().Foreground(colBackground)
 	dotNeedsInputStyle = lipgloss.NewStyle().Foreground(colNeedsInput)
 	dotParkedStyle = lipgloss.NewStyle().Foreground(colParked)
 	dotWorking = dotWorkingStyle.Render("⬤")
 	dotDone = dotDoneStyle.Render("⬤")
+	dotBackground = dotBackgroundStyle.Render("⬤")
 	dotNeedsInput = dotNeedsInputStyle.Render("⬤")
 	dotParked = dotParkedStyle.Render("⬤")
 

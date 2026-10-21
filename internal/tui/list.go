@@ -292,6 +292,8 @@ func renderRow(s session.Session, v sessionview.View, width int, selected, marke
 		dotStyle = dotWorkingStyle
 	case watcher.Done:
 		dotStyle = dotDoneStyle
+	case watcher.Background:
+		dotStyle = dotBackgroundStyle
 	case watcher.NeedsInput:
 		dotStyle = dotNeedsInputStyle
 	}

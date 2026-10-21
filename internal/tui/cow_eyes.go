@@ -10,6 +10,8 @@ func stateEyes(st watcher.State) string {
 		return "**"
 	case watcher.Done:
 		return "oo"
+	case watcher.Background:
+		return "~~"
 	case watcher.NeedsInput:
 		return "!!"
 	default:
