@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -209,6 +210,25 @@ func TestWhatsNewShowsOncePerUpgrade(t *testing.T) {
 	m.Update(StatusTickMsg{Snap: whatsNewSnap("0.6.2")})
 	if m.mode != ModeList {
 		t.Fatalf("a seen version reopened the overlay")
+	}
+}
+
+// TestWhatsNewKeepsAnUnreadableClientConfig: a client.toml that failed to load
+// leaves m.client zero; saving the seen version must not replace the file.
+func TestWhatsNewKeepsAnUnreadableClientConfig(t *testing.T) {
+	m := layoutTestModel(1)
+	m.clientPath = filepath.Join(t.TempDir(), "client.toml")
+	const broken = "diff_tool = [oops"
+	if err := os.WriteFile(m.clientPath, []byte(broken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m.clientLoadFailed = true
+	m.Update(StatusTickMsg{Snap: whatsNewSnap("0.6.2")})
+	if m.mode != ModeWhatsNew {
+		t.Fatalf("mode = %v, want the notes shown anyway", m.mode)
+	}
+	if got, _ := os.ReadFile(m.clientPath); string(got) != broken {
+		t.Fatalf("client.toml = %q, want it untouched", got)
 	}
 }
 

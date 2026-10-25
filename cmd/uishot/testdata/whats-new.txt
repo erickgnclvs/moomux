@@ -16,7 +16,7 @@
 │      word on narrow terminals        │
 │                                      │
 │                                      │
-│  enter/esc close                     │
+│  ↑↓/jk/pg scroll  enter/esc close    │
 │                                      │
 ╰──────────────────────────────────────╯
 === 100x32 ===

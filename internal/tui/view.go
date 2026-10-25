@@ -169,8 +169,8 @@ func (m *Model) helpFooter() string {
 
 func (m *Model) whatsNewFooter() string {
 	controls := "↑↓/jk/pg scroll  enter/esc close"
-	if m.overlayWidth(formHintWidth) < len(controls) {
-		controls = "enter/esc close"
+	if m.overlayWidth(formHintWidth) < lipgloss.Width(controls) {
+		controls = "↑↓ scroll  esc close"
 	}
 	return muteStyle.Render(controls)
 }

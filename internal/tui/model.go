@@ -450,6 +450,9 @@ type Model struct {
 	// whatsNew is the release notes ModeWhatsNew shows, picked once from the
 	// first snapshot that carries notes (see maybeShowWhatsNew).
 	whatsNew []whatsnew.Release
+	// clientLoadFailed is set when client.toml existed but could not be read,
+	// so m.client is zero and saving it would overwrite the user's file.
+	clientLoadFailed bool
 	// whatsNewChecked is set once this run has compared the core's notes with
 	// client.WhatsNewSeen, so later snapshots don't ask again.
 	whatsNewChecked bool
@@ -878,6 +881,7 @@ func New(cfg *config.Config, backend Backend, agentOptions []config.AgentOption,
 		slog.Warn("read client config", "path", clientPath, "err", err)
 	}
 	m := &Model{
+		clientLoadFailed:  err != nil,
 		cfg:               &own,
 		client:            client,
 		clientPath:        clientPath,

@@ -77,7 +77,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          scripts/release_notes.sh "$TAG" "$RUNNER_TEMP"
+          # Cosmetic, so it must never block a release: on failure ship empty
+          # notes (Load returns nil for an empty file).
+          if ! scripts/release_notes.sh "$TAG" "$RUNNER_TEMP"; then
+            echo "::warning::release notes failed; releasing without them"
+            : > "$RUNNER_TEMP/notes.md"
+            : > "$RUNNER_TEMP/WhatsNew.md"
+          fi
           cp "$RUNNER_TEMP/WhatsNew.md" internal/whatsnew/data/whatsnew.md
           cat "$RUNNER_TEMP/WhatsNew.md"
 

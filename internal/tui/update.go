@@ -1283,7 +1283,9 @@ func (m *Model) maybeShowWhatsNew(n *whatsnew.Notes) {
 	}
 	m.whatsNew = whatsnew.After(n.Releases, m.client.WhatsNewSeen, n.Version)
 	m.client.WhatsNewSeen = n.Version
-	if err := config.SaveClient(m.clientPath, m.client); err != nil {
+	if m.clientLoadFailed {
+		// A zero m.client would replace a file we could not read.
+	} else if err := config.SaveClient(m.clientPath, m.client); err != nil {
 		slog.Warn("save client config", "path", m.clientPath, "err", err)
 	}
 	if len(m.whatsNew) > 0 {
