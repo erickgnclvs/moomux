@@ -25,6 +25,15 @@ import (
 // a dead remote) is bounded by a fixed timeout instead of hanging forever.
 var runTimeout = 30 * time.Second
 
+// noPrompt is in every git subprocess's environment. An HTTPS remote with no
+// credential helper makes git ask "Username for ..." on /dev/tty — the
+// terminal moomux's TUI is drawn on — which stole keystrokes from the UI and
+// held a session's create for the whole runTimeout. With it, git fails fast
+// and the best-effort fetches just skip.
+// ponytail: covers git's own prompt only; an ssh passphrase/host-key prompt
+// still reaches /dev/tty — Setsid on the cmd if that ever bites.
+const noPrompt = "GIT_TERMINAL_PROMPT=0"
+
 // ErrNotGitRepo is returned when a path is not inside a git working tree.
 var ErrNotGitRepo = errors.New("not a git repository")
 
@@ -84,6 +93,7 @@ func (execRunner) Run(dir string, args ...string) (string, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), noPrompt)
 	// Without WaitDelay, CombinedOutput can still block past ctx's
 	// deadline: if git forked a child that inherited the output pipe,
 	// killing git alone doesn't close it — Read() waits for every process
@@ -679,9 +689,7 @@ func gitOut(dir string, env []string, max int, args ...string) (out []byte, over
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	if env != nil {
-		cmd.Env = append(os.Environ(), env...)
-	}
+	cmd.Env = append(append(os.Environ(), env...), noPrompt)
 	cmd.WaitDelay = 2 * time.Second // see execRunner
 	var stderr strings.Builder
 	cmd.Stderr = &stderr

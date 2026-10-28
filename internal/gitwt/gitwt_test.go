@@ -270,6 +270,28 @@ func TestExecRunnerRespectsRunTimeout(t *testing.T) {
 	}
 }
 
+// git must never prompt on the terminal moomux's TUI is drawn on — see
+// noPrompt.
+func TestGitRunsWithTerminalPromptDisabled(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	fakeDir := t.TempDir()
+	fake := filepath.Join(fakeDir, "git")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nprintf %s \"$GIT_TERMINAL_PROMPT\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GIT_TERMINAL_PROMPT", "1")
+
+	if out, err := (execRunner{}).Run(t.TempDir(), "fetch"); err != nil || out != "0" {
+		t.Fatalf("execRunner: GIT_TERMINAL_PROMPT=%q (err %v), want 0", out, err)
+	}
+	if out, _, err := gitStdout(t.TempDir(), nil, 0, "fetch"); err != nil || out != "0" {
+		t.Fatalf("gitStdout: GIT_TERMINAL_PROMPT=%q (err %v), want 0", out, err)
+	}
+}
+
 func TestWorktreeForBranch(t *testing.T) {
 	fr := &fakeRunner{
 		out: "worktree /wt/foo\nbranch refs/heads/user/foo\n\nworktree /wt/bar\nbranch refs/heads/user/bar\n",
