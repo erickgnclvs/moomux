@@ -35,6 +35,7 @@ func TestNewSessionWithLayoutAgentOnRight(t *testing.T) {
 		{"select-pane", "-t", "%3"},
 		{"set-window-option", "-t", "%3", "@moomux_agent", "1"},
 		{"display-message", "-p", "-t", "%3", "#{window_id}"},
+		{"set-option", "-p", "-t", "%3", "@moomux_agent_pane", "1"},
 		{"send-keys", "-t", "%3", "claude", "Enter"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
@@ -80,6 +81,7 @@ func TestNewSessionWithLayoutNestedGrid(t *testing.T) {
 		{"select-pane", "-t", "%4"},
 		{"set-window-option", "-t", "%4", "@moomux_agent", "1"},
 		{"display-message", "-p", "-t", "%4", "#{window_id}"},
+		{"set-option", "-p", "-t", "%4", "@moomux_agent_pane", "1"},
 		{"send-keys", "-t", "%4", "claude", "Enter"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
@@ -125,6 +127,7 @@ func TestNewSessionWithLayoutMultipleWindows(t *testing.T) {
 		{"select-pane", "-t", "%3"},
 		{"set-window-option", "-t", "%3", "@moomux_agent", "1"},
 		{"display-message", "-p", "-t", "%3", "#{window_id}"},
+		{"set-option", "-p", "-t", "%3", "@moomux_agent_pane", "1"},
 		{"send-keys", "-t", "%3", "claude", "Enter"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
@@ -170,6 +173,7 @@ func TestNewSessionWithLayoutNameFollowsAgentWindow(t *testing.T) {
 		{"select-pane", "-t", "%7"},
 		{"set-window-option", "-t", "%7", "@moomux_agent", "1"},
 		{"display-message", "-p", "-t", "%7", "#{window_id}"},
+		{"set-option", "-p", "-t", "%7", "@moomux_agent_pane", "1"},
 		{"send-keys", "-t", "%7", "claude", "Enter"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
@@ -201,6 +205,7 @@ func TestNewSessionWithLayoutAgentWindowNameIgnoresFileName(t *testing.T) {
 		{"select-pane", "-t", "%3"},
 		{"set-window-option", "-t", "%3", "@moomux_agent", "1"},
 		{"display-message", "-p", "-t", "%3", "#{window_id}"},
+		{"set-option", "-p", "-t", "%3", "@moomux_agent_pane", "1"},
 		{"send-keys", "-t", "%3", "claude", "Enter"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
