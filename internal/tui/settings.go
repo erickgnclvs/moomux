@@ -138,7 +138,7 @@ var settingsRows = []settingsRow{
 		},
 	},
 	{
-		label:       "Claude usage",
+		label:       "Agent usage",
 		kind:        settingsRowInfo,
 		renderValue: func(m *Model) string { return usageStatus(m).value },
 	},
@@ -149,7 +149,7 @@ var settingsRows = []settingsRow{
 type usageHelp struct{ value, fix string }
 
 func usageStatus(m *Model) usageHelp {
-	if m.usage != nil {
+	if m.usage != nil || m.codexUsage != nil {
 		return usageHelp{value: "showing"}
 	}
 	switch m.usageSetup {
@@ -163,7 +163,7 @@ func usageStatus(m *Model) usageHelp {
 	case usage.Unsupported:
 		return usageHelp{"version mismatch", "Update moomux and agent-usage; their versions don't match."}
 	case usage.NoClaude:
-		return usageHelp{"no Claude login", "Sign in to Claude Code on this Mac, then wait ~5 minutes."}
+		return usageHelp{"no agent login", "Sign in to Claude Code or Codex on this Mac, then wait ~5 minutes."}
 	}
 	// A core too old to say why.
 	return usageHelp{value: "not available"}

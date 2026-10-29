@@ -9,7 +9,7 @@
 │     compact detail view      [off]   │
 │     terminal pane             [on]   │
 │     diff tool              not set   │
-│   ▸ Claude usage        not set up   │
+│   ▸ Agent usage         not set up   │
 │                                      │
 │  To show it, install agent-usage:    │
 │  brew install afitzgerald/agent-     │
@@ -37,7 +37,7 @@
            │     compact detail view                                            [off]   │           
            │     terminal pane                                                   [on]   │           
            │     diff tool                                                    not set   │           
-           │   ▸ Claude usage                                              not set up   │           
+           │   ▸ Agent usage                                               not set up   │           
            │                                                                            │           
            │  To show it, install agent-usage:                                          │           
            │  brew install afitzgerald/agent-usage/agent-usage                          │           

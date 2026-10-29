@@ -108,7 +108,8 @@ type Snapshot struct {
 	// Usage is Claude quota usage from agent-usage's usage.json, absent when
 	// there is nothing to draw (no file, no quota, or idle). See
 	// internal/usage.
-	Usage *usage.Usage `json:"usage,omitempty"`
+	Usage      *usage.Usage `json:"usage,omitempty"`
+	CodexUsage *usage.Usage `json:"codex_usage,omitempty"`
 	// UsageSetup says why Usage is omitted (usage.NotInstalled et al.), so a
 	// client can tell the user how to turn it on; empty whenever Usage is set.
 	UsageSetup string `json:"usage_setup,omitempty"`
@@ -536,10 +537,11 @@ func (w *Watcher) build() (Snapshot, map[string]watcher.State) {
 	}
 
 	now := time.Now()
-	var u *usage.Usage
+	var u, codex *usage.Usage
 	var setup string
 	if w.Usage != nil {
 		u, setup = w.Usage.Read(now)
+		codex, _ = w.Usage.ReadAgent(now, "codex")
 	}
 	var upd *UpdateInfo
 	if updatecheck.Newer(w.Version, w.latest) {
@@ -552,6 +554,7 @@ func (w *Watcher) build() (Snapshot, map[string]watcher.State) {
 		UpdateAvailable: upd,
 		WhatsNew:        w.WhatsNew,
 		Usage:           u,
+		CodexUsage:      codex,
 		UsageSetup:      setup,
 		Sessions:        ordered,
 		Views:           views,
