@@ -31,7 +31,7 @@ func (f *fakeRunner) Run(args ...string) (string, error) {
 func withoutAgentLookup(calls [][]string) [][]string {
 	out := make([][]string, 0, len(calls))
 	for _, call := range calls {
-		if call[0] != "list-windows" {
+		if call[0] != "list-windows" && !(call[0] == "list-panes" && len(call) > 1 && call[1] == "-s") {
 			out = append(out, call)
 		}
 	}
@@ -128,6 +128,7 @@ func TestNewSession(t *testing.T) {
 		{"list-panes", "-t", "=moomux-foo:^", "-F", "#{pane_id}"},
 		{"split-window", "-h", "-t", "=moomux-foo:^", "-c", "/tmp/wt", "-l", "33%"},
 		{"select-pane", "-t", "%3"},
+		{"set-option", "-p", "-t", "%3", "@moomux_agent_pane", "1"},
 		{"send-keys", "-t", "%3", "claude", "Enter"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
@@ -147,6 +148,7 @@ func TestNewSessionNoWindowName(t *testing.T) {
 		{"list-panes", "-t", "=moomux-foo:^", "-F", "#{pane_id}"},
 		{"split-window", "-h", "-t", "=moomux-foo:^", "-c", "/tmp/wt", "-l", "33%"},
 		{"select-pane", "-t", "%3"},
+		{"set-option", "-p", "-t", "%3", "@moomux_agent_pane", "1"},
 		{"send-keys", "-t", "%3", "claude", "Enter"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
@@ -169,6 +171,7 @@ func TestNewSessionNoCmd(t *testing.T) {
 		{"list-panes", "-t", "=moomux-foo:^", "-F", "#{pane_id}"},
 		{"split-window", "-h", "-t", "=moomux-foo:^", "-c", "/tmp/wt", "-l", "33%"},
 		{"select-pane", "-t", "%3"},
+		{"set-option", "-p", "-t", "%3", "@moomux_agent_pane", "1"},
 	}
 	if !reflect.DeepEqual(fr.calls, want) {
 		t.Fatalf("calls = %v", fr.calls)
@@ -483,5 +486,29 @@ func TestActivePaneCwdAsksForTheCurrentWindowsActivePane(t *testing.T) {
 	// One call, and not the agent-window lookup PaneCwd goes through.
 	if len(fr.calls) != 1 {
 		t.Fatalf("calls = %v", fr.calls)
+	}
+}
+
+func TestPromptTargetsMarkedAgentPane(t *testing.T) {
+	fr := &fakeRunner{out: map[string]string{
+		"list-panes -s -t =demo -F #{pane_id} #{@moomux_agent_pane}": "%1 1\n%2 \n",
+	}}
+	c := &Client{Runner: fr}
+	checks := []struct {
+		call func() error
+		want []string
+	}{
+		{func() error { _, err := c.CapturePane("demo"); return err }, []string{"capture-pane", "-p", "-t", "%1"}},
+		{func() error { _, err := c.BracketedPaste("demo"); return err }, []string{"display-message", "-p", "-t", "%1", "#{bracket_paste_flag}"}},
+		{func() error { return c.PasteText("demo", "hello") }, []string{"paste-buffer", "-p", "-d", "-t", "%1"}},
+		{func() error { return c.PressEnter("demo") }, []string{"send-keys", "-t", "%1", "Enter"}},
+	}
+	for _, check := range checks {
+		if err := check.call(); err != nil {
+			t.Fatal(err)
+		}
+		if got := fr.calls[len(fr.calls)-1]; !reflect.DeepEqual(got, check.want) {
+			t.Errorf("command = %v, want %v", got, check.want)
+		}
 	}
 }

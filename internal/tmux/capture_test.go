@@ -210,8 +210,12 @@ func TestAgentWindowFollowsTheMarkedWindow(t *testing.T) {
 	}
 	// Resolved once: these run on every poll tick.
 	_, _ = c.CapturePane("moomux-a")
-	for _, call := range fr.calls[1:] {
+	lookups := 0
+	for _, call := range fr.calls {
 		if call[0] == "list-windows" {
+			lookups++
+		}
+		if lookups > 1 {
 			t.Fatalf("agent window looked up twice: %v", fr.calls)
 		}
 	}

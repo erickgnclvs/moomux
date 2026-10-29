@@ -93,6 +93,9 @@ func (c *Client) NewSessionWithLayout(name, cwd, windowName string, windows []la
 	// name is the agent-state title, which moomux rewrites — so record it
 	// now; everything targeting "the agent's window" reads it back.
 	c.markAgentWindow(name, agentPane)
+	if err := c.markAgentPane(agentPane); err != nil {
+		return err
+	}
 	if agentCmd != "" {
 		if _, err := c.Runner.Run("send-keys", "-t", agentPane, agentCmd, "Enter"); err != nil {
 			return err

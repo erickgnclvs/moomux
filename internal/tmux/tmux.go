@@ -156,6 +156,31 @@ func (c *Client) runAgent(session string, args ...string) (string, error) {
 	return out, err
 }
 
+// runAgentPane targets the marked pane even when another pane has focus.
+// Older sessions have no pane marker, so they retain the window fallback.
+func (c *Client) runAgentPane(session string, args ...string) (string, error) {
+	out, err := c.Runner.Run("list-panes", "-s", "-t", Exact(session), "-F", "#{pane_id} #{@moomux_agent_pane}")
+	if err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			if id, mark, ok := strings.Cut(line, " "); ok && mark == "1" {
+				argv := slices.Clone(args)
+				for i, arg := range argv {
+					if arg == agentTarget {
+						argv[i] = id
+					}
+				}
+				return c.Runner.Run(argv...)
+			}
+		}
+	}
+	return c.runAgent(session, args...)
+}
+
+func (c *Client) markAgentPane(pane string) error {
+	_, err := c.Runner.Run("set-option", "-p", "-t", pane, "@moomux_agent_pane", "1")
+	return err
+}
+
 // markAgentWindow records pane's window as the agent's, both in tmux (for
 // another process) and in this client's cache (so the common path never
 // needs the lookup).
@@ -344,6 +369,9 @@ func (c *Client) NewSession(name, cwd, cmd, windowName string) error {
 	if _, err := c.Runner.Run("select-pane", "-t", leftPane); err != nil {
 		return err
 	}
+	if err := c.markAgentPane(leftPane); err != nil {
+		return err
+	}
 	if cmd != "" {
 		if _, err := c.Runner.Run("send-keys", "-t", leftPane, cmd, "Enter"); err != nil {
 			return err
@@ -356,7 +384,7 @@ func (c *Client) NewSession(name, cwd, cmd, windowName string) error {
 // text — must be its own step (see PasteText's doc comment for why bundling
 // it with the text is unreliable).
 func (c *Client) PressEnter(session string) error {
-	_, err := c.runAgent(session, "send-keys", "-t", agentTarget, "Enter")
+	_, err := c.runAgentPane(session, "send-keys", "-t", agentTarget, "Enter")
 	return err
 }
 
@@ -411,7 +439,7 @@ func (c *Client) PasteText(session, text string) error {
 	// -d deletes the buffer immediately after pasting, so it doesn't linger
 	// in tmux's paste-buffer stack (visible to, and reusable by, anything
 	// else in the session via prefix-]).
-	_, err = c.runAgent(session, "paste-buffer", "-p", "-d", "-t", agentTarget)
+	_, err = c.runAgentPane(session, "paste-buffer", "-p", "-d", "-t", agentTarget)
 	return err
 }
 
@@ -423,7 +451,7 @@ func (c *Client) PasteText(session, text string) error {
 // off for the duration of a command it runs, so it flips back on only once
 // the agent itself is taking keystrokes. See App.StartFirstPrompt.
 func (c *Client) BracketedPaste(session string) (bool, error) {
-	out, err := c.runAgent(session, "display-message", "-p", "-t", agentTarget, "#{bracket_paste_flag}")
+	out, err := c.runAgentPane(session, "display-message", "-p", "-t", agentTarget, "#{bracket_paste_flag}")
 	if err != nil {
 		return false, err
 	}
@@ -487,7 +515,7 @@ func (c *Client) ActivePaneCwd(name string) (string, error) {
 // to detect when an agent CLI has finished its startup render and is idle
 // waiting for input (see App.StartFirstPrompt).
 func (c *Client) CapturePane(name string) (string, error) {
-	return c.runAgent(name, "capture-pane", "-p", "-t", agentTarget)
+	return c.runAgentPane(name, "capture-pane", "-p", "-t", agentTarget)
 }
 
 // RenameSession renames a live tmux session in place.
