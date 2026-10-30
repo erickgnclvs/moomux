@@ -33,15 +33,13 @@ throwaway in the scratchpad; only its result lands, below and in the PR body.
    "Releases"); otherwise the contract's wording. No attribution trailer.
 2. **Sentinels go out bare**, never wrapped, so the string that crosses the
    wire is exactly the contract's copy; `errors.Is` still holds server-side.
-3. **`turned_on` survives a failed attempt.** In the contract's order,
-   `enable()` saves the flag before the bind wait and the staleness check, so
-   a `Pair` that then fails has already turned the listener on — and the
-   retry would report `turned_on: false`, skipping the security line. The
-   `Tailnet` remembers an unannounced turn-on and reports it on the next
-   successful `Pair` in the same process. Ceiling: a core restart in between
-   loses it. Raised with `thinking-least-ios-be` as a contract defect (the
-   Global Constraint "a failed `Pair` saves nothing" contradicts A2's order
-   and A3 Step 5); the wire shape is unchanged either way.
+3. **The flag is saved last.** The contract's first draft saved it before the
+   bind wait and staleness check, contradicting its own "a failed `Pair`
+   saves nothing"; raised with `thinking-least-ios-be`, who moved `enable()`
+   to after both (contract A2, spec steps 3–5). A listener that binds late,
+   after a timed-out `Pair`, runs unsaved until the next successful `Pair`
+   saves and announces it; a restart before then just means it isn't
+   listening, the safe direction.
 4. **The bind error shown is the first one** `ListenTailnetRetry` reports
    (that is its existing contract). Ceiling: after a long retry the error can
    be old; the retry's backoff caps at a minute, so "try again in a moment"
@@ -53,9 +51,8 @@ throwaway in the scratchpad; only its result lands, below and in the PR body.
 
 ## Tests
 
-The contract's tests, verbatim where it gives them, plus one for item 3: a
-`Pair` whose bind wait fails after `enable()` reported a change, followed by
-a successful `Pair`, reports `TurnedOn` on the second.
+The contract's tests, verbatim where it gives them; every failing-`Pair`
+test also asserts `enable` was never called.
 
 ## A0 result
 
