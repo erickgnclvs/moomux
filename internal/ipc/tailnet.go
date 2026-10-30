@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/url"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -147,6 +148,9 @@ func newTailnetListener(ln net.Listener, owner string) *tailnetListener {
 		ok:       map[string]*authEntry{},
 	}
 }
+
+// Owner is the tailnet login this listener admits, fixed when it bound.
+func (l *tailnetListener) Owner() string { return l.owner }
 
 func (l *tailnetListener) Accept() (net.Conn, error) {
 	l.once.Do(func() { go l.pump() })
@@ -333,8 +337,6 @@ type TailnetSelf struct{ IP, Owner, Name string }
 
 // tailnetSelfFn is tailnetSelf, as a variable so a test can answer for a
 // tailnet it isn't on.
-//
-//lint:ignore U1000 the Pair method that calls it lands in the next change
 var tailnetSelfFn = tailnetSelf
 
 // tailnetSelf asks Tailscale about this machine, mapping the failures a user
@@ -375,6 +377,122 @@ func tailnetSelf() (TailnetSelf, error) {
 func PairLink(ip, name string) string {
 	q := url.Values{"host": {ip}, "name": {name}}.Encode()
 	return "moomux://connect?" + strings.ReplaceAll(q, "+", "%20")
+}
+
+// pairBindWait is how long Pair waits for the listener to bind before
+// saying so. A variable so a test needn't wait it out.
+var pairBindWait = 5 * time.Second
+
+// errTailnetChanged is Pair's answer when the running listener no longer
+// matches this machine: it bound an address and admits an owner, both
+// fixed at bind time, and a re-login or account switch since has moved
+// one of them. Bare for the same reason as the sentinels above.
+//
+//lint:ignore ST1005 user-facing sentence, shown verbatim
+var errTailnetChanged = errors.New("Tailscale changed since moomux started. Restart it (`brew services restart moomux`), then try again.")
+
+// Tailnet is the core's tailnet listener: started at most once — by
+// `moomux serve` at startup when tailnet_listen is already on, and by Pair
+// when a front end asks for it — and serving Srv for the life of the
+// process.
+type Tailnet struct {
+	Srv *Server
+	// listen binds the listener, blocking until it can; onErr hears why it
+	// can't yet. Nil is ListenTailnetRetry on TailnetPort — a field so a
+	// test can bind loopback rather than a tailnet it isn't on.
+	listen func(onErr func(error)) net.Listener
+
+	start sync.Once
+	// bound is closed once ln is set. ln is written only before that and
+	// read only after, so the close is all the synchronisation it needs.
+	bound chan struct{}
+	ln    net.Listener
+
+	mu       sync.Mutex
+	firstErr error // the first reason it couldn't bind, for Pair to show
+}
+
+// Start binds and serves the tailnet listener in the background, once:
+// every later call is a no-op, so serve's startup and any number of Pair
+// calls can all ask for it. Never fatal — until it binds, the unix socket
+// is the only way in, which is what local clients use either way.
+func (t *Tailnet) Start() {
+	t.start.Do(func() {
+		t.bound = make(chan struct{})
+		listen := t.listen
+		if listen == nil {
+			listen = func(onErr func(error)) net.Listener { return ListenTailnetRetry(TailnetPort, onErr) }
+		}
+		go t.serve(listen)
+	})
+}
+
+func (t *Tailnet) serve(listen func(onErr func(error)) net.Listener) {
+	ln := listen(func(err error) {
+		fmt.Fprintln(os.Stderr, "moomux: no tailnet listener yet, retrying:", err)
+		t.mu.Lock()
+		if t.firstErr == nil {
+			t.firstErr = err
+		}
+		t.mu.Unlock()
+	})
+	t.ln = ln
+	close(t.bound)
+	fmt.Fprintln(os.Stderr, "moomux: also serving on", ln.Addr())
+	// Serve returning means nothing is accepting on this listener any
+	// more: close it, or the port stays bound and any connection already
+	// past the tailnet auth check sits on its fd until the process exits.
+	defer ln.Close()
+	// Serve only ever returns a non-nil error.
+	if err := t.Srv.Serve(ln); !errors.Is(err, net.ErrClosed) {
+		slog.Error("tailnet listener stopped", "err", err)
+	}
+}
+
+// Pair makes sure the listener is up and answers what a phone needs to
+// reach it. enable saves tailnet_listen and reports whether it was off.
+//
+// The order is the point. Tailscale is asked live, every call, so a
+// machine whose listener bound at login and whose Tailscale was quit
+// since gets "Tailscale is off", not a QR code that can't work. Then the
+// listener must actually be up, and still bound to what Tailscale says
+// now. A stale one is reported rather than rebound: an account switch is
+// rare, and a restart fixes it without a restartable listener to keep.
+// enable runs only after all of that, so a failed Pair saves nothing: no
+// core quietly opening on the tailnet at its next start.
+func (t *Tailnet) Pair(enable func() (bool, error)) (Pairing, error) {
+	self, err := tailnetSelfFn()
+	if err != nil {
+		return Pairing{}, err
+	}
+	t.Start()
+	select {
+	case <-t.bound:
+	case <-time.After(pairBindWait):
+		t.mu.Lock()
+		why := t.firstErr
+		t.mu.Unlock()
+		// Nothing heard is a `tailscale` call still inside its timeout:
+		// say how long was waited rather than show an empty "()".
+		reason := fmt.Sprintf("no answer after %s", pairBindWait)
+		if why != nil {
+			reason = why.Error()
+		}
+		//lint:ignore ST1005 user-facing sentence, shown verbatim
+		return Pairing{}, fmt.Errorf("moomux couldn't listen on Tailscale yet (%s). Try again in a moment.", reason)
+	}
+	host, _, _ := net.SplitHostPort(t.ln.Addr().String())
+	// A listener that can't say whom it admits can't be shown to match,
+	// so it fails closed.
+	tl, _ := t.ln.(*tailnetListener)
+	if tl == nil || host != self.IP || !strings.EqualFold(tl.Owner(), self.Owner) {
+		return Pairing{}, errTailnetChanged
+	}
+	changed, err := enable()
+	if err != nil {
+		return Pairing{}, err
+	}
+	return Pairing{Link: PairLink(self.IP, self.Name), Name: self.Name, Owner: self.Owner, TurnedOn: changed}, nil
 }
 
 // tailscaleCandidates are tried in order when `tailscale` isn't on PATH. The

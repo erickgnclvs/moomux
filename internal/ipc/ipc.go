@@ -158,6 +158,21 @@ type Result struct {
 	Base      string `json:"base,omitempty"`
 	Commit    string `json:"commit,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
+	// Pairing is Pair's answer, always present when it succeeds.
+	Pairing *Pairing `json:"pairing,omitempty"`
+}
+
+// Pairing is what a phone needs to reach this core over the tailnet: the
+// link its Camera opens, the machine it names, and the tailnet login it
+// must be signed in as to be admitted.
+type Pairing struct {
+	Link  string `json:"link"`
+	Name  string `json:"name"`
+	Owner string `json:"owner"`
+	// TurnedOn is whether this call is what turned the tailnet listener
+	// on. Only then does a front end say who can now reach the core;
+	// pairing a second phone changes nothing, so it says nothing.
+	TurnedOn bool `json:"turned_on,omitempty"`
 }
 
 // nudgeRequest is the only thing a client sends on a live "Watch"

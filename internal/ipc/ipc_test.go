@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -1413,6 +1414,66 @@ func TestFileErrorsNameTheirMethod(t *testing.T) {
 				strings.Count(err.Error(), "File: ") != 1 {
 				t.Errorf("%s(%q, %q) err = %v, want %q prefixed %q once", method, tc.id, tc.path, err, tc.want, method+":")
 			}
+		}
+	}
+}
+
+// tcpClient serves srv on a loopback TCP port — the tailnet listener's
+// transport, without its whois check — and returns a client that dials it.
+func tcpClient(t *testing.T, srv *Server) *Client {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go srv.Serve(ln)
+	return &Client{Socket: ln.Addr().String()}
+}
+
+// Pair turns the tailnet listener on, so a client already on it must never
+// reach the hook: opening the core to the tailnet is decided at the machine.
+func TestPairIsRefusedOverTCP(t *testing.T) {
+	var calls atomic.Int32
+	srv := &Server{Pair: func() (Pairing, error) { calls.Add(1); return Pairing{Link: "x"}, nil }}
+	unix, _ := serve(t, srv) // the existing helper: a unix-socket client
+	if p, err := unix.Pair(); err != nil || p.Link != "x" {
+		t.Fatalf("unix: %+v %v", p, err)
+	}
+	if _, err := tcpClient(t, srv).Pair(); err == nil {
+		t.Fatal("Pair over TCP must be refused")
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("Pair hook ran %d times, want only the unix call", n)
+	}
+}
+
+// Both front ends print Pair's errors as they arrive, so the core's copy
+// has to cross the wire untouched — no method name, no wrapping.
+func TestPairErrorsArriveVerbatim(t *testing.T) {
+	c, _ := serve(t, &Server{Pair: func() (Pairing, error) { return Pairing{}, errTailnetChanged }})
+	if _, err := c.Pair(); err == nil || err.Error() != errTailnetChanged.Error() {
+		t.Fatalf("got %v, want %q", err, errTailnetChanged)
+	}
+	c, _ = serve(t, &Server{})
+	if _, err := c.Pair(); err == nil || err.Error() != "server cannot pair" {
+		t.Fatalf("no hook: got %v", err)
+	}
+}
+
+// The keys are a contract with the Swift client, which decodes into
+// optionals: a renamed key there reads as an empty field, not an error.
+func TestPairingWireKeys(t *testing.T) {
+	for _, tc := range []struct {
+		p    Pairing
+		want string
+	}{
+		{Pairing{Link: "l", Name: "n", Owner: "o"}, `{"pairing":{"link":"l","name":"n","owner":"o"}}`},
+		{Pairing{Link: "l", Name: "n", Owner: "o", TurnedOn: true}, `{"pairing":{"link":"l","name":"n","owner":"o","turned_on":true}}`},
+	} {
+		got, err := json.Marshal(Result{Pairing: &tc.p})
+		if err != nil || string(got) != tc.want {
+			t.Errorf("got %s %v, want %s", got, err, tc.want)
 		}
 	}
 }
