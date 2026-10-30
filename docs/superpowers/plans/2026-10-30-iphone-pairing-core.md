@@ -1,12 +1,11 @@
 # iPhone pairing — core implementation plan
 
 The cross-repo contract (names, wire keys, link format, user-facing copy) is
-Part A of `moomux-mac`'s
-[`docs/superpowers/plans/2026-10-30-iphone-pairing.md`](/Users/erickgoncalves/.local/share/moomux/worktrees/moomux-mac/thinking-least-ios-be/docs/superpowers/plans/2026-10-30-iphone-pairing.md),
-arguing from its spec,
-[`docs/superpowers/specs/2026-10-30-iphone-pairing-design.md`](/Users/erickgoncalves/.local/share/moomux/worktrees/moomux-mac/thinking-least-ios-be/docs/superpowers/specs/2026-10-30-iphone-pairing-design.md).
-Values live there; this file links to them rather than copying. This file is
-authoritative for how the core implements it: layout, order, tests.
+Part A of [moomux-mac](https://github.com/afitzgerald/moomux-mac)'s
+`docs/superpowers/plans/2026-10-30-iphone-pairing.md`, arguing from its spec,
+`docs/superpowers/specs/2026-10-30-iphone-pairing-design.md` (paths in that
+repo). Values live there; this file names them rather than copying. This file
+is authoritative for how the core implements it: layout, order, tests.
 
 ## Layout
 
