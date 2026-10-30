@@ -21,6 +21,14 @@ import (
 //lint:ignore ST1005 user-facing sentence, shown verbatim
 var errNoCore = errors.New("No moomux core is running. Start it (`brew services start moomux`, or `moomux serve`), then try again.")
 
+// errOldCore is the other: a core from before Pair — `brew upgrade` without
+// a service restart — answers `unknown method "Pair"`, and can't word
+// anything about a method it doesn't have. CLI-only like errNoCore; the Mac
+// app says it in its own words.
+//
+//lint:ignore ST1005 user-facing sentence, shown verbatim
+var errOldCore = errors.New("The running moomux core is older than this command. Restart it (`brew services restart moomux`), then try again.")
+
 // runPair implements `moomux pair`: ask the running core to listen on the
 // tailnet, if it isn't already, and print the QR code an iPhone's Camera
 // scans to reach it. Every check — Tailscale installed, on, signed in as a
@@ -39,6 +47,10 @@ func runPair(args []string) error {
 		var op *net.OpError
 		if errors.As(err, &op) && op.Op == "dial" {
 			return errNoCore
+		}
+		// Except a core too old to know the method, which can't.
+		if strings.HasPrefix(err.Error(), "unknown method") {
+			return errOldCore
 		}
 		return err
 	}

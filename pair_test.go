@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"errors"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,17 +102,23 @@ func TestRunPairWithNoCoreSaysSo(t *testing.T) {
 	}
 }
 
-// Every other error is the core's own sentence and goes out as it came in:
-// unwrapped, unprefixed, unreworded.
-func TestRunPairShowsTheCoresErrorVerbatim(t *testing.T) {
-	const copy = "Tailscale is off on this computer. Open it, sign in, and try again."
-	// Short path deliberately: a unix socket path is capped around 104 bytes.
+// shortSock is a unix socket path for a test core. Short deliberately: the
+// path is capped around 104 bytes, which t.TempDir() can run past.
+func shortSock(t *testing.T) string {
+	t.Helper()
 	dir, err := os.MkdirTemp("", "mx")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(dir)
-	sock := filepath.Join(dir, "s")
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return filepath.Join(dir, "s")
+}
+
+// Every other error is the core's own sentence and goes out as it came in:
+// unwrapped, unprefixed, unreworded.
+func TestRunPairShowsTheCoresErrorVerbatim(t *testing.T) {
+	const copy = "Tailscale is off on this computer. Open it, sign in, and try again."
+	sock := shortSock(t)
 	ln, err := ipc.Listen(sock)
 	if err != nil {
 		t.Fatal(err)
@@ -121,5 +130,33 @@ func TestRunPairShowsTheCoresErrorVerbatim(t *testing.T) {
 	err = runPair([]string{"-socket", sock})
 	if err == nil || err.Error() != copy {
 		t.Fatalf("err = %v, want %q", err, copy)
+	}
+}
+
+// A core from before Pair — `brew upgrade` without a service restart —
+// answers what its dispatch answers for any method it doesn't know. It
+// can't word anything about pairing, so runPair does, in the contract's
+// CLI-only copy. Faked rather than an ipc.Server, which knows Pair.
+func TestRunPairOnAnOlderCoreSaysRestartIt(t *testing.T) {
+	sock := shortSock(t)
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		_, _ = bufio.NewReader(c).ReadString('\n')
+		_, _ = io.WriteString(c, `{"err":"unknown method \"Pair\""}`+"\n")
+	}()
+
+	err = runPair([]string{"-socket", sock})
+	const want = "The running moomux core is older than this command. Restart it (`brew services restart moomux`), then try again."
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %q", err, want)
 	}
 }

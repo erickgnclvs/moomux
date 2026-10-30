@@ -1007,7 +1007,12 @@ listener not up yet — worded once, in the core, and shown verbatim by
 `moomux pair` and the Mac app. It runs `tailscale` three times, 5s timeout
 each, and may wait 5s more for the bind, so a client's deadline should allow
 over 20s. It returns no config: the `tailnet_listen` it saves reaches
-clients on the next snapshot's `cfg`.
+clients on the next snapshot's `cfg`. Cores older than this method answer
+`unknown method` — a `brew upgrade` whose service wasn't restarted — and
+can't word that themselves, so each front end does: `moomux pair` says "The
+running moomux core is older than this command. Restart it
+(`brew services restart moomux`), then try again.", and the Mac app says
+"This moomux core is too old to pair — upgrade it."
 
 ### `CreateSession` is a transaction, not a call
 
