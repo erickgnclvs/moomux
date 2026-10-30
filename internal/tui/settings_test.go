@@ -167,11 +167,11 @@ func TestSettingsClaudeUsageRow(t *testing.T) {
 		{nil, usage.NotInstalled, "not set up", []string{"brew install afitzgerald/agent-usage/agent-usage", "brew services start agent-usage"}},
 		{nil, usage.Unreadable, "can't read file", []string{"~/Library/Logs/agent-usage.log"}},
 		{nil, usage.Unsupported, "version mismatch", []string{"Update moomux and agent-usage"}},
-		{nil, usage.NoClaude, "no Claude login", []string{"Sign in to Claude Code", "5 minutes"}},
+		{nil, usage.NoClaude, "no agent login", []string{"Sign in to Claude Code", "5 minutes"}},
 	} {
 		m.Update(StatusTickMsg{Snap: sessionview.Snapshot{Views: map[string]sessionview.View{}, Usage: c.u, UsageSetup: c.setup}})
 		out := strings.Join(strings.Fields(m.renderSettings()), " ")
-		if !strings.Contains(out, "Claude usage") || !strings.Contains(out, c.value) {
+		if !strings.Contains(out, "Agent usage") || !strings.Contains(out, c.value) {
 			t.Errorf("%q: row missing value %q:\n%s", c.setup, c.value, out)
 		}
 		for _, h := range c.fixHints {

@@ -443,7 +443,8 @@ type Model struct {
 	Now func() time.Time
 	// usage is the core's Claude quota from the last real snapshot, nil when
 	// the core sent none. See usageCandidates.
-	usage *usage.Usage
+	usage      *usage.Usage
+	codexUsage *usage.Usage
 	// usageSetup is why usage is nil (Snapshot.UsageSetup), for the
 	// settings screen's Claude usage row.
 	usageSetup string

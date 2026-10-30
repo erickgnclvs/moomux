@@ -244,3 +244,25 @@ func TestWhatsNewWaitsForTheList(t *testing.T) {
 		t.Fatalf("mode = %v, want ModeWhatsNew once back on the list", m.mode)
 	}
 }
+
+func TestCodexUsageAndTokens(t *testing.T) {
+	m := usageModel(&usage.Usage{Status: "ok", Windows: []usage.Window{{Name: "Week", Percent: 20, Headline: true}}, Tokens: &usage.Tokens{WindowDays: 30, Input: 1000}}, 100)
+	m.codexUsage = &usage.Usage{Status: "ok", Windows: []usage.Window{{Name: "Week", Percent: 62, Headline: true}}, Tokens: &usage.Tokens{WindowDays: 30, Input: 2000}}
+	got := plainUsage(m)
+	if len(got) == 0 || !strings.Contains(got[0], "Claude Week 20%") || !strings.Contains(got[0], "Codex Week 62%") || !strings.Contains(got[0], "30d local 2.0k tokens") {
+		t.Fatalf("usage = %q", got)
+	}
+}
+
+func TestCompactUsageKeepsWarningsAndWindowLabels(t *testing.T) {
+	m := usageModel(&usage.Usage{Status: "ok", Windows: []usage.Window{{Name: "5h", Percent: 41, Headline: true}, {Name: "Week", Percent: 83, Headline: true}, {Name: "Fable", Percent: 96, Level: "critical"}}, Tokens: &usage.Tokens{WindowDays: 30, Input: 1000}}, 100)
+	m.codexUsage = &usage.Usage{Status: "ok", Windows: []usage.Window{{Name: "Week", Percent: 62, Headline: true}}}
+	candidates := plainUsage(m)
+	if !strings.Contains(candidates[0], "Fable 96%") {
+		t.Fatalf("compact candidate hides warning: %q", candidates[0])
+	}
+	last := candidates[len(candidates)-1]
+	if !strings.Contains(last, "Claude 5h41% 7d83%") || !strings.Contains(last, "Codex 7d62%") {
+		t.Fatalf("narrow candidate lacks labels: %q", last)
+	}
+}

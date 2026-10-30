@@ -180,6 +180,7 @@ var screens = map[string][]string{
 	// agent-usage has stopped writing.
 	"usage":       {},
 	"usage-stale": {},
+	"usage-codex": {},
 	// Submits the new-project form with a path under ~/Documents that isn't
 	// a git repo, landing on the "skip git" choice screen with its macOS
 	// Files-and-Folders warning (see App.PathWarning in internal/app). "$HOME" is
@@ -812,6 +813,11 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 	m.Now = func() time.Time { return usageNow }
 	snap := sessionview.Once(be, "", states)
 	snap.Usage = screenUsage(screenName)
+	if screenName == "usage-codex" {
+		snap.Usage = screenUsage("usage")
+		snap.Usage.Tokens = &usage.Tokens{WindowDays: 30, Input: 123000, Output: 45000}
+		snap.CodexUsage = &usage.Usage{Status: "ok", Windows: []usage.Window{{Kind: "weekly_all", Name: "Week", Percent: 62, Headline: true, Level: "ok"}}, Tokens: &usage.Tokens{WindowDays: 30, Input: 230000, Output: 12000}}
+	}
 	if screenName == "settings-usage-setup" {
 		snap.UsageSetup = usage.NotInstalled
 	}

@@ -11,7 +11,7 @@
 │     compact detail view      [off]   │
 │   ▸ terminal pane             [on]   │
 │     diff tool              not set   │
-│     Claude usage     not available   │
+│     Agent usage      not available   │
 │                                      │
 │  ✖ terminal pane: unknown method     │
 │  SetTerminalPane                     │
@@ -38,7 +38,7 @@
            │     compact detail view                                            [off]   │           
            │   ▸ terminal pane                                                   [on]   │           
            │     diff tool                                                    not set   │           
-           │     Claude usage                                           not available   │           
+           │     Agent usage                                            not available   │           
            │                                                                            │           
            │  ✖ terminal pane: unknown method SetTerminalPane                           │           
            │  ↑↓ select  enter/←→ change  esc close                                     │           

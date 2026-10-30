@@ -1,4 +1,4 @@
-// Package usage serves Claude quota usage, read from the usage.json that
+// Package usage serves agent quota and local token usage from the usage.json that
 // agent-usage (github.com/afitzgerald/agent-usage) writes every five minutes.
 // The core only ever reads that file. The shared contract with the Mac and
 // iPhone apps is moomux-mac's docs/usage-contract.md; docs/wire-protocol.md
@@ -23,6 +23,17 @@ type Usage struct {
 	Status    string   `json:"status"` // ok | failed | signed_out | stale
 	UpdatedAt string   `json:"updated_at,omitempty"`
 	Windows   []Window `json:"windows"` // never null
+	Tokens    *Tokens  `json:"tokens,omitempty"`
+}
+
+// Tokens is local history, independent of subscription quota.
+type Tokens struct {
+	UpdatedAt  string `json:"updated_at"`
+	WindowDays int    `json:"window_days"`
+	Input      int64  `json:"input"`
+	Output     int64  `json:"output"`
+	CacheRead  int64  `json:"cache_read"`
+	CacheWrite int64  `json:"cache_write"`
 }
 
 type Window struct {
@@ -39,11 +50,22 @@ type Window struct {
 type file struct {
 	Schema      int       `json:"schema"`
 	GeneratedAt time.Time `json:"generatedAt"`
-	// One entry per agent, keyed by "agent". Only Claude's is served; the
-	// rest are some other reader's.
+	// One entry per agent, keyed by "agent".
 	Agents []struct {
-		Agent string `json:"agent"`
-		Quota *quota `json:"quota"`
+		Agent  string `json:"agent"`
+		Quota  *quota `json:"quota"`
+		Tokens *struct {
+			UpdatedAt  string `json:"updatedAt"`
+			WindowDays int    `json:"windowDays"`
+			Days       []struct {
+				Usage struct {
+					Input      int64 `json:"input"`
+					Output     int64 `json:"output"`
+					CacheRead  int64 `json:"cacheRead"`
+					CacheWrite int64 `json:"cacheWrite"`
+				} `json:"usage"`
+			} `json:"days"`
+		} `json:"tokens"`
 	} `json:"agents"`
 }
 
@@ -56,17 +78,6 @@ type quota struct {
 		Percent  float64 `json:"percentUsed"`
 		ResetsAt string  `json:"resetsAt"`
 	} `json:"windows"`
-}
-
-// claude is Claude's quota, by key rather than position; nil when the file
-// has no Claude entry or that entry has no quota yet.
-func (f *file) claude() *quota {
-	for _, a := range f.Agents {
-		if a.Agent == "claude" {
-			return a.Quota
-		}
-	}
-	return nil
 }
 
 // DefaultPath is agent-usage's output, or $MOOMUX_USAGE_FILE when set.
@@ -100,7 +111,9 @@ const (
 // but decodes only on an mtime change; stale is re-evaluated every call,
 // since a job that stopped writing is exactly the case where the mtime never
 // moves.
-func (r *Reader) Read(now time.Time) (*Usage, string) {
+func (r *Reader) Read(now time.Time) (*Usage, string) { return r.ReadAgent(now, "claude") }
+
+func (r *Reader) ReadAgent(now time.Time, agent string) (*Usage, string) {
 	st, err := os.Stat(r.Path)
 	if err != nil {
 		r.mtime, r.f = time.Time{}, nil
@@ -118,34 +131,61 @@ func (r *Reader) Read(now time.Time) (*Usage, string) {
 			}
 		}
 	}
-	return build(r.f, now)
+	return buildAgent(r.f, now, agent)
 }
 
-func build(f *file, now time.Time) (*Usage, string) {
+func buildAgent(f *file, now time.Time, agent string) (*Usage, string) {
 	if f == nil {
 		return nil, Unreadable
 	}
 	if f.Schema != 3 {
 		return nil, Unsupported
 	}
-	q := f.claude()
+	var q *quota
+	var tokens *Tokens
+	for _, a := range f.Agents {
+		if a.Agent != agent {
+			continue
+		}
+		q = a.Quota
+		if a.Tokens != nil && len(a.Tokens.Days) > 0 {
+			tokens = &Tokens{UpdatedAt: a.Tokens.UpdatedAt, WindowDays: a.Tokens.WindowDays}
+			for _, d := range a.Tokens.Days {
+				tokens.Input += d.Usage.Input
+				tokens.Output += d.Usage.Output
+				tokens.CacheRead += d.Usage.CacheRead
+				tokens.CacheWrite += d.Usage.CacheWrite
+			}
+		}
+		break
+	}
 	if q == nil {
+		if tokens != nil {
+			status := "idle"
+			if now.Sub(f.GeneratedAt) > StaleAfter {
+				status = "stale"
+			}
+			return &Usage{Status: status, Windows: []Window{}, Tokens: tokens}, ""
+		}
 		return nil, NoClaude
 	}
-	u := &Usage{UpdatedAt: q.UpdatedAt, Windows: []Window{}}
+	u := &Usage{UpdatedAt: q.UpdatedAt, Windows: []Window{}, Tokens: tokens}
 	switch q.Status {
 	case "ok", "failed":
 		u.Status = q.Status
 	case "signedOut":
 		u.Status = "signed_out"
-	default: // idle, or a status this core doesn't know
-		return nil, NoClaude
+	default: // No quota; local token history can still exist.
+		if tokens == nil {
+			return nil, NoClaude
+		}
+		u.Status = "idle"
 	}
 	// A missing generatedAt can't prove the file fresh, so it reads as stale.
 	if now.Sub(f.GeneratedAt) > StaleAfter {
 		u.Status = "stale"
 	}
-	if u.Status == "signed_out" {
+	if u.Status == "signed_out" || q.Status == "idle" || (q.Status != "ok" && q.Status != "failed" && q.Status != "signedOut") {
 		return u, ""
 	}
 	for _, w := range q.Windows {
@@ -170,7 +210,7 @@ func name(kind, model string) string {
 		return "5h"
 	case "weekly_all":
 		return "Week"
-	case "weekly_scoped":
+	case "weekly_scoped", "codex_scoped":
 		if model != "" {
 			return model
 		}

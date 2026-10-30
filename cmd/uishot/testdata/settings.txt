@@ -12,7 +12,7 @@
 │     compact detail view      [off]   │
 │     terminal pane             [on]   │
 │     diff tool              not set   │
-│     Claude usage     not available   │
+│     Agent usage      not available   │
 │                                      │
 │  esc close  enter change             │
 │                                      │
@@ -39,7 +39,7 @@
            │     compact detail view                                            [off]   │           
            │     terminal pane                                                   [on]   │           
            │     diff tool                                                    not set   │           
-           │     Claude usage                                           not available   │           
+           │     Agent usage                                            not available   │           
            │                                                                            │           
            │  ↑↓ select  enter/←→ change  esc close                                     │           
            │                                                                            │           

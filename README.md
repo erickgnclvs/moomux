@@ -30,7 +30,7 @@ git clone https://github.com/erickgnclvs/moomux && cd moomux && make install
 
 Requires `tmux`, `git`, and `claude` on `$PATH`.
 
-**Claude quota (optional, macOS)**: to see your Claude usage windows, also install [agent-usage](https://github.com/afitzgerald/agent-usage) — see [Claude quota](#claude-quota):
+**Agent usage (optional, macOS)**: to see Claude and Codex usage, also install [agent-usage](https://github.com/afitzgerald/agent-usage) — see [Agent usage](#agent-usage):
 
 ```bash
 brew install afitzgerald/agent-usage/agent-usage
@@ -209,9 +209,9 @@ The session's worktree path is appended as the last argument, and the command is
 
 `client.toml` is separate from `config.toml` on purpose: it holds the settings belonging to the machine you're sitting at rather than to the sessions being orchestrated. A TUI attached to a remote `moomux serve` reads and writes its own copy, so it never configures the server's diff tool.
 
-## Claude quota
+## Agent usage
 
-moomux shows your Claude quota (the 5-hour session, the week, per-model limits) in the TUI header and the Mac and iPhone apps. It reads the file [agent-usage](https://github.com/afitzgerald/agent-usage) writes — a separate tool, installed as above — and never touches a credential. If nothing shows, the settings screen (`s`, the "Claude usage" row) says why and how to fix it.
+moomux shows Claude and Codex quota and local token totals in the TUI header or footer. Token totals cover the available local history (up to 30 days), including cache tokens. Codex quota requires an agent-usage release containing [PR 7](https://github.com/afitzgerald/agent-usage/pull/7); update agent-usage if Codex is missing. It reads the file [agent-usage](https://github.com/afitzgerald/agent-usage) writes — a separate tool, installed as above — and never touches a credential. If nothing shows, the settings screen (`s`, the "Agent usage" row) says why and how to fix it.
 
 `MOOMUX_USAGE_FILE` overrides the file read (default `~/Library/Application Support/AgentUsage/usage.json`). The quota is marked stale after 15 minutes without a write.
 

@@ -207,9 +207,9 @@ describes the machine a person is sitting at, not the sessions being
 orchestrated, and the core has no method for it at all. See the front-end
 split further down.
 
-### `usage`: Claude quota, read from agent-usage
+### `usage` and `codex_usage`: agent usage, read from agent-usage
 
-An optional key: Claude quota windows, read from the `usage.json` that
+Optional keys: `usage` is Claude and `codex_usage` is Codex. Both are read from the `usage.json` that
 [agent-usage](https://github.com/afitzgerald/agent-usage) writes every five
 minutes (`~/Library/Application Support/AgentUsage/usage.json`, or
 `$MOOMUX_USAGE_FILE`). The core only reads that file and never touches a
@@ -228,9 +228,8 @@ credential. `internal/usage` is the whole implementation.
 
 - **Absent means draw nothing.** The key is left out when there is no file,
   the file can't be decoded or has a `schema` other than 3, it has no
-  `"agent": "claude"` entry in `agents` (looked up by key; other agents are
-  ignored), that entry has no `quota` yet, or `quota.status` is `idle` (no
-  Claude credential on the machine) or a value this core doesn't know. That
+  matching agent entry, or that entry has neither local token history nor a
+  known, non-idle quota status. That
   covers everyone not running agent-usage, and it is also what a core too old
   to send the key looks like.
 - **`usage_setup` says why.** A sibling string key, set only when `usage` is
@@ -244,12 +243,12 @@ credential. `internal/usage` is the whole implementation.
   - `"unsupported"`: it decodes but its `schema` isn't one this core reads.
     Fix: update moomux and agent-usage.
   - `"no_claude"`: no `claude` entry, no quota yet, or a status of `idle` or
-    one this core doesn't know. Fix: sign in to Claude Code on this Mac and
+    one this core doesn't know, and no Claude token history. Fix: sign in to Claude Code on this Mac and
     wait ~5 minutes.
 
   Both keys absent means a core too old to send either; treat it like
   `usage` absent with no reason. Old clients ignore `usage_setup`.
-- `status` is `ok`, `failed` (windows are the last good ones), `signed_out`
+- `status` is `idle` (local tokens only), `ok`, `failed` (windows are the last good ones), `signed_out`
   (windows empty) or `stale`. `stale` replaces the file's own status when
   `generatedAt` is more than 15 minutes old, meaning three missed runs and a
   job that has stopped. It is re-evaluated on every snapshot, because a job
@@ -260,12 +259,14 @@ credential. `internal/usage` is the whole implementation.
   file's `percentUsed`); an integer, rounded half-up if the
   file ever carries a fraction, and `level` comes from the rounded value so
   the number and its colour always agree. `name` is the display name (`5h`, `Week`, the
-  model for `weekly_scoped`, or the humanised kind for one this core doesn't
+  model for `weekly_scoped` or `codex_scoped`, or the humanised kind for one this core doesn't
   know, so a new window still gets a row). `headline` marks the ones to show
   inline. `level` (`ok` / `warn` ≥ 80 / `critical` ≥ 95) is the only place the
   thresholds live: clients colour by `level`, never by `percent`.
 
-Countdown strings, spend and token counts are deliberately left out. A
+`codex_usage` uses the same shape as `usage`; it is additive and older clients ignore it. Each agent is looked up by its `agent` key. A weekly window can be the only headline window. An idle or missing quota is omitted unless local token history exists. An optional `tokens` object gives `updated_at`, `window_days`, and summed `input`, `output`, `cache_read`, and `cache_write` counts across local daily history. These are local counts, not subscription quota. Empty history is omitted.
+
+Countdown strings and spend are deliberately left out. A
 countdown changes every minute, so clients format `resets_at` themselves. The
 shape is shared with moomux-mac, whose `docs/usage-contract.md` is the
 cross-repo contract. Change it there first.

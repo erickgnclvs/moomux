@@ -76,6 +76,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			mergedNote = newlyMergedFlash(m.views, msg.Snap.Views, msg.Snap.Sessions)
 			m.views = msg.Snap.Views
 			m.usage = msg.Snap.Usage
+			m.codexUsage = msg.Snap.CodexUsage
 			m.usageSetup = msg.Snap.UsageSetup
 			if u := msg.Snap.UpdateAvailable; u != nil {
 				m.UpdateVersion = u.Latest

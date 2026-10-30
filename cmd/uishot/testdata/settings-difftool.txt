@@ -12,7 +12,7 @@
 │     compact detail view      [off]   │
 │     terminal pane             [on]   │
 │   ▸ diff tool       > diffier        │
-│     Claude usage     not available   │
+│     Agent usage      not available   │
 │                                      │
 │  enter save  esc cancel              │
 │                                      │
@@ -39,7 +39,7 @@
            │     compact detail view                                            [off]   │           
            │     terminal pane                                                   [on]   │           
            │   ▸ diff tool           > diffier                                          │           
-           │     Claude usage                                           not available   │           
+           │     Agent usage                                            not available   │           
            │                                                                            │           
            │  enter save  esc cancel                                                    │           
            │                                                                            │           

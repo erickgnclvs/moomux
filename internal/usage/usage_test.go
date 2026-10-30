@@ -159,3 +159,22 @@ func TestRereadsOnMtime(t *testing.T) {
 }
 
 func first(u *Usage, _ string) *Usage { return u }
+
+func TestCodexAndLocalTokens(t *testing.T) {
+	body := `{"schema":3,"generatedAt":"2026-09-30T19:25:03Z","agents":[{"agent":"claude","quota":{"status":"idle"}},{"agent":"codex","quota":{"status":"ok","windows":[{"kind":"weekly_all","percentUsed":62},{"kind":"codex_scoped","model":"Spark weekly","percentUsed":90}]},"tokens":{"updatedAt":"2026-09-30T19:25:03Z","windowDays":30,"days":[{"usage":{"input":100,"output":20,"cacheRead":50,"cacheWrite":5}}]}}]}`
+	p := filepath.Join(t.TempDir(), "usage.json")
+	if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	r := &Reader{Path: p}
+	if u, _ := r.Read(now); u != nil {
+		t.Fatalf("idle Claude = %+v", u)
+	}
+	u, why := r.ReadAgent(now, "codex")
+	if why != "" || u == nil || len(u.Windows) != 2 || !u.Windows[0].Headline || u.Windows[1].Name != "Spark weekly" || u.Tokens == nil || u.Tokens.Input != 100 || u.Tokens.CacheRead != 50 {
+		t.Fatalf("Codex = %+v, %q", u, why)
+	}
+	if u, _ = r.ReadAgent(now.Add(time.Hour), "codex"); u.Status != "stale" {
+		t.Fatalf("stale = %+v", u)
+	}
+}
