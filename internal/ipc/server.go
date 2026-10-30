@@ -50,6 +50,11 @@ type Server struct {
 	// Optional; without it paths resolve against the worktree.
 	// tmux.Client.ActivePaneCwd satisfies this.
 	PaneCwd func(tmuxSession string) (string, error)
+	// Pair turns the tailnet listener on, if it isn't, and answers what a
+	// phone needs to reach it — Tailnet.Pair, with the config save that
+	// internal/app owns. Served on the unix socket only (see handle).
+	// Optional; without it the method answers that it can't.
+	Pair func() (Pairing, error)
 
 	// subMu guards the fan-out below. Source.Run is started once, on the
 	// first "Watch" client, and every later client is added as a subscriber
@@ -217,6 +222,15 @@ func (s *Server) handle(c net.Conn) {
 	}
 	if req.Method == "Attach" {
 		s.attach(c, attachInput(dec, r), req.Args)
+		return
+	}
+	// Pair opens the core to the tailnet, so it is a decision made at this
+	// machine: a request from the tailnet listener — already the far side
+	// of that door — is refused out loud, never quietly ignored. The
+	// connection's own address family says which listener it came in on;
+	// nothing the client sent is consulted.
+	if req.Method == "Pair" && c.LocalAddr().Network() != "unix" {
+		_ = json.NewEncoder(c).Encode(response{Err: "Pair is served on this computer's local socket only"})
 		return
 	}
 	res, err := s.dispatch(req.Method, req.Args)
@@ -639,6 +653,16 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 	case "GhosttyConfig":
 		g := ghosttyConfig()
 		return Result{Ghostty: &g}, nil
+	case "Pair":
+		if s.Pair == nil {
+			return Result{}, errors.New("server cannot pair")
+		}
+		// Unwrapped: the error is the user-facing sentence itself.
+		p, err := s.Pair()
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Pairing: &p}, nil
 	case "SaveFile":
 		path, err := saveFile(os.TempDir(), a.Name, a.Data)
 		return Result{Path: path}, err

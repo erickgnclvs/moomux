@@ -264,10 +264,11 @@ type Config struct {
 	// TailnetListen, when true, makes `moomux serve` bind a second listener
 	// on this machine's Tailscale address (ipc.TailnetPort) alongside the
 	// unix socket, so a phone on the same tailnet reaches the same core.
-	// Off by default, and deliberately not settable over the wire: turning
-	// it on exposes CreateSession — which runs userscripts and can launch an
+	// Off by default, and never settable from the tailnet: turning it on
+	// exposes CreateSession — which runs userscripts and can launch an
 	// agent with its permission-skipping flag — to the tailnet, so it is a
-	// decision made at the machine, in config.toml, not from a client.
+	// decision made at the machine, in config.toml or by Pair, which is
+	// served on the unix socket only (`moomux pair`, the Mac app).
 	// It also widens *local* access: a connection from this machine to its
 	// own tailnet address whois's as the node owner, so any local account
 	// gets what the socket's 0600 mode gates. Fine for a single-user Mac.

@@ -3,11 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -65,9 +63,13 @@ Usage:
                      While one is running, a plain 'moomux' attaches to it
                      rather than starting a second core, so the TUI and any
                      other front end (the Mac app) show the same thing.
-                     Set tailnet_listen = true in config.toml to also listen
-                     on this machine's Tailscale address, for a client that
-                     can't reach a unix socket (a phone).
+                     With tailnet_listen = true in config.toml it also
+                     listens on this machine's Tailscale address, for a
+                     client that can't reach a unix socket (a phone);
+                     'moomux pair' turns that on.
+  moomux pair       Print a QR code for your iPhone's Camera to connect to
+                     the running core over Tailscale, turning on
+                     tailnet_listen if it isn't. 'moomux pair -h'.
   moomux ui ...     Run the TUI against a 'moomux serve' on a specific
                      socket. Run 'moomux ui -h' for its flags.
   moomux --version  Print the version.
@@ -111,6 +113,15 @@ func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "park" {
 		if err := runPark(); err != nil {
 			fmt.Fprintln(os.Stderr, "moomux:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "pair" {
+		if err := runPair(os.Args[2:]); err != nil {
+			// No "moomux:" prefix: the error is already a whole sentence
+			// for the user, worded once in the core for every front end.
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 		return
@@ -851,22 +862,16 @@ func runServe(args []string) error {
 	// never fatal — no tailscale, a stopped daemon, a logged-out node — the
 	// unix socket is what local clients use either way. It is retried in the
 	// background, though: at login launchd starts this before Tailscale is up.
+	// Off, it can still be turned on in this process, no restart, by a local
+	// front end pairing a phone (`moomux pair`, the Mac app); Pair saves the
+	// flag only once the listener is up. One Tailnet for both, so the port
+	// is bound once.
+	tn := &ipc.Tailnet{Srv: srv}
+	srv.Pair = func() (ipc.Pairing, error) {
+		return tn.Pair(func() (bool, error) { return a.SetTailnetListen(true) })
+	}
 	if a.Cfg.TailnetListen {
-		go func() {
-			tln := ipc.ListenTailnetRetry(ipc.TailnetPort, func(err error) {
-				fmt.Fprintln(os.Stderr, "moomux: no tailnet listener yet, retrying:", err)
-			})
-			fmt.Fprintln(os.Stderr, "moomux: also serving on", tln.Addr())
-			// Serve returning means nothing is accepting on this listener
-			// any more: close it, or the port stays bound and any
-			// connection already past the tailnet auth check sits on its
-			// fd until the process exits.
-			defer tln.Close()
-			// Serve only ever returns a non-nil error.
-			if err := srv.Serve(tln); !errors.Is(err, net.ErrClosed) {
-				slog.Error("tailnet listener stopped", "err", err)
-			}
-		}()
+		tn.Start()
 	}
 	return srv.Serve(ln)
 }

@@ -234,6 +234,21 @@ func (c *Client) ResolveFile(id, path string) (string, error) {
 	return r.Path, err
 }
 
+// Pair asks the core to listen on the tailnet, if it isn't already, and
+// answers what a phone needs to reach it. The core serves it on the unix
+// socket only. Its errors are the core's own user-facing copy, meant to be
+// shown as they are.
+func (c *Client) Pair() (Pairing, error) {
+	r, err := c.call("Pair", Args{})
+	if err != nil {
+		return Pairing{}, err
+	}
+	if r.Pairing == nil {
+		return Pairing{}, errors.New("server returned no pairing")
+	}
+	return *r.Pairing, nil
+}
+
 func (c *Client) Sessions() []session.Session {
 	r, err := c.call("Sessions", Args{})
 	c.mu.Lock()

@@ -1,9 +1,17 @@
 package ipc
 
 import (
+	"errors"
+	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestFindTailscale(t *testing.T) {
@@ -28,5 +36,281 @@ func TestFindTailscale(t *testing.T) {
 	t.Setenv("PATH", dir)
 	if got := findTailscale(nil); got != bin {
 		t.Errorf("PATH first: got %q, want %q", got, bin)
+	}
+}
+
+// fakeTailscale answers the three queries tailnetSelf makes, for a node with
+// the given address, owner login and host name.
+func fakeTailscale(ip, login, host string) func(args ...string) (string, error) {
+	return func(args ...string) (string, error) {
+		switch strings.Join(args, " ") {
+		case "ip -4":
+			return ip + "\n", nil
+		case "whois --json " + ip:
+			return fmt.Sprintf(`{"UserProfile":{"LoginName":%q}}`, login), nil
+		case "status --json":
+			return fmt.Sprintf(`{"BackendState":"Running","Self":{"HostName":%q}}`, host), nil
+		}
+		return "", fmt.Errorf("unexpected tailscale %v", args)
+	}
+}
+
+func TestPairLink(t *testing.T) {
+	got := PairLink("100.71.5.0", "ericks-macbook-pro")
+	want := "moomux://connect?host=100.71.5.0&name=ericks-macbook-pro"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if got := PairLink("100.1.2.3", "Erick's Mac"); strings.Contains(got, "+") || !strings.Contains(got, "Erick%27s%20Mac") {
+		t.Fatalf("space must be %%20, not +: %q", got)
+	}
+}
+
+func TestTailnetSelfWording(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(args ...string) (string, error)
+		want error
+	}{
+		{"no cli", func(...string) (string, error) { return "", exec.ErrNotFound }, errNoTailscale},
+		{"stopped", func(a ...string) (string, error) { return "", errors.New("exit status 1") }, errTailscaleOff},
+		// `ip -4` and whois still answer while the backend is stopped.
+		{"backend stopped", func(a ...string) (string, error) {
+			if strings.Join(a, " ") == "status --json" {
+				return `{"BackendState":"Stopped","Self":{"HostName":"box"}}`, nil
+			}
+			return fakeTailscale("100.1.2.3", "me@example.com", "box")(a...)
+		}, errTailscaleOff},
+		{"tagged", fakeTailscale("100.1.2.3", "tagged-devices", "box"), errTaggedNode},
+	} {
+		old := tailscaleRunFn
+		tailscaleRunFn = tc.run
+		_, err := tailnetSelf()
+		tailscaleRunFn = old
+		if !errors.Is(err, tc.want) {
+			t.Errorf("%s: got %v, want %v", tc.name, err, tc.want)
+		}
+		// The text crosses the wire and is shown verbatim, so no wrapping.
+		if err != tc.want {
+			t.Errorf("%s: error must be returned bare, got %v", tc.name, err)
+		}
+	}
+	old := tailscaleRunFn
+	defer func() { tailscaleRunFn = old }()
+	tailscaleRunFn = fakeTailscale("100.1.2.3", "me@example.com", "ericks-macbook-pro")
+	self, err := tailnetSelf()
+	if err != nil || self != (TailnetSelf{"100.1.2.3", "me@example.com", "ericks-macbook-pro"}) {
+		t.Fatalf("got %+v, %v", self, err)
+	}
+}
+
+// withSelf answers tailnetSelfFn with self and err for the length of the
+// test, and puts pairBindWait back afterwards for the tests that shorten it.
+func withSelf(t *testing.T, self TailnetSelf, err error) {
+	t.Helper()
+	oldSelf, oldWait := tailnetSelfFn, pairBindWait
+	tailnetSelfFn = func() (TailnetSelf, error) { return self, err }
+	t.Cleanup(func() { tailnetSelfFn, pairBindWait = oldSelf, oldWait })
+}
+
+// boundOn is a Tailnet listen func that binds at once: a spare port on ip,
+// admitting owner — a tailnet that is up, without being on one. Bound here
+// rather than inside the func, which runs on Start's goroutine where a
+// t.Fatal can't stop the test.
+func boundOn(t *testing.T, ip, owner string) func(<-chan struct{}, func(error)) net.Listener {
+	t.Helper()
+	inner, err := net.Listen("tcp", ip+":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln := newTailnetListener(inner, owner)
+	t.Cleanup(func() { ln.Close() })
+	return func(<-chan struct{}, func(error)) net.Listener { return ln }
+}
+
+// pairRefused runs Pair on a machine tailnetSelf calls unfit, and fails the
+// test unless Pair says why, saves nothing, and never starts the listener:
+// started, a tag-owned node or one with Tailscale off would sit in the
+// retry loop for the life of the core.
+func pairRefused(t *testing.T, why error) {
+	t.Helper()
+	withSelf(t, TailnetSelf{}, why)
+	bound := boundOn(t, "127.0.0.1", "me@example.com")
+	var listens atomic.Int32
+	tn := &Tailnet{Srv: &Server{}, listen: func(wake <-chan struct{}, onErr func(error)) net.Listener {
+		listens.Add(1)
+		return bound(wake, onErr)
+	}}
+	called := false
+	_, err := tn.Pair(func() (bool, error) { called = true; return true, nil })
+	// listen runs on Start's goroutine. Had Start run, wait for it, so a
+	// zero below means never rather than not yet.
+	if tn.bound != nil {
+		<-tn.bound
+	}
+	if !errors.Is(err, why) || called || listens.Load() != 0 {
+		t.Fatalf("err %v, enable called %v, listen called %d times", err, called, listens.Load())
+	}
+}
+
+func TestPairSavesNothingWhenTailscaleIsOff(t *testing.T) { pairRefused(t, errTailscaleOff) }
+
+func TestPairSavesNothingOnATaggedNode(t *testing.T) { pairRefused(t, errTaggedNode) }
+
+func TestPairTurnsOnOnceAndIsIdempotent(t *testing.T) {
+	withSelf(t, TailnetSelf{"127.0.0.1", "me@example.com", "box"}, nil)
+	tn := &Tailnet{Srv: &Server{}, listen: boundOn(t, "127.0.0.1", "me@example.com")}
+	first, err := tn.Pair(func() (bool, error) { return true, nil })
+	if err != nil || !first.TurnedOn || first.Link != PairLink("127.0.0.1", "box") || first.Owner != "me@example.com" {
+		t.Fatalf("first: %+v %v", first, err)
+	}
+	second, err := tn.Pair(func() (bool, error) { return false, nil })
+	if err != nil || second.TurnedOn {
+		t.Fatalf("second: %+v %v", second, err)
+	}
+}
+
+func TestPairReportsAStaleListener(t *testing.T) {
+	withSelf(t, TailnetSelf{"127.0.0.1", "other@example.com", "box"}, nil)
+	called := false
+	_, err := (&Tailnet{Srv: &Server{}, listen: boundOn(t, "127.0.0.1", "me@example.com")}).
+		Pair(func() (bool, error) { called = true; return false, nil })
+	if !errors.Is(err, errTailnetChanged) || called {
+		t.Fatalf("err %v, enable called %v", err, called)
+	}
+}
+
+// An address that moved under a running listener is as stale as a changed
+// account: the listener is still bound to the old one, which no phone will
+// be told about.
+func TestPairReportsAMovedAddress(t *testing.T) {
+	withSelf(t, TailnetSelf{"127.0.0.2", "me@example.com", "box"}, nil)
+	called := false
+	_, err := (&Tailnet{Srv: &Server{}, listen: boundOn(t, "127.0.0.1", "me@example.com")}).
+		Pair(func() (bool, error) { called = true; return false, nil })
+	if !errors.Is(err, errTailnetChanged) || called {
+		t.Fatalf("err %v, enable called %v", err, called)
+	}
+}
+
+func TestPairGivesUpWhenTheListenerNeverBinds(t *testing.T) {
+	withSelf(t, TailnetSelf{"127.0.0.1", "me@example.com", "box"}, nil)
+	pairBindWait = 50 * time.Millisecond
+	never := func(_ <-chan struct{}, onErr func(error)) net.Listener {
+		onErr(errors.New("address already in use"))
+		select {}
+	}
+	called := false
+	_, err := (&Tailnet{Srv: &Server{}, listen: never}).Pair(func() (bool, error) { called = true; return true, nil })
+	if called {
+		t.Fatal("enable called on a failed Pair")
+	}
+	if err == nil || !strings.Contains(err.Error(), "couldn't listen on Tailscale yet (address already in use)") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// A listener that hasn't failed yet either — a `tailscale` subprocess still
+// inside its timeout — has no bind error to show, so the wait is what's
+// reported instead of an empty "()".
+func TestPairGivesUpWithNoBindErrorHeard(t *testing.T) {
+	withSelf(t, TailnetSelf{"127.0.0.1", "me@example.com", "box"}, nil)
+	pairBindWait = 50 * time.Millisecond
+	silent := func(<-chan struct{}, func(error)) net.Listener { select {} }
+	called := false
+	_, err := (&Tailnet{Srv: &Server{}, listen: silent}).Pair(func() (bool, error) { called = true; return true, nil })
+	const want = "moomux couldn't listen on Tailscale yet (no answer after 50ms). Try again in a moment."
+	if called || err == nil || err.Error() != want {
+		t.Fatalf("err %v, enable called %v; want %q", err, called, want)
+	}
+}
+
+// The reason shown is the latest one heard, not the first: at login the
+// first is Tailscale not up yet, which says nothing once it is.
+func TestPairShowsTheLatestBindError(t *testing.T) {
+	withSelf(t, TailnetSelf{"127.0.0.1", "me@example.com", "box"}, nil)
+	pairBindWait = 50 * time.Millisecond
+	heard := make(chan struct{})
+	tn := &Tailnet{Srv: &Server{}, listen: func(_ <-chan struct{}, onErr func(error)) net.Listener {
+		onErr(errors.New("signal: killed"))
+		onErr(errors.New("address already in use"))
+		close(heard)
+		select {}
+	}}
+	tn.Start() // serve's startup, with the flag on
+	<-heard
+	_, err := tn.Pair(func() (bool, error) { return true, nil })
+	const want = "moomux couldn't listen on Tailscale yet (address already in use). Try again in a moment."
+	if err == nil || err.Error() != want {
+		t.Fatalf("err %v, want %q", err, want)
+	}
+}
+
+// The user's own machine at login: the flag on, Tailscale not up yet, so
+// the retry fails and sleeps — up to a minute, once it has backed off.
+// Tailscale comes back and Pair arrives. Waiting out that sleep would time
+// Pair out on an error from before Tailscale came back, so Pair wakes it.
+func TestPairWakesARetryAsleepInItsBackoff(t *testing.T) {
+	withSelf(t, TailnetSelf{"127.0.0.1", "me@example.com", "box"}, nil)
+	restoreIP, restoreLogin := tailscaleSelfIPFn, tailscaleLoginFn
+	restoreMin, restoreMax := tailnetRetryMin, tailnetRetryMax
+	t.Cleanup(func() {
+		tailscaleSelfIPFn, tailscaleLoginFn = restoreIP, restoreLogin
+		tailnetRetryMin, tailnetRetryMax = restoreMin, restoreMax
+	})
+	tailnetRetryMin, tailnetRetryMax = time.Hour, time.Hour
+	var up atomic.Bool
+	tailscaleSelfIPFn = func() (string, error) {
+		if !up.Load() {
+			return "", errors.New("signal: killed")
+		}
+		return "127.0.0.1", nil
+	}
+	tailscaleLoginFn = func(string) (string, error) { return "me@example.com", nil }
+
+	failed := make(chan struct{})
+	var once sync.Once
+	tn := &Tailnet{Srv: &Server{}, listen: func(wake <-chan struct{}, onErr func(error)) net.Listener {
+		return ListenTailnetRetry(0, wake, func(err error) {
+			onErr(err)
+			once.Do(func() { close(failed) })
+		})
+	}}
+	tn.Start() // serve's startup, with the flag on
+	<-failed
+	up.Store(true)
+	p, err := tn.Pair(func() (bool, error) { return false, nil })
+	if err != nil {
+		t.Fatalf("Pair waited out the backoff: %v", err)
+	}
+	t.Cleanup(func() { tn.ln.Close() })
+	if p.Link != PairLink("127.0.0.1", "box") {
+		t.Fatalf("got %+v", p)
+	}
+}
+
+// Two front ends may pair at once, and a core started with the flag on has
+// already called Start. Every call must get its answer from the one
+// listener: a second bind would fail on the port the first one holds.
+func TestPairConcurrentlyStartsOneListener(t *testing.T) {
+	withSelf(t, TailnetSelf{"127.0.0.1", "me@example.com", "box"}, nil)
+	bound := boundOn(t, "127.0.0.1", "me@example.com")
+	var listens atomic.Int32
+	tn := &Tailnet{Srv: &Server{}, listen: func(wake <-chan struct{}, onErr func(error)) net.Listener {
+		listens.Add(1)
+		return bound(wake, onErr)
+	}}
+	var wg sync.WaitGroup
+	wg.Go(tn.Start)
+	for range 8 {
+		wg.Go(func() {
+			if _, err := tn.Pair(func() (bool, error) { return false, nil }); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+	if n := listens.Load(); n != 1 {
+		t.Fatalf("listen called %d times, want 1", n)
 	}
 }
