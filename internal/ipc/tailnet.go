@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os/exec"
 	"strings"
 	"sync"
@@ -279,7 +280,7 @@ var tailscaleSelfIPFn = tailscaleSelfIP
 // tailscaleSelfIP is this node's own tailnet address — the only thing the
 // listener may bind.
 func tailscaleSelfIP() (string, error) {
-	out, err := tailscaleRun("ip", "-4")
+	out, err := tailscaleRunFn("ip", "-4")
 	if err != nil {
 		return "", err
 	}
@@ -296,7 +297,7 @@ var tailscaleLoginFn = tailscaleLogin
 
 // tailscaleLogin returns the tailnet user that owns the node at addr.
 func tailscaleLogin(addr string) (string, error) {
-	out, err := tailscaleRun("whois", "--json", addr)
+	out, err := tailscaleRunFn("whois", "--json", addr)
 	if err != nil {
 		return "", err
 	}
@@ -312,6 +313,68 @@ func tailscaleLogin(addr string) (string, error) {
 		return "", errors.New("no login name")
 	}
 	return who.UserProfile.LoginName, nil
+}
+
+// The three ways this machine can be unfit to pair with a phone. Their text
+// crosses the wire and both front ends print it verbatim, so it is the whole
+// user-facing message: tailnetSelf returns these bare, never wrapped.
+var (
+	//lint:ignore ST1005 user-facing sentence, shown verbatim
+	errNoTailscale = errors.New("Moomux reaches your iPhone through Tailscale. Install it on this computer and on your iPhone — https://tailscale.com/download — sign in to the same account on both, then try again.")
+	//lint:ignore ST1005 user-facing sentence, shown verbatim
+	errTailscaleOff = errors.New("Tailscale is off on this computer. Open it, sign in, and try again.")
+	//lint:ignore ST1005 user-facing sentence, shown verbatim
+	errTaggedNode = errors.New("This computer is a tagged Tailscale device; moomux needs it signed in as a person.")
+)
+
+// TailnetSelf is what Tailscale says about this machine: the address the
+// listener binds, the person it is signed in as, and its host name.
+type TailnetSelf struct{ IP, Owner, Name string }
+
+// tailnetSelfFn is tailnetSelf, as a variable so a test can answer for a
+// tailnet it isn't on.
+//
+//lint:ignore U1000 the Pair method that calls it lands in the next change
+var tailnetSelfFn = tailnetSelf
+
+// tailnetSelf asks Tailscale about this machine, mapping the failures a user
+// can fix onto the sentinel errors above.
+func tailnetSelf() (TailnetSelf, error) {
+	ip, err := tailscaleSelfIP()
+	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return TailnetSelf{}, errNoTailscale
+		}
+		return TailnetSelf{}, errTailscaleOff
+	}
+	owner, err := tailscaleLogin(ip)
+	if err != nil {
+		return TailnetSelf{}, fmt.Errorf("tailscale whois %s: %w", ip, err)
+	}
+	if !strings.Contains(owner, "@") {
+		return TailnetSelf{}, errTaggedNode
+	}
+	out, err := tailscaleRunFn("status", "--json")
+	if err != nil {
+		return TailnetSelf{}, fmt.Errorf("tailscale status: %w", err)
+	}
+	var st struct {
+		Self struct {
+			HostName string
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &st); err != nil {
+		return TailnetSelf{}, fmt.Errorf("tailscale status: %w", err)
+	}
+	return TailnetSelf{IP: ip, Owner: owner, Name: st.Self.HostName}, nil
+}
+
+// PairLink is the URL the iPhone's Camera opens to add this machine. A space
+// is %20 rather than the + that url.Values would write, which the phone's
+// URL parser would keep literally.
+func PairLink(ip, name string) string {
+	q := url.Values{"host": {ip}, "name": {name}}.Encode()
+	return "moomux://connect?" + strings.ReplaceAll(q, "+", "%20")
 }
 
 // tailscaleCandidates are tried in order when `tailscale` isn't on PATH. The
@@ -338,6 +401,10 @@ func findTailscale(candidates []string) string {
 	}
 	return "tailscale"
 }
+
+// tailscaleRunFn is tailscaleRun, as a variable so a test can answer for a
+// tailnet it isn't on.
+var tailscaleRunFn = tailscaleRun
 
 func tailscaleRun(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tailscaleTimeout)
