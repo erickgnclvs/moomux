@@ -342,7 +342,31 @@ var tailnetSelfFn = tailnetSelf
 
 // tailnetSelf asks Tailscale about this machine, mapping the failures a user
 // can fix onto the sentinel errors above.
+//
+// `status --json` goes first and its BackendState is checked, because
+// `tailscale ip -4` keeps answering with the node's address while Tailscale is
+// stopped — and whois then fails with "peer not found", which would reach the
+// user as a raw exit status instead of "Tailscale is off".
 func tailnetSelf() (TailnetSelf, error) {
+	out, err := tailscaleRunFn("status", "--json")
+	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return TailnetSelf{}, errNoTailscale
+		}
+		return TailnetSelf{}, errTailscaleOff
+	}
+	var st struct {
+		BackendState string
+		Self         struct {
+			HostName string
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &st); err != nil {
+		return TailnetSelf{}, fmt.Errorf("tailscale status: %w", err)
+	}
+	if st.BackendState != "Running" {
+		return TailnetSelf{}, errTailscaleOff
+	}
 	ip, err := tailscaleSelfIP()
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
@@ -356,18 +380,6 @@ func tailnetSelf() (TailnetSelf, error) {
 	}
 	if !strings.Contains(owner, "@") {
 		return TailnetSelf{}, errTaggedNode
-	}
-	out, err := tailscaleRunFn("status", "--json")
-	if err != nil {
-		return TailnetSelf{}, fmt.Errorf("tailscale status: %w", err)
-	}
-	var st struct {
-		Self struct {
-			HostName string
-		}
-	}
-	if err := json.Unmarshal([]byte(out), &st); err != nil {
-		return TailnetSelf{}, fmt.Errorf("tailscale status: %w", err)
 	}
 	return TailnetSelf{IP: ip, Owner: owner, Name: st.Self.HostName}, nil
 }

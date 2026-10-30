@@ -49,7 +49,7 @@ func fakeTailscale(ip, login, host string) func(args ...string) (string, error) 
 		case "whois --json " + ip:
 			return fmt.Sprintf(`{"UserProfile":{"LoginName":%q}}`, login), nil
 		case "status --json":
-			return fmt.Sprintf(`{"Self":{"HostName":%q}}`, host), nil
+			return fmt.Sprintf(`{"BackendState":"Running","Self":{"HostName":%q}}`, host), nil
 		}
 		return "", fmt.Errorf("unexpected tailscale %v", args)
 	}
@@ -74,6 +74,13 @@ func TestTailnetSelfWording(t *testing.T) {
 	}{
 		{"no cli", func(...string) (string, error) { return "", exec.ErrNotFound }, errNoTailscale},
 		{"stopped", func(a ...string) (string, error) { return "", errors.New("exit status 1") }, errTailscaleOff},
+		// `ip -4` and whois still answer while the backend is stopped.
+		{"backend stopped", func(a ...string) (string, error) {
+			if strings.Join(a, " ") == "status --json" {
+				return `{"BackendState":"Stopped","Self":{"HostName":"box"}}`, nil
+			}
+			return fakeTailscale("100.1.2.3", "me@example.com", "box")(a...)
+		}, errTailscaleOff},
 		{"tagged", fakeTailscale("100.1.2.3", "tagged-devices", "box"), errTaggedNode},
 	} {
 		old := tailscaleRunFn
