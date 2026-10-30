@@ -211,7 +211,7 @@ The session's worktree path is appended as the last argument, and the command is
 
 ## Agent usage
 
-moomux shows Claude and Codex quota and local token totals in the TUI header or footer. Token totals cover the available local history (up to 30 days), including cache tokens. Codex quota requires an agent-usage release containing [PR 7](https://github.com/afitzgerald/agent-usage/pull/7); update agent-usage if Codex is missing. It reads the file [agent-usage](https://github.com/afitzgerald/agent-usage) writes — a separate tool, installed as above — and never touches a credential. If nothing shows, the settings screen (`s`, the "Agent usage" row) says why and how to fix it.
+moomux shows Claude and Codex quota in the TUI header or footer. Codex quota requires an agent-usage release containing [PR 7](https://github.com/afitzgerald/agent-usage/pull/7); update agent-usage if Codex is missing. It reads the file [agent-usage](https://github.com/afitzgerald/agent-usage) writes — a separate tool, installed as above — and never touches a credential. If nothing shows, the settings screen (`s`, the "Agent usage" row) says why and how to fix it.
 
 `MOOMUX_USAGE_FILE` overrides the file read (default `~/Library/Application Support/AgentUsage/usage.json`). The quota is marked stale after 15 minutes without a write.
 

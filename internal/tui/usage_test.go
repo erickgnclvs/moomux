@@ -2,6 +2,7 @@ package tui
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -245,12 +246,24 @@ func TestWhatsNewWaitsForTheList(t *testing.T) {
 	}
 }
 
-func TestCodexUsageAndTokens(t *testing.T) {
+func TestCodexUsage(t *testing.T) {
 	m := usageModel(&usage.Usage{Status: "ok", Windows: []usage.Window{{Name: "Week", Percent: 20, Headline: true}}, Tokens: &usage.Tokens{WindowDays: 30, Input: 1000}}, 100)
 	m.codexUsage = &usage.Usage{Status: "ok", Windows: []usage.Window{{Name: "Week", Percent: 62, Headline: true}}, Tokens: &usage.Tokens{WindowDays: 30, Input: 2000}}
-	got := plainUsage(m)
-	if len(got) == 0 || !strings.Contains(got[0], "Claude Week 20%") || !strings.Contains(got[0], "Codex Week 62%") || !strings.Contains(got[0], "30d local 2.0k tokens") {
+	if got := plainUsage(m); got[0] != "Claude Week 20%  │  Codex Week 62%" {
 		t.Fatalf("usage = %q", got)
+	}
+}
+
+// Token totals are served but not drawn: Claude alone with tokens is the
+// same line as without, and tokens with no quota draw nothing.
+func TestUsageIgnoresTokens(t *testing.T) {
+	windows := []usage.Window{{Name: "5h", Percent: 41, ResetsAt: "2026-10-03T12:41:00Z", Level: "ok", Headline: true}}
+	tokens := &usage.Tokens{WindowDays: 30, Input: 5_167_200_000}
+	if got := plainUsage(usageModel(&usage.Usage{Status: "ok", Windows: windows, Tokens: tokens}, 100)); got[0] != "5h 41% ↻41m used" {
+		t.Errorf("usage[0] = %q", got[0])
+	}
+	if got := usageModel(&usage.Usage{Status: "idle", Windows: []usage.Window{}, Tokens: tokens}, 100).usageCandidates(); got != nil {
+		t.Errorf("tokens only = %q, want nothing", got)
 	}
 }
 
@@ -260,6 +273,11 @@ func TestCompactUsageKeepsWarningsAndWindowLabels(t *testing.T) {
 	candidates := plainUsage(m)
 	if !strings.Contains(candidates[0], "Fable 96%") {
 		t.Fatalf("compact candidate hides warning: %q", candidates[0])
+	}
+	// Before the bare fallback, a single-spaced line keeps the styling and
+	// warnings on a ~60-column footer.
+	if !slices.Contains(candidates, "Claude 5h 41% Week 83% Fable 96% │ Codex Week 62%") {
+		t.Errorf("no tight styled candidate: %q", candidates)
 	}
 	last := candidates[len(candidates)-1]
 	if !strings.Contains(last, "Claude 5h41% 7d83%") || !strings.Contains(last, "Codex 7d62%") {
