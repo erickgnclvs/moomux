@@ -40,10 +40,12 @@ throwaway in the scratchpad; only its result lands, below and in the PR body.
    after a timed-out `Pair`, runs unsaved until the next successful `Pair`
    saves and announces it; a restart before then just means it isn't
    listening, the safe direction.
-4. **The bind error shown is the first one** `ListenTailnetRetry` reports
-   (that is its existing contract). Ceiling: after a long retry the error can
-   be old; the retry's backoff caps at a minute, so "try again in a moment"
-   holds.
+4. **The bind error shown is the latest** `ListenTailnetRetry` reports, and
+   `Pair` wakes a retry asleep in its backoff before it waits. This plan first
+   kept the retry's old contract, the first error only; final review moved it,
+   because the user's own machine (flag on, Tailscale stopped at login) would
+   have shown "signal: killed" for up to a minute after Tailscale came back.
+   Only the log stays first-only.
 5. **Verification** is `AGENTS.md`'s, not just `go test`/`go vet`: both suites
    (`go test ./...` and `go test -tags e2e ./e2e/...`, `-race -shuffle=on`),
    `gofmt -l`, `staticcheck`, and `scripts/check_dep_age.sh` for the QR

@@ -78,7 +78,9 @@ handler. Two listeners, one `Server`; `Serve` has always taken a
 - **Failing to bind is never fatal.** No tailscale on the machine, a stopped
   daemon, a logged-out node: serve logs it and carries on with the unix
   socket, which is what local clients use either way. `Pair` is the one
-  place it surfaces, as "couldn't listen on Tailscale yet", with the reason.
+  place it surfaces: it wakes a retry asleep in its backoff, and if that
+  still doesn't bind, says "couldn't listen on Tailscale yet" with the
+  latest reason.
 
 Deliberately not `tsnet`. Becoming a tailnet node of its own is the more
 correct answer — it never touches the host's network stack, so there is no

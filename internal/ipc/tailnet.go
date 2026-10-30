@@ -77,20 +77,24 @@ var tailnetRetryMin, tailnetRetryMax = 2 * time.Second, time.Minute
 // ListenTailnetRetry is ListenTailnet, retried with capped backoff until it
 // succeeds. A launchd-started core comes up at login before Tailscale does,
 // and giving up on the first `tailscale ip` left the phone locked out until
-// someone restarted the service. It blocks, so call it from a goroutine;
-// onFirstErr hears the first failure only, so a node that is never on a
-// tailnet logs once rather than every minute.
-func ListenTailnetRetry(port int, onFirstErr func(error)) net.Listener {
+// someone restarted the service. It blocks, so call it from a goroutine.
+//
+// onErr hears every failure, so a caller can show the latest — by the time
+// anyone asks, the first can be as old as the core — and decide for itself
+// how often to log. A receive on wake retries at once rather than sleeping
+// out the backoff, which by then is a minute; a nil wake never fires.
+func ListenTailnetRetry(port int, wake <-chan struct{}, onErr func(error)) net.Listener {
 	wait := tailnetRetryMin
-	for first := true; ; first = false {
+	for {
 		ln, err := ListenTailnet(port)
 		if err == nil {
 			return ln
 		}
-		if first {
-			onFirstErr(err)
+		onErr(err)
+		select {
+		case <-time.After(wait):
+		case <-wake:
 		}
-		time.Sleep(wait)
 		wait = min(wait*2, tailnetRetryMax)
 	}
 }
@@ -410,19 +414,24 @@ var errTailnetChanged = errors.New("Tailscale changed since moomux started. Rest
 // process.
 type Tailnet struct {
 	Srv *Server
-	// listen binds the listener, blocking until it can; onErr hears why it
-	// can't yet. Nil is ListenTailnetRetry on TailnetPort — a field so a
-	// test can bind loopback rather than a tailnet it isn't on.
-	listen func(onErr func(error)) net.Listener
+	// listen binds the listener, blocking until it can; onErr hears each
+	// reason it can't yet, and a receive on wake is a reason to try again
+	// now. Nil is ListenTailnetRetry on TailnetPort — a field so a test can
+	// bind loopback rather than a tailnet it isn't on.
+	listen func(wake <-chan struct{}, onErr func(error)) net.Listener
 
 	start sync.Once
 	// bound is closed once ln is set. ln is written only before that and
 	// read only after, so the close is all the synchronisation it needs.
 	bound chan struct{}
 	ln    net.Listener
+	// wake cuts a retry's backoff short for Pair. Buffered by one and sent
+	// without blocking: one pending wake is as good as several, and once
+	// the listener is bound nothing reads it.
+	wake chan struct{}
 
-	mu       sync.Mutex
-	firstErr error // the first reason it couldn't bind, for Pair to show
+	mu      sync.Mutex
+	lastErr error // the latest reason it couldn't bind, for Pair to show
 }
 
 // Start binds and serves the tailnet listener in the background, once:
@@ -432,22 +441,28 @@ type Tailnet struct {
 func (t *Tailnet) Start() {
 	t.start.Do(func() {
 		t.bound = make(chan struct{})
+		t.wake = make(chan struct{}, 1)
 		listen := t.listen
 		if listen == nil {
-			listen = func(onErr func(error)) net.Listener { return ListenTailnetRetry(TailnetPort, onErr) }
+			listen = func(wake <-chan struct{}, onErr func(error)) net.Listener {
+				return ListenTailnetRetry(TailnetPort, wake, onErr)
+			}
 		}
 		go t.serve(listen)
 	})
 }
 
-func (t *Tailnet) serve(listen func(onErr func(error)) net.Listener) {
-	ln := listen(func(err error) {
-		fmt.Fprintln(os.Stderr, "moomux: no tailnet listener yet, retrying:", err)
+func (t *Tailnet) serve(listen func(wake <-chan struct{}, onErr func(error)) net.Listener) {
+	ln := listen(t.wake, func(err error) {
 		t.mu.Lock()
-		if t.firstErr == nil {
-			t.firstErr = err
-		}
+		first := t.lastErr == nil
+		t.lastErr = err
 		t.mu.Unlock()
+		// Logged once, so a node that is never on a tailnet says so once
+		// rather than every minute.
+		if first {
+			fmt.Fprintln(os.Stderr, "moomux: no tailnet listener yet, retrying:", err)
+		}
 	})
 	t.ln = ln
 	close(t.bound)
@@ -479,11 +494,18 @@ func (t *Tailnet) Pair(enable func() (bool, error)) (Pairing, error) {
 		return Pairing{}, err
 	}
 	t.Start()
+	// Someone is waiting on this answer. A retry asleep in its backoff —
+	// Tailscale was down at login and has come back since — tries again
+	// now, not after Pair has given up on it.
+	select {
+	case t.wake <- struct{}{}:
+	default:
+	}
 	select {
 	case <-t.bound:
 	case <-time.After(pairBindWait):
 		t.mu.Lock()
-		why := t.firstErr
+		why := t.lastErr
 		t.mu.Unlock()
 		// Nothing heard is a `tailscale` call still inside its timeout:
 		// say how long was waited rather than show an empty "()".

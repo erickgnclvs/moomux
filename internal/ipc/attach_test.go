@@ -650,14 +650,15 @@ func TestListenTailnetRetryOutlastsTailscaleStartingLate(t *testing.T) {
 		tailnetRetryMin, tailnetRetryMax = restoreMin, restoreMax
 	}()
 
-	var logged int
-	ln := ListenTailnetRetry(0, func(error) { logged++ })
+	var heard int
+	ln := ListenTailnetRetry(0, nil, func(error) { heard++ })
 	if fails != 0 {
 		t.Fatalf("returned before tailscale came up (%d failures left)", fails)
 	}
 	defer ln.Close()
-	if logged != 1 {
-		t.Fatalf("logged %d failures, want only the first", logged)
+	// Every one, so a caller can show the latest; logging once is its call.
+	if heard != 3 {
+		t.Fatalf("heard %d failures, want all 3", heard)
 	}
 }
 
