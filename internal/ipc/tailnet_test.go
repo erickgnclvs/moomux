@@ -128,15 +128,34 @@ func boundOn(t *testing.T, ip, owner string) func(onErr func(error)) net.Listene
 	return func(func(error)) net.Listener { return ln }
 }
 
-func TestPairSavesNothingWhenTailscaleIsOff(t *testing.T) {
-	withSelf(t, TailnetSelf{}, errTailscaleOff)
+// pairRefused runs Pair on a machine tailnetSelf calls unfit, and fails the
+// test unless Pair says why, saves nothing, and never starts the listener:
+// started, a tag-owned node or one with Tailscale off would sit in the
+// retry loop for the life of the core.
+func pairRefused(t *testing.T, why error) {
+	t.Helper()
+	withSelf(t, TailnetSelf{}, why)
+	bound := boundOn(t, "127.0.0.1", "me@example.com")
+	var listens atomic.Int32
+	tn := &Tailnet{Srv: &Server{}, listen: func(onErr func(error)) net.Listener {
+		listens.Add(1)
+		return bound(onErr)
+	}}
 	called := false
-	_, err := (&Tailnet{Srv: &Server{}, listen: boundOn(t, "127.0.0.1", "me@example.com")}).
-		Pair(func() (bool, error) { called = true; return true, nil })
-	if !errors.Is(err, errTailscaleOff) || called {
-		t.Fatalf("err %v, enable called %v", err, called)
+	_, err := tn.Pair(func() (bool, error) { called = true; return true, nil })
+	// listen runs on Start's goroutine. Had Start run, wait for it, so a
+	// zero below means never rather than not yet.
+	if tn.bound != nil {
+		<-tn.bound
+	}
+	if !errors.Is(err, why) || called || listens.Load() != 0 {
+		t.Fatalf("err %v, enable called %v, listen called %d times", err, called, listens.Load())
 	}
 }
+
+func TestPairSavesNothingWhenTailscaleIsOff(t *testing.T) { pairRefused(t, errTailscaleOff) }
+
+func TestPairSavesNothingOnATaggedNode(t *testing.T) { pairRefused(t, errTaggedNode) }
 
 func TestPairTurnsOnOnceAndIsIdempotent(t *testing.T) {
 	withSelf(t, TailnetSelf{"127.0.0.1", "me@example.com", "box"}, nil)
