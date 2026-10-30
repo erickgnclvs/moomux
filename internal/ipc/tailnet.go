@@ -33,9 +33,10 @@ var tailscaleTimeout = 5 * time.Second
 // It binds the tailnet address specifically and never 0.0.0.0: this wire
 // carries CreateSession, which runs the worktree-create userscripts and can
 // launch an agent with its permission-skipping flag. WireGuard gives
-// encryption and machine identity, so there is no TLS and no pairing flow to
-// design — but it does not give *authorization*, since every node on the
-// tailnet can reach the bind. That is what the whois check below is for.
+// encryption and machine identity, so there is no TLS and no credential for
+// pairing to hand out — but it does not give *authorization*, since every
+// node on the tailnet can reach the bind. That is what the whois check below
+// is for.
 //
 // Deliberately not tsnet. Becoming a tailnet node of its own is the more
 // correct answer — it never touches the host's network stack, so there is no

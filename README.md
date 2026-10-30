@@ -91,6 +91,26 @@ Tmux pane layout and zoom state belong to the shared window, not to an
 individual client. If a phone and desktop are attached to the same session,
 zooming or resizing from either device can affect what the other displays.
 
+### Pairing an iPhone
+
+The moomux iPhone app talks to the same core as the TUI, over
+[Tailscale](https://tailscale.com/download). Sign in to the same Tailscale
+account on the computer and the iPhone, then run this on the computer and
+scan the code with the iPhone's Camera:
+
+```bash
+moomux pair
+```
+
+It needs a running core (`brew services start moomux`, or `moomux serve`),
+and tells you in one line what's missing if anything is. The first pair
+turns on `tailnet_listen` in `config.toml`, so the core also listens on this
+computer's Tailscale address — for devices signed in to Tailscale as you,
+and nobody else on the tailnet — and says so when it does. Pairing again, or
+pairing a second phone, changes nothing. To close it again, remove
+`tailnet_listen` from `~/.config/moomux/config.toml` and
+`brew services restart moomux`.
+
 ## Recommended tmux config
 
 moomux launches plain tmux sessions, so tmux settings come from your own config. The first time you run `moomux`, it offers to add the block below to `~/.tmux.conf` for you (only asked once — say no and it won't ask again). To add it yourself instead:

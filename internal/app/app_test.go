@@ -2312,6 +2312,66 @@ func TestSetSortRecentFirst(t *testing.T) {
 	}
 }
 
+// TestSetTailnetListenReportsChange guards what Pair announces: only the
+// call that actually turned the listener on says so.
+func TestSetTailnetListenReportsChange(t *testing.T) {
+	a, _, _ := newTestApp(t, map[string]config.Project{
+		"demo": {Kind: "git", Repo: t.TempDir(), Agent: "claude"},
+	})
+
+	changed, err := a.SetTailnetListen(true)
+	if err != nil || !changed {
+		t.Fatalf("first SetTailnetListen(true) = (%v, %v), want (true, nil)", changed, err)
+	}
+	loaded, err := config.Load(a.CfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.TailnetListen {
+		t.Fatal("TailnetListen not persisted")
+	}
+
+	changed, err = a.SetTailnetListen(true)
+	if err != nil || changed {
+		t.Fatalf("second SetTailnetListen(true) = (%v, %v), want (false, nil)", changed, err)
+	}
+}
+
+// TestSetTailnetListenReportsChangeOnceUnderConcurrency: two front ends
+// pairing at the same moment must not both say they opened the tailnet —
+// the before and after are read under one hold of cfgMu.
+func TestSetTailnetListenReportsChangeOnceUnderConcurrency(t *testing.T) {
+	a, _, _ := newTestApp(t, map[string]config.Project{
+		"demo": {Kind: "git", Repo: t.TempDir(), Agent: "claude"},
+	})
+
+	const n = 8
+	results := make(chan bool, n)
+	var wg sync.WaitGroup
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			changed, err := a.SetTailnetListen(true)
+			if err != nil {
+				t.Error(err)
+			}
+			results <- changed
+		}()
+	}
+	wg.Wait()
+	close(results)
+	turnedOn := 0
+	for changed := range results {
+		if changed {
+			turnedOn++
+		}
+	}
+	if turnedOn != 1 {
+		t.Fatalf("%d calls reported turning the listener on, want exactly 1", turnedOn)
+	}
+}
+
 func TestSetAutoTmux(t *testing.T) {
 	a, _, _ := newTestApp(t, map[string]config.Project{
 		"demo": {Kind: "git", Repo: t.TempDir(), Agent: "claude"},

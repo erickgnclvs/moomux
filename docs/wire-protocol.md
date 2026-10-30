@@ -49,24 +49,36 @@ A phone cannot dial a unix socket. So `moomux serve` optionally binds a
 handler. Two listeners, one `Server`; `Serve` has always taken a
 `net.Listener`.
 
-- **Off by default**, behind `tailnet_listen` in `config.toml`. Deliberately
-  not settable over the wire: turning it on exposes the create path to the
-  tailnet, so it is a decision made at the machine, not from a client.
+- **Off by default**, behind `tailnet_listen` in `config.toml`. Turning it
+  on exposes the create path to the tailnet, so it is a decision made at the
+  machine: by hand in `config.toml`, or by `Pair` — `moomux pair`, or the
+  Mac app's Pair iPhone… — which is served on the unix socket only. A
+  `Pair` that arrives over the tailnet listener is refused out loud: it is
+  already the far side of the door `Pair` opens.
+- **`Pair` turns it on in the running core**, no restart, and saves the
+  flag last: only once Tailscale has been asked live (installed, on, signed
+  in as a person), the listener is up, and it is still bound to the address
+  and owner Tailscale reports now. So a failed `Pair` saves nothing — no
+  core quietly opening on the tailnet at its next start. A listener that
+  binds after a `Pair` gave up waiting runs unsaved until the next `Pair`
+  succeeds.
 - **Never `0.0.0.0`.** It binds the tailnet address specifically, on
   `ipc.TailnetPort`.
 - **Authorization is `tailscale whois`.** WireGuard already gives encryption
-  and machine identity, so there is no TLS, no pairing flow and no token
-  store to design — but every node on the tailnet can reach the bind, which
-  is not the same as being allowed to. Each accepted connection's peer
-  address (from the socket, not from anything the peer said) is resolved to a
-  tailnet user and matched against this node's own; anything else is closed.
-  Authorized peers are cached for a minute, because the protocol is
-  connection-per-call and the check is a subprocess. It runs per connection
-  off the accept path, never inside `Accept`: inline, one wedged
-  `tailscaled` would stall every other connection behind it.
+  and machine identity, so there is no TLS and no token store to design, and
+  pairing hands the phone an address, not a credential — but every node on
+  the tailnet can reach the bind, which is not the same as being allowed to.
+  Each accepted connection's peer address (from the socket, not from
+  anything the peer said) is resolved to a tailnet user and matched against
+  this node's own; anything else is closed. Authorized peers are cached for
+  a minute, because the protocol is connection-per-call and the check is a
+  subprocess. It runs per connection off the accept path, never inside
+  `Accept`: inline, one wedged `tailscaled` would stall every other
+  connection behind it.
 - **Failing to bind is never fatal.** No tailscale on the machine, a stopped
   daemon, a logged-out node: serve logs it and carries on with the unix
-  socket, which is what local clients use either way.
+  socket, which is what local clients use either way. `Pair` is the one
+  place it surfaces, as "couldn't listen on Tailscale yet", with the reason.
 
 Deliberately not `tsnet`. Becoming a tailnet node of its own is the more
 correct answer — it never touches the host's network stack, so there is no
@@ -81,7 +93,7 @@ is the most important thing to understand about the protocol.
 
 **Pull — one request, one response, connection closes.** Used for the things
 a person *does*: create a session, rename one, add a project, change the
-theme. 36 methods, dispatched by name.
+theme. 49 methods, dispatched by name.
 
 **Push — the `Watch` stream.** Used for the things that *are true right now*:
 what every session is doing, what its worktree looks like, what order to show
@@ -369,7 +381,7 @@ anything.
 ```
 
 `Args` and `Result` are unions — each method fills the subset it needs. One
-union each beats 36 pairs of structs at this size; split them if the surface
+union each beats 49 pairs of structs at this size; split them if the surface
 doubles, or if two methods ever want the same field to mean different things.
 
 One quirk to know before writing a decoder: **`args.req` is the only part of
@@ -981,6 +993,22 @@ Every config-mutating method returns the **post-mutation config snapshot** in
 its own response, so a settings change costs one round trip rather than two.
 Session mutators do the same with the updated session.
 
+**Pairing** — `Pair`, **on the unix socket only**: over the tailnet listener
+it is refused before dispatch (see "Where the core listens" above). It takes
+no args, turns the tailnet listener on if it isn't, and answers `pairing`:
+`link` (the `moomux://connect?host=…&name=…` URL an iPhone's Camera opens),
+`name` (this machine's Tailscale host name), `owner` (the Tailscale login a
+phone must be signed in as), and `turned_on`, present and true only on the
+call that turned the listener on — the one after which a front end says who
+can now reach this computer. Pairing again, or a second phone, changes
+nothing. Its errors are whole sentences for the user — no Tailscale,
+Tailscale off, a tagged node, Tailscale changed since the core started, the
+listener not up yet — worded once, in the core, and shown verbatim by
+`moomux pair` and the Mac app. It runs `tailscale` three times, 5s timeout
+each, and may wait 5s more for the bind, so a client's deadline should allow
+over 20s. It returns no config: the `tailnet_listen` it saves reaches
+clients on the next snapshot's `cfg`.
+
 ### `CreateSession` is a transaction, not a call
 
 It takes one `session.CreateRequest` and the core runs the whole sequence:
@@ -1114,6 +1142,7 @@ nil. What changed:
 | a phone could read a changed file only as it is now | `ReadBaseFile` — `args.id` / `path` / `commit` in, `result.ok` / `data` / `commit` out; additive |
 | `tmux attach` via libghostty's `.exec` backend | `Attach` — the connection becomes the pty; there is no local process |
 | the unix socket was the only listener | plus an optional tailnet listener, `tailnet_listen` in `config.toml` |
+| `tailnet_listen` could only be turned on by hand, then a restart | `Pair` (unix socket only) turns it on in the running core and answers `pairing`; additive |
 
 A version handshake would be cheap insurance against the next one; there
 isn't one today.

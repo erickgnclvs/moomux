@@ -2374,6 +2374,27 @@ func (a *App) SetSortRecentFirst(recentFirst bool) error {
 	return nil
 }
 
+// SetTailnetListen persists tailnet_listen, following the same reload ->
+// mutate -> save idiom as SetSortRecentFirst, and reports whether this call
+// is what changed it. Pair announces the moment this machine opened to the
+// tailnet on that answer, so it is read from the reloaded file under the
+// same hold of cfgMu as the save: two front ends pairing at once can't both
+// say they turned it on.
+func (a *App) SetTailnetListen(on bool) (changed bool, err error) {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
+		return false, fmt.Errorf("reload config: %w", err)
+	}
+	prev := a.Cfg.TailnetListen
+	a.Cfg.TailnetListen = on
+	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
+		a.Cfg.TailnetListen = prev
+		return false, fmt.Errorf("save config: %w", err)
+	}
+	return prev != on, nil
+}
+
 // SetCompactDetail persists whether the detail panel trims itself to the
 // fields most useful at a glance, following the same reload -> mutate ->
 // save idiom as SetSortRecentFirst.
