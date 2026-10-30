@@ -86,7 +86,7 @@ func TestPrintPairingLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "\x1b[0m\n\n" + p.Link + "\n" +
-		"Scan with your iPhone's Camera. On the iPhone, sign in to Tailscale as me@example.com.\n"
+		"Scan it with the Moomux app on your iPhone. On the iPhone, sign in to Tailscale as me@example.com.\n"
 	if !strings.HasSuffix(b.String(), want) {
 		t.Fatalf("tail of output:\n%q\nwant suffix:\n%q", b.String(), want)
 	}

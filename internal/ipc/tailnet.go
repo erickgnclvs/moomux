@@ -388,7 +388,7 @@ func tailnetSelf() (TailnetSelf, error) {
 	return TailnetSelf{IP: ip, Owner: owner, Name: st.Self.HostName}, nil
 }
 
-// PairLink is the URL the iPhone's Camera opens to add this machine. A space
+// PairLink is the URL the iPhone scans to add this machine. A space
 // is %20 rather than the + that url.Values would write, which the phone's
 // URL parser would keep literally.
 func PairLink(ip, name string) string {

@@ -163,7 +163,7 @@ type Result struct {
 }
 
 // Pairing is what a phone needs to reach this core over the tailnet: the
-// link its Camera opens, the machine it names, and the tailnet login it
+// link it scans, the machine it names, and the tailnet login it
 // must be signed in as to be admitted.
 type Pairing struct {
 	Link  string `json:"link"`
