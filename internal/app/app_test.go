@@ -2313,7 +2313,7 @@ func TestSetSortRecentFirst(t *testing.T) {
 }
 
 // TestSetTailnetListenReportsChange guards what Pair announces: only the
-// call that actually turned the listener on says so.
+// call that actually turned the flag on says so.
 func TestSetTailnetListenReportsChange(t *testing.T) {
 	a, _, _ := newTestApp(t, map[string]config.Project{
 		"demo": {Kind: "git", Repo: t.TempDir(), Agent: "claude"},

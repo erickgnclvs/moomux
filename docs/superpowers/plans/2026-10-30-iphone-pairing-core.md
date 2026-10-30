@@ -58,4 +58,12 @@ test also asserts `enable` was never called.
 
 ## A0 result
 
-_Filled in after the spike: library, quiet zone, how it was scanned._
+rsc.io/qr v0.2.0, error correction M, quiet zone 2 modules,
+black-on-bright-white (`\x1b[30;107m`). Checked by (a) decoding the rendered
+half-block text back to the link with CoreImage's CIDetector, including a
+`%27`/`%20`-escaped name, and (b) a real iPhone Camera reading it in a dark
+terminal theme ("No usable data found" — the code read, no app registered
+for moomux:// yet); (c) the real-tailnet `moomux pair` output decoded to the exact link, whose
+machine name needed `%20`, `%28` and `%29`.
+Light theme not separately scanned: colours are explicit, so the code itself
+is identical.

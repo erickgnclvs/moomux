@@ -169,9 +169,9 @@ type Pairing struct {
 	Link  string `json:"link"`
 	Name  string `json:"name"`
 	Owner string `json:"owner"`
-	// TurnedOn is whether this call is what turned the tailnet listener
-	// on. Only then does a front end say who can now reach the core;
-	// pairing a second phone changes nothing, so it says nothing.
+	// TurnedOn is whether this call saved tailnet_listen: it was off in
+	// config.toml before. Only then does a front end say who can now reach
+	// the core; pairing a second phone changes nothing, so it says nothing.
 	TurnedOn bool `json:"turned_on,omitempty"`
 }
 

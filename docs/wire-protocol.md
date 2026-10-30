@@ -1001,18 +1001,20 @@ no args, turns the tailnet listener on if it isn't, and answers `pairing`:
 `link` (the `moomux://connect?host=…&name=…` URL an iPhone's Camera opens),
 `name` (this machine's Tailscale host name), `owner` (the Tailscale login a
 phone must be signed in as), and `turned_on`, present and true only on the
-call that turned the listener on — the one after which a front end says who
-can now reach this computer. Pairing again, or a second phone, changes
-nothing. Its errors are whole sentences for the user — no Tailscale,
-Tailscale off, a tagged node, Tailscale changed since the core started, the
-listener not up yet — worded once, in the core, and shown verbatim by
-`moomux pair` and the Mac app. It runs `tailscale` three times, 5s timeout
-each, and may wait 5s more for the bind, so a client's deadline should allow
-over 20s. It returns no config: the `tailnet_listen` it saves reaches
-clients on the next snapshot's `cfg`. Cores older than this method answer
-`unknown method` — a `brew upgrade` whose service wasn't restarted — and
-can't word that themselves, so each front end does: `moomux pair` says "The
-running moomux core is older than this command. Restart it
+call that saved `tailnet_listen` (it was off in `config.toml` before this
+call) — the one after which a front end says who can now reach this
+computer. That is not necessarily the call that started the listener.
+Pairing again, or a second phone, changes nothing. The contract's errors —
+no Tailscale, Tailscale off, a tagged node, Tailscale changed since the
+core started, the listener not up yet — are whole sentences, worded once,
+in the core, and meant to be shown verbatim by `moomux pair` and the Mac
+app; anything else is a diagnostic. It runs `tailscale` three times, 5s
+timeout each, and may wait 5s more for the bind, so a client's deadline
+should allow over 20s. It returns no config: the `tailnet_listen` it saves
+reaches clients on the next snapshot's `cfg`. Cores older than this method
+answer `unknown method` — a `brew upgrade` whose service wasn't restarted —
+and can't word that themselves, so each front end does: `moomux pair` says
+"The running moomux core is older than this command. Restart it
 (`brew services restart moomux`), then try again.", and the Mac app says
 "This moomux core is too old to pair — upgrade it."
 

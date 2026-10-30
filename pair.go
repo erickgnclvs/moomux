@@ -14,7 +14,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/ipc"
 )
 
-// errNoCore is the one failure the core can't word for `moomux pair`,
+// errNoCore is one failure the core can't word for `moomux pair`,
 // because there is no core to ask. The Mac app shows "Not connected" for the
 // same thing, so this copy is the CLI's own.
 //
@@ -60,7 +60,7 @@ func runPair(args []string) error {
 // printPairing prints the QR code, then the link as text on a line of its
 // own — it works tapped from Messages or Notes too, for when a camera isn't
 // handy — then who the phone has to be signed in as, and, only when this
-// call opened the listener, who can now reach it.
+// call saved tailnet_listen, who can now reach it.
 func printPairing(w io.Writer, p ipc.Pairing) error {
 	code, err := qr.Encode(p.Link, qr.M)
 	if err != nil {
@@ -77,9 +77,13 @@ func printPairing(w io.Writer, p ipc.Pairing) error {
 
 // qrQuietZone is the white border, in modules, on each side of the code.
 // The QR spec asks for 4; 2 keeps the code a few rows shorter in a
-// terminal, and is what was checked: a code rendered this way decoded back
-// to the exact link through Apple's CIDetector. A real iPhone Camera scan
-// hasn't confirmed it yet — if one fails, 4 is the first thing to try.
+// terminal, and is what was checked. A real iPhone Camera read a qr.M code
+// rendered this way in a dark terminal theme ("No usable data found": it
+// read the code, and no app handles moomux:// yet); the rendered text
+// decodes back to the exact link through Apple's CIDetector; and on
+// 2026-10-30 `moomux pair` against the real tailnet printed a code that
+// decoded to the exact link. If a scan ever fails, 4 is the first thing to
+// try.
 const qrQuietZone = 2
 
 // renderQR draws a size×size code with half blocks, two module rows per
