@@ -21,7 +21,7 @@
  ? help  Claude 5h41% 7d83% Codex 7d62% 
 === 100x32 ===
    ^__^                                                                                             
-   (--)\_                Claude 5h 41% ↻2h41m  Week 83%  Fable 96% ↻6d used  ·  Codex Week 62% used 
+   (--)\_                          Claude 5h 41% ↻2h41m  Week 83%  Fable 96% ↻6d  │  Codex Week 62% 
    (__)\ )                                                                                          
 ┌──────────────────────────────────────────┐┌──────────────────────────────────────────────────────┐
 │ SESSIONS¹                                ││                                                      │
