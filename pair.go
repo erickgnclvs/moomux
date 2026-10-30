@@ -30,8 +30,8 @@ var errNoCore = errors.New("No moomux core is running. Start it (`brew services 
 var errOldCore = errors.New("The running moomux core is older than this command. Restart it (`brew services restart moomux`), then try again.")
 
 // runPair implements `moomux pair`: ask the running core to listen on the
-// tailnet, if it isn't already, and print the QR code an iPhone's Camera
-// scans to reach it. Every check — Tailscale installed, on, signed in as a
+// tailnet, if it isn't already, and print the QR code the iPhone scans to
+// reach it. Every check — Tailscale installed, on, signed in as a
 // person, the listener up — is the core's, and so is the wording; the
 // errors it returns are whole sentences, which main prints unprefixed.
 func runPair(args []string) error {
@@ -67,7 +67,7 @@ func printPairing(w io.Writer, p ipc.Pairing) error {
 		return err
 	}
 	renderQR(w, code.Size, code.Black)
-	_, err = fmt.Fprintf(w, "\n%s\nScan with your iPhone's Camera. On the iPhone, sign in to Tailscale as %s.\n", p.Link, p.Owner)
+	_, err = fmt.Fprintf(w, "\n%s\nScan it with the Moomux app on your iPhone. On the iPhone, sign in to Tailscale as %s.\n", p.Link, p.Owner)
 	if err != nil || !p.TurnedOn {
 		return err
 	}

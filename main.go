@@ -67,7 +67,7 @@ Usage:
                      listens on this machine's Tailscale address, for a
                      client that can't reach a unix socket (a phone);
                      'moomux pair' turns that on.
-  moomux pair       Print a QR code for your iPhone's Camera to connect to
+  moomux pair       Print a QR code for the Moomux iPhone app to connect to
                      the running core over Tailscale, turning on
                      tailnet_listen if it isn't. 'moomux pair -h'.
   moomux ui ...     Run the TUI against a 'moomux serve' on a specific

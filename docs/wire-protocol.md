@@ -998,7 +998,7 @@ Session mutators do the same with the updated session.
 **Pairing** — `Pair`, **on the unix socket only**: over the tailnet listener
 it is refused before dispatch (see "Where the core listens" above). It takes
 no args, turns the tailnet listener on if it isn't, and answers `pairing`:
-`link` (the `moomux://connect?host=…&name=…` URL an iPhone's Camera opens),
+`link` (the `moomux://connect?host=…&name=…` URL the iPhone scans),
 `name` (this machine's Tailscale host name), `owner` (the Tailscale login a
 phone must be signed in as), and `turned_on`, present and true only on the
 call that saved `tailnet_listen` (it was off in `config.toml` before this

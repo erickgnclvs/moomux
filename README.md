@@ -96,7 +96,8 @@ zooming or resizing from either device can affect what the other displays.
 The moomux iPhone app talks to the same core as the TUI, over
 [Tailscale](https://tailscale.com/download). Sign in to the same Tailscale
 account on the computer and the iPhone, then run this on the computer and
-scan the code with the iPhone's Camera:
+scan the code with the Moomux app on the iPhone (the iPhone's Camera
+works too):
 
 ```bash
 moomux pair
