@@ -578,13 +578,20 @@ by name, so the two always agree. It is there for `ReadBaseFile` below: pass
 it back and the "before" side is read from the same commit, even if the base
 branch has moved since.
 
-**What `uncommitted` says.** The patch's paths (the `b/` side, so a rename's
-new name) that differ from `HEAD`: staged, unstaged or untracked. Every other
+**What `uncommitted` says.** The paths that differ from `HEAD`: staged,
+unstaged or untracked, with both the old and the new name of a move. A file
+in the patch whose `a/` or `b/` path is listed has local work; every other
 file in the patch is committed on the branch. A worktree whose only changes
 are its commits — an open PR, pushed, nothing local — sends a full patch and
 no `uncommitted` at all. A client must not call that patch "local changes";
 it tells the two apart by this list, never by `patch` alone. In the `HEAD`
 fallback every file is in it.
+
+Match the list against the patch; don't count it. It can name a path the
+patch has no section for: one cut by the cap, or a committed edit reverted
+to the base. It is taken just after the patch, so an edit landing between
+the two can put a file in the list whose hunk predates it — over-marked as
+local, never local work passed off as committed.
 
 **Untracked files never touch the agent's index.** They are marked
 intent-to-add (`git add -N`) in a throwaway copy of the worktree's index

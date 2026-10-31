@@ -323,8 +323,8 @@ func TestDiffShowsRenamesUncommittedAndUntrackedWork(t *testing.T) {
 		}
 	}
 	// The committed rename is in the patch but not uncommitted; the plain
-	// mv is named as the file it became.
-	if want := []string{"café.txt", "edited.txt", "moved-unstaged.txt"}; !slices.Equal(p.Uncommitted, want) {
+	// mv is named on both sides.
+	if want := []string{"café.txt", "edited.txt", "moved-unstaged.txt", "moved.txt"}; !slices.Equal(p.Uncommitted, want) {
 		t.Errorf("Uncommitted = %q, want %q", p.Uncommitted, want)
 	}
 	for _, not := range []string{"debug.log", "nested"} {
@@ -440,6 +440,46 @@ func TestDiffOfACleanBranchHasNoUncommittedFiles(t *testing.T) {
 	}
 	if len(p.Uncommitted) != 0 {
 		t.Fatalf("a clean worktree has uncommitted %q", p.Uncommitted)
+	}
+}
+
+// A file rewritten in a commit and then moved locally: against HEAD that
+// is a rename, against the merge base a delete and an add. The delete is
+// local work too, so the old name has to be listed, not just the new one.
+func TestDiffListsBothNamesOfAnUncommittedMove(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "wt")
+	git := func(in string, args ...string) {
+		t.Helper()
+		args = append([]string{"-c", "user.name=moomux", "-c", "user.email=moomux@localhost"}, args...)
+		if out, err := ExecRunner().Run(in, args...); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+	}
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "x.txt"), []byte(strings.Repeat("base\n", 20)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(root, "init", "-b", "main")
+	git(root, "add", "x.txt")
+	git(root, "commit", "-m", "init")
+	git(root, "worktree", "add", "-b", "feat", dir)
+	write("x.txt", strings.Repeat("rewritten on the branch\n", 20))
+	git(dir, "commit", "-am", "rewrite")
+	if err := os.Rename(filepath.Join(dir, "x.txt"), filepath.Join(dir, "y.txt")); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Diff(dir, "main", 1<<20)
+	if err != nil || !strings.Contains(p.Text, "deleted file mode") {
+		t.Fatalf("want x.txt deleted in the patch (err %v):\n%s", err, p.Text)
+	}
+	if want := []string{"x.txt", "y.txt"}; !slices.Equal(p.Uncommitted, want) {
+		t.Fatalf("Uncommitted = %q, want %q", p.Uncommitted, want)
 	}
 }
 
