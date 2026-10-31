@@ -478,18 +478,16 @@ func (w *Watcher) build() (Snapshot, map[string]watcher.State) {
 	live := make(map[string]bool, len(sessions))
 	changedTitles := map[string]watcher.State{}
 
-	// Pinned sessions first, then live before parked within each, every
-	// group keeping the order Sessions() gave it: the input is already in
-	// base order, so this is just a stable partition.
+	// Pinned sessions first, each group keeping the order Sessions() gave
+	// it: the input is already in base order, so this is just a stable
+	// partition. Liveness plays no part: a parked session sat below every
+	// live one regardless of its stored order, so dragging it among live
+	// sessions persisted the move but drew it straight back to the bottom.
 	rank := func(s session.Session) int {
-		r := 0
-		if !s.Pinned {
-			r += 2
+		if s.Pinned {
+			return 0
 		}
-		if w.stateOf(s) == watcher.Parked {
-			r++
-		}
-		return r
+		return 1
 	}
 	ordered := slices.Clone(sessions)
 	slices.SortStableFunc(ordered, func(a, b session.Session) int { return rank(a) - rank(b) })

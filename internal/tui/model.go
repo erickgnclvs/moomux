@@ -980,7 +980,7 @@ func (m *Model) allSessions() []session.Session {
 
 // inLastServedOrder puts a backend read back into the order the core last
 // served, appending anything it hasn't seen yet. The backend answers in
-// store order, without the live-first grouping the core owns — so rendering
+// store order, without the pinned-first grouping the core owns — so rendering
 // it raw made every mutation visibly re-shuffle the list for one round trip
 // and then snap back when the nudged snapshot landed. Reordering to a
 // remembered answer is not the same as re-deriving the rule: sessions the
@@ -1262,12 +1262,12 @@ func (m *Model) focusSession(id string) bool {
 // actually fires (before the mutation's own async result arrives), and thread
 // the result through the resulting message (SessionDeletedMsg.NextID /
 // SessionArchivedMsg.NextID) rather than recomputing it once that message
-// lands: killing a session's tmux pane can flip its tmux-alive state, which
-// resorts the live list on its own, independently of the deletion itself.
+// lands: a snapshot can resort the list before it does (another front end
+// reorders or pins), independently of the deletion itself.
 // refreshSessions' own selectedID-preserving logic can't anchor through that
 // resort because the previously-selected session is the one disappearing —
 // so without pinning the neighbor up front, the cursor can visibly hop twice
-// for one delete: once from the tmux-alive resort, once from the list
+// for one delete: once from the resort, once from the list
 // shrinking.
 func (m *Model) neighborSessionID() string {
 	if m.cursor < 0 || m.cursor >= len(m.sessions) {

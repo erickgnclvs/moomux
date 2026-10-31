@@ -76,8 +76,8 @@ type SessionCreatedMsg struct {
 // SessionDeletedMsg is the result of an async delete. NextID is whichever
 // session should take over the selection (the row below ID's, or above if it
 // was last), pinned from m.sessions at the moment the delete was confirmed —
-// before this arrives, killing ID's tmux pane can flip its tmux-alive state
-// and resort the list on its own, so recomputing "the neighbor" only once
+// before this arrives, a snapshot can resort the list on its own (another
+// front end reorders or pins), so recomputing "the neighbor" only once
 // this message lands would inherit that resort instead of the order the user
 // actually saw when they confirmed the delete.
 type SessionDeletedMsg struct {

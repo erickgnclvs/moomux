@@ -431,6 +431,21 @@ func TestAllIsDeterministicWhenOrderAndCreatedAtTie(t *testing.T) {
 	}
 }
 
+// TestSortByRecentPutsNewUnopenedSessionFirst: a session spawned without a
+// terminal has no LastOpened. It used to sort below every session ever
+// opened, hidden only while a live-tmux float lifted it back to the top.
+func TestSortByRecentPutsNewUnopenedSessionFirst(t *testing.T) {
+	t0 := time.Now()
+	sessions := []Session{
+		{ID: "opened", CreatedAt: t0.Add(-2 * time.Hour), LastOpened: t0.Add(-time.Hour)},
+		{ID: "spawned", CreatedAt: t0},
+	}
+	SortByRecent(sessions)
+	if sessions[0].ID != "spawned" {
+		t.Fatalf("order = %v, want spawned first", ids(sessions))
+	}
+}
+
 func TestSortByRecentIsDeterministicWhenEveryFieldTies(t *testing.T) {
 	created := time.Date(2026, 5, 17, 10, 0, 0, 0, time.UTC)
 	var want []string

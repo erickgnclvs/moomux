@@ -186,7 +186,7 @@ TUI replaces its whole view map on every tick rather than merging.
 | `prompt` | Parse Claude's JSONL, codex's sqlite, and opencode's sqlite — then fall back to the stored prompt |
 | `git_ok`/`dirty`/`unpushed` | Run `git status` and `rev-list` per session, on its own staleness schedule |
 | `pr` | Run `gh pr view` per session, network-bound and rate-limited |
-| `sessions` order | Apply the live-first tiebreak on top of the manual/recent-first sort |
+| `sessions` order | Float pinned sessions above the manual/recent-first sort |
 | `cfg` | Notice that *another* front end changed the config — there is no other way to find out |
 
 The last one is subtle and worth stating plainly: **`sessions` is already in

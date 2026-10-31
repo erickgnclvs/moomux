@@ -652,35 +652,11 @@ func TestStartupSweepBeginsImmediately(t *testing.T) {
 	}
 }
 
-// TestSessionsServedInDisplayOrder: the base order (manual, or recent-first)
-// already came from the core, but the "live tmux window floats to the top"
-// tiebreak used to be applied per client off each client's own liveness map
-// — so two front ends could list the same project in different orders. It's
-// folded into the served list now.
-func TestSessionsServedInDisplayOrder(t *testing.T) {
-	core := &fakeCore{
-		sessions: []session.Session{sess("a", "/wt/a"), sess("b", "/wt/b"), sess("c", "/wt/c")},
-		alive:    map[string]bool{"b": true},
-	}
-	snap := Once(core, "", nil)
-
-	var got []string
-	for _, s := range snap.Sessions {
-		got = append(got, s.ID)
-	}
-	want := []string{"b", "a", "c"}
-	for i := range want {
-		if i >= len(got) || got[i] != want[i] {
-			t.Fatalf("order = %v, want %v (live first, then the base order preserved)", got, want)
-		}
-	}
-}
-
-// TestSessionOrderIsStableWithinGroups: the live-first partition must not
-// disturb the order Sessions() gave — that order carries the user's manual
-// arrangement (or the recent-first sort), and reshuffling it inside a group
-// would look like sessions moving on their own.
-func TestSessionOrderIsStableWithinGroups(t *testing.T) {
+// TestParkedSessionsKeepStoredOrder: liveness does not reorder the served
+// list. A parked session used to sink below every live one whatever its
+// stored order said, so a front end that dragged it among live sessions
+// persisted the move and then drew it straight back at the bottom.
+func TestParkedSessionsKeepStoredOrder(t *testing.T) {
 	core := &fakeCore{
 		sessions: []session.Session{sess("a", "/wt/a"), sess("b", "/wt/b"), sess("c", "/wt/c"), sess("d", "/wt/d")},
 		alive:    map[string]bool{"a": true, "c": true},
@@ -689,11 +665,8 @@ func TestSessionOrderIsStableWithinGroups(t *testing.T) {
 	for _, s := range Once(core, "", nil).Sessions {
 		got = append(got, s.ID)
 	}
-	want := []string{"a", "c", "b", "d"}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("order = %v, want %v", got, want)
-		}
+	if want := []string{"a", "b", "c", "d"}; !slices.Equal(got, want) {
+		t.Fatalf("order = %v, want %v (stored order, parked b between live a and c)", got, want)
 	}
 }
 
@@ -799,8 +772,7 @@ func TestRunPollsLatestRelease(t *testing.T) {
 }
 
 // TestPinnedSessionsServedFirst: pinning lists a session ahead of every
-// unpinned one, live or not, and the live-first rule still orders the pinned
-// group among itself.
+// unpinned one, live or not, and each group keeps its stored order.
 func TestPinnedSessionsServedFirst(t *testing.T) {
 	pinned := func(id string) session.Session {
 		s := sess(id, "/wt/"+id)
@@ -815,7 +787,7 @@ func TestPinnedSessionsServedFirst(t *testing.T) {
 	for _, s := range Once(core, "", nil).Sessions {
 		got = append(got, s.ID)
 	}
-	if want := []string{"d", "b", "a", "c"}; !slices.Equal(got, want) {
+	if want := []string{"b", "d", "a", "c"}; !slices.Equal(got, want) {
 		t.Fatalf("order = %v, want %v", got, want)
 	}
 }
