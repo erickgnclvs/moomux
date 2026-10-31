@@ -14,6 +14,27 @@ import (
 	"time"
 )
 
+// TestTailscaleRunLooksLikeAShell pins the SHLVL that makes the macOS app's
+// binary act as the CLI under launchd, where neither SHLVL nor TERM is set.
+// /usr/bin/env stands in for tailscale and prints the environment it got.
+func TestTailscaleRunLooksLikeAShell(t *testing.T) {
+	for _, k := range []string{"SHLVL", "TERM"} {
+		t.Setenv(k, "") // restores the real value afterwards
+		os.Unsetenv(k)
+	}
+	old := tailscaleBin
+	tailscaleBin = func() string { return "/usr/bin/env" }
+	t.Cleanup(func() { tailscaleBin = old })
+
+	out, err := tailscaleRun()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains("\n"+out, "\nSHLVL=1\n") {
+		t.Fatalf("tailscale ran without SHLVL=1:\n%s", out)
+	}
+}
+
 func TestFindTailscale(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PATH", t.TempDir())

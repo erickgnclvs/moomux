@@ -562,7 +562,14 @@ var tailscaleRunFn = tailscaleRun
 func tailscaleRun(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tailscaleTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, tailscaleBin(), args...).Output()
+	cmd := exec.CommandContext(ctx, tailscaleBin(), args...)
+	// The macOS app's binary is the CLI only when it looks run from a shell
+	// (SHLVL or TERM set). A launchd-started core has neither, so without
+	// this it starts as the GUI instead and prints "The Tailscale GUI failed
+	// to start" on stdout with exit 0. Tailscale's own /usr/local/bin shim
+	// works only because sh sets SHLVL.
+	cmd.Env = append(os.Environ(), "SHLVL=1")
+	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
