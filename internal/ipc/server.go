@@ -718,7 +718,7 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		return Result{}, b.SelectWindow(a.ID, a.Delta)
 	case "Diff":
 		p, ok, err := b.Diff(a.ID)
-		return Result{Patch: p.Text, Base: p.Base, Commit: p.Commit, Truncated: p.Truncated, OK: ok}, err
+		return Result{Patch: p.Text, Base: p.Base, Commit: p.Commit, Truncated: p.Truncated, Uncommitted: p.Uncommitted, OK: ok}, err
 	case "ReadBaseFile":
 		data, commit, ok, err := b.ReadBaseFile(a.ID, a.Path, a.Commit)
 		return Result{Data: data, Commit: commit, OK: ok}, fileErr(method, err)

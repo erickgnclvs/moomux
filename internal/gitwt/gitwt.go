@@ -392,10 +392,19 @@ type Patch struct {
 	// Truncated says Text was cut at a file boundary to stay under the
 	// limit.
 	Truncated bool
+	// Uncommitted is the paths that differ from HEAD: staged, unstaged or
+	// untracked, with both names of a move. A file in Text whose a/ or b/
+	// path is listed has local work; every other file in Text is committed
+	// on the branch. It can name paths Text has no section for (a cut
+	// patch, an edit reverted to the base), so match it against Text, not
+	// count it. Empty for a worktree whose only changes are its commits —
+	// an open PR's, say — which is not local work.
+	Uncommitted []string
 }
 
 // Diff is everything in dir not yet on base, as one raw patch: `git diff
-// --merge-base` (commits since the merge base and uncommitted work alike)
+// --merge-base` (commits since the merge base and uncommitted work alike,
+// with Uncommitted naming the latter)
 // with every untracked, non-ignored file in it as a new file. The base is
 // resolved by BaseCommit, and the diff is taken against the commit it
 // answers.
@@ -457,6 +466,18 @@ func Diff(dir, base string, limit int) (Patch, error) {
 		return Patch{}, err
 	}
 	p.Text, p.Truncated = out, over
+	// Against HEAD, with the same scratch index so untracked files count.
+	// --no-renames lists both sides of a move: the HEAD diff can pair one
+	// that Text, against an older commit, shows as a delete and an add.
+	// After Text, so an edit racing the two lands in this list too, and
+	// local work is never passed off as committed.
+	names, _, err := gitStdout(dir, env, 0, "diff", "--name-only", "-z", "--no-renames", "HEAD")
+	if err != nil {
+		return Patch{}, err
+	}
+	if names = strings.TrimSuffix(names, "\x00"); names != "" {
+		p.Uncommitted = strings.Split(names, "\x00")
+	}
 	if over {
 		p.Text = cutAtFile(out, limit)
 	}
