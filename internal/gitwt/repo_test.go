@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -321,6 +322,11 @@ func TestDiffShowsRenamesUncommittedAndUntrackedWork(t *testing.T) {
 			t.Errorf("patch is missing %q:\n%s", want, p.Text)
 		}
 	}
+	// The committed rename is in the patch but not uncommitted; the plain
+	// mv is named as the file it became.
+	if want := []string{"café.txt", "edited.txt", "moved-unstaged.txt"}; !slices.Equal(p.Uncommitted, want) {
+		t.Errorf("Uncommitted = %q, want %q", p.Uncommitted, want)
+	}
 	for _, not := range []string{"debug.log", "nested"} {
 		if strings.Contains(p.Text, not) {
 			t.Errorf("%s made it into the patch:\n%s", not, p.Text)
@@ -405,6 +411,35 @@ func TestDiffHeadersIgnoreThePrefixConfig(t *testing.T) {
 	}
 	if strings.Contains(p.Text, "\x1b[") {
 		t.Fatalf("colour escapes in the patch:\n%s", p.Text)
+	}
+}
+
+// An open PR's worktree: everything committed and pushed, nothing local. The
+// patch is the branch's commits, and none of it may read as uncommitted.
+func TestDiffOfACleanBranchHasNoUncommittedFiles(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "wt")
+	git := func(in string, args ...string) {
+		t.Helper()
+		args = append([]string{"-c", "user.name=moomux", "-c", "user.email=moomux@localhost"}, args...)
+		if out, err := ExecRunner().Run(in, args...); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+	}
+	git(root, "init", "-b", "main")
+	git(root, "commit", "--allow-empty", "-m", "init")
+	git(root, "worktree", "add", "-b", "feat", dir)
+	if err := os.WriteFile(filepath.Join(dir, "pr.txt"), []byte("pr\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(dir, "add", "pr.txt")
+	git(dir, "commit", "-m", "pr")
+	p, err := Diff(dir, "main", 1<<20)
+	if err != nil || !strings.Contains(p.Text, "b/pr.txt") {
+		t.Fatalf("Diff = %+v, err %v", p, err)
+	}
+	if len(p.Uncommitted) != 0 {
+		t.Fatalf("a clean worktree has uncommitted %q", p.Uncommitted)
 	}
 }
 

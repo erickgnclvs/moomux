@@ -105,7 +105,7 @@ func (f *fakeBackend) SelectWindow(id string, delta int) error {
 func (f *fakeBackend) WorktreeStatus(string) (bool, bool, bool) { return true, false, true }
 func (f *fakeBackend) ChangeSummary(string) (int, int, bool)    { return 7, 3, true }
 func (f *fakeBackend) Diff(string) (gitwt.Patch, bool, error) {
-	return gitwt.Patch{Text: "diff --git a/x b/x\n+<T>&\n", Base: "origin/main", Commit: "abc123", Truncated: true}, true, nil
+	return gitwt.Patch{Text: "diff --git a/x b/x\n+<T>&\n", Base: "origin/main", Commit: "abc123", Truncated: true, Uncommitted: []string{"x"}}, true, nil
 }
 
 // ReadBaseFile answers path's name as its content, except "new.md" (not in
@@ -458,8 +458,8 @@ func TestRoundTrip(t *testing.T) {
 		if files, commits, ok := c.ChangeSummary("moomux:a"); files != 7 || commits != 3 || !ok {
 			t.Fatalf("ChangeSummary = %d %d %v, want 7 3 true", files, commits, ok)
 		}
-		want := gitwt.Patch{Text: "diff --git a/x b/x\n+<T>&\n", Base: "origin/main", Commit: "abc123", Truncated: true}
-		if p, ok, err := c.Diff("moomux:a"); p != want || !ok || err != nil {
+		want := gitwt.Patch{Text: "diff --git a/x b/x\n+<T>&\n", Base: "origin/main", Commit: "abc123", Truncated: true, Uncommitted: []string{"x"}}
+		if p, ok, err := c.Diff("moomux:a"); !reflect.DeepEqual(p, want) || !ok || err != nil {
 			t.Fatalf("Diff = %+v %v %v, want %+v, ok", p, ok, err, want)
 		}
 		// Found, found-but-empty and not-in-base each come back apart:
@@ -931,7 +931,7 @@ func TestDiffWireShape(t *testing.T) {
 	c, _ := start(t, &fakeBackend{}, &config.Config{}, nil)
 	for _, tc := range []struct{ req, want string }{
 		{`{"method":"Diff","args":{"id":"moomux:a"}}`,
-			`{"result":{"ok":true,"patch":"diff --git a/x b/x\n+<T>&\n","base":"origin/main","commit":"abc123","truncated":true}}`},
+			`{"result":{"ok":true,"patch":"diff --git a/x b/x\n+<T>&\n","base":"origin/main","commit":"abc123","truncated":true,"uncommitted":["x"]}}`},
 		{`{"method":"ReadBaseFile","args":{"id":"moomux:a","path":"hi","commit":"abc123"}}`,
 			`{"result":{"ok":true,"data":"aGk=","commit":"abc123"}}`},
 		// Not in the base: no ok, and no error.

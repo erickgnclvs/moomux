@@ -152,12 +152,15 @@ type Result struct {
 	// Patch, Base, Commit and Truncated are Diff's answer: raw `git diff`
 	// text, headers and all; the ref it was taken against (HEAD means
 	// uncommitted work only); the commit it was taken against; and whether
-	// it was cut at a file boundary to stay under the cap. See gitwt.Patch.
-	// Commit is also the commit ReadBaseFile read.
-	Patch     string `json:"patch,omitempty"`
-	Base      string `json:"base,omitempty"`
-	Commit    string `json:"commit,omitempty"`
-	Truncated bool   `json:"truncated,omitempty"`
+	// it was cut at a file boundary to stay under the cap. Uncommitted
+	// names the patch's files that differ from HEAD; the rest are the
+	// branch's commits. See gitwt.Patch. Commit is also the commit
+	// ReadBaseFile read.
+	Patch       string   `json:"patch,omitempty"`
+	Base        string   `json:"base,omitempty"`
+	Commit      string   `json:"commit,omitempty"`
+	Truncated   bool     `json:"truncated,omitempty"`
+	Uncommitted []string `json:"uncommitted,omitempty"`
 	// Pairing is Pair's answer, always present when it succeeds.
 	Pairing *Pairing `json:"pairing,omitempty"`
 }

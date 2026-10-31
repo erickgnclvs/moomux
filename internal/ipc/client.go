@@ -338,7 +338,7 @@ func (c *Client) SelectWindow(id string, delta int) error {
 
 func (c *Client) Diff(id string) (gitwt.Patch, bool, error) {
 	r, err := c.call("Diff", Args{ID: id})
-	return gitwt.Patch{Text: r.Patch, Base: r.Base, Commit: r.Commit, Truncated: r.Truncated}, r.OK, err
+	return gitwt.Patch{Text: r.Patch, Base: r.Base, Commit: r.Commit, Truncated: r.Truncated, Uncommitted: r.Uncommitted}, r.OK, err
 }
 
 // ReadBaseFile fetches a repo-relative path's content at session id's diff

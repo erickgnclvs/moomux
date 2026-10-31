@@ -542,12 +542,12 @@ pane. With a remapped prefix those keys landed in the agent's prompt.
 ### `Diff`: the review as a patch
 
 `Review` needs a tty to put the diff on, and a phone has none, so `Diff`
-serves the same diff as data. It takes `args.id` and answers `result.ok`,
+serves the same diff as data. It takes `args.id` and answers `result.ok`, `result.uncommitted`,
 `result.patch`, `result.base`, `result.commit` and `result.truncated`:
 
 ```jsonc
 {"method": "Diff", "args": {"id": "moomux:a"}}
-{"result": {"ok": true, "patch": "diff --git a/x.go b/x.go\n…", "base": "origin/main", "commit": "3f9c…a1e0", "truncated": false}}
+{"result": {"ok": true, "patch": "diff --git a/x.go b/x.go\n…", "base": "origin/main", "commit": "3f9c…a1e0", "truncated": false, "uncommitted": ["x.go"]}}
 ```
 
 **What is in `patch`.** Raw `git diff` text, `diff --git` headers included,
@@ -577,6 +577,14 @@ commit in the fallback. The diff runs against that id, not against `base`
 by name, so the two always agree. It is there for `ReadBaseFile` below: pass
 it back and the "before" side is read from the same commit, even if the base
 branch has moved since.
+
+**What `uncommitted` says.** The patch's paths (the `b/` side, so a rename's
+new name) that differ from `HEAD`: staged, unstaged or untracked. Every other
+file in the patch is committed on the branch. A worktree whose only changes
+are its commits — an open PR, pushed, nothing local — sends a full patch and
+no `uncommitted` at all. A client must not call that patch "local changes";
+it tells the two apart by this list, never by `patch` alone. In the `HEAD`
+fallback every file is in it.
 
 **Untracked files never touch the agent's index.** They are marked
 intent-to-add (`git add -N`) in a throwaway copy of the worktree's index
@@ -610,7 +618,7 @@ that isn't (or is no longer) a git repo, matching `ChangeSummary`; an unknown
 session id is an error. It reads the worktree and nothing else, so a parked
 session diffs exactly like a live one and nothing is revived.
 
-All five result fields are `omitempty`, like the rest of `Result`: an absent
+All six result fields are `omitempty`, like the rest of `Result`: an absent
 `ok` or `truncated` is `false`, an absent `patch`, `base` or `commit` is empty
 — a clean worktree answers `{"ok": true, "base": "origin/main", "commit": "…"}`
 with no `patch` at all.
