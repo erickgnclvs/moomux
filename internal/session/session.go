@@ -235,15 +235,21 @@ func (s *Store) All() []Session {
 	return out
 }
 
-// SortByRecent reorders sessions most-recently-opened first, falling back to
-// CreatedAt descending for sessions that share a LastOpened (including the
-// zero value shared by every never-opened session), then ID so the order is
-// total. Used in place of the manual Order sort when Config.SortRecentFirst
-// is on.
+// SortByRecent reorders sessions most-recently-touched first: the later of
+// LastOpened and CreatedAt, so a session created without a terminal (moomux
+// spawn) counts as new rather than sinking below every session ever opened.
+// Ties fall back to CreatedAt descending, then ID so the order is total.
+// Used in place of the manual Order sort when Config.SortRecentFirst is on.
 func SortByRecent(sessions []Session) {
+	recent := func(s Session) time.Time {
+		if s.CreatedAt.After(s.LastOpened) {
+			return s.CreatedAt
+		}
+		return s.LastOpened
+	}
 	sort.SliceStable(sessions, func(i, j int) bool {
-		if !sessions[i].LastOpened.Equal(sessions[j].LastOpened) {
-			return sessions[i].LastOpened.After(sessions[j].LastOpened)
+		if ri, rj := recent(sessions[i]), recent(sessions[j]); !ri.Equal(rj) {
+			return ri.After(rj)
 		}
 		if !sessions[i].CreatedAt.Equal(sessions[j].CreatedAt) {
 			return sessions[i].CreatedAt.After(sessions[j].CreatedAt)

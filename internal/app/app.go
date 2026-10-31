@@ -1481,7 +1481,7 @@ func (a *App) pressEnterUntilSubmitted(tmuxSession, prompt string) error {
 // siblingIDs here. Two problems with that: siblingIDs was re-derived via
 // Store.ByProject in the very first version, which sorts differently (and
 // doesn't filter archived) than what the TUI actually displays
-// (tmux-alive-first, archived-filtered) — "the row above/below" on screen
+// (pinned-first, archived-filtered) — "the row above/below" on screen
 // often wasn't the pair that got swapped. Fixing the caller to pass its own
 // displayed order closed that gap, but the delta-based API still meant two
 // rapid keypresses raced two independent goroutines, each computing its own

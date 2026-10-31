@@ -428,9 +428,10 @@ func TestRapidReorderKeypressesCoalesceInsteadOfRacing(t *testing.T) {
 	}
 }
 
-// TestRefreshSessionsSortsLiveStatusFirst guards the active project's sort
-// order: a session with a live tmux window floats to the top of the list.
-func TestRefreshSessionsSortsLiveStatusFirst(t *testing.T) {
+// TestRefreshSessionsIgnoresLiveStatus guards the active project's sort
+// order: a live tmux window does not float a session above a parked one, so
+// a parked session the user moved among live ones stays where they put it.
+func TestRefreshSessionsIgnoresLiveStatus(t *testing.T) {
 	be := &fakeBackend{
 		sessions: []session.Session{
 			{ID: "demo:a1", Project: "demo", Name: "a1"},
@@ -445,13 +446,13 @@ func TestRefreshSessionsSortsLiveStatusFirst(t *testing.T) {
 	for i, s := range m.sessions {
 		got[i] = s.ID
 	}
-	want := []string{"demo:a2", "demo:a1"}
+	want := []string{"demo:a1", "demo:a2"}
 	if len(got) != len(want) {
 		t.Fatalf("sessions = %v, want %v", got, want)
 	}
 	for i := range want {
 		if got[i] != want[i] {
-			t.Fatalf("sessions = %v, want %v (the live session should float above the non-live one)", got, want)
+			t.Fatalf("sessions = %v, want %v (stored order, liveness ignored)", got, want)
 		}
 	}
 }

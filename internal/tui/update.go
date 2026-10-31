@@ -94,8 +94,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Re-filter the visible list out of the new snapshot's list right
 		// away. Deferring it would leave the list on the previous snapshot
 		// until something unrelated happened to call refreshSessions(), at
-		// which point a session that parked (and so moved out of the
-		// live-first group) appears to jump position out of nowhere.
+		// which point a session another front end moved or pinned appears
+		// to jump position out of nowhere.
 		m.refreshSessions()
 		if mergedNote != "" {
 			m.setFlash("info", mergedNote)
@@ -137,8 +137,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case TmuxKilledMsg:
-		// Parking changes the display order (the session drops out of the
-		// live-first group), so this is a list change, not just a state one.
+		// Parking changes the session's state, and the core's next snapshot
+		// is what shows it, so ask for one now rather than at the next tick.
 		m.setFlash("info", "parked")
 		m.sessionsChanged()
 		m.refreshSessions()
@@ -285,7 +285,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// snapOrder carries the local guess too (see
 			// applyOrderLocally), so dropping the snapshot alone would
 			// re-apply the move that just failed to persist. Clearing it
-			// costs the core's live-first grouping until the next snapshot
+			// costs the core's pinned-first grouping until the next snapshot
 			// lands a couple of seconds later — a fair price on an error
 			// path that is already showing the user a failure.
 			m.snapOrder = nil
@@ -367,9 +367,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SessionOpenedMsg:
 		// Opening a session bumps its LastOpened, which can sort it to a new
-		// position (recently-opened sort, or the tmux-alive float once its
-		// window comes up) — follow it there instead of leaving the cursor
-		// on the old index.
+		// position under the recently-opened sort — follow it there instead
+		// of leaving the cursor on the old index.
 		m.sessionsChanged()
 		m.refreshSessions()
 		m.focusSession(msg.ID)

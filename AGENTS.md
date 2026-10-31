@@ -67,7 +67,8 @@ end happened to be attached.
 
 The rule: if a front end would have to *compute* something to draw it, the core computes it and
 serves it. That covers the effective state, its label and quip, the first prompt, dirty/unpushed,
-PR status, and the display order (`Snapshot.Sessions` arrives already sorted — the live-first
+PR status, and the display order (`Snapshot.Sessions` arrives already sorted: pinned first, then
+the manual or recent-first order. Liveness plays no part, so a parked session stays where it was dragged. A live-first
 tiebreak used to be per-client, so two front ends could list a project in different orders).
 Clients filter and render; they do not re-derive. The same `Watcher` feeds the local TUI and `moomux serve`, so there is exactly one
 implementation, and `internal/ipc` serializes `sessionview.Snapshot` as-is rather than reshaping

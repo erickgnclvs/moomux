@@ -1787,10 +1787,9 @@ func TestReorderSessionsSkipsUnknownIDs(t *testing.T) {
 // the bug where MoveSession (ReorderSessions' predecessor) recomputed peers
 // via Store.ByProject (sorted by Order) instead of using the caller-supplied
 // order. That diverges from Store order whenever the TUI's displayed list
-// does — e.g. a session floats to the top of the list for having a live
-// tmux window, state tracked entirely client-side and invisible to the
-// store — so reordering against ByProject's own recomputed peers either
-// silently no-ops or reorders a pair the user never saw adjacent on screen.
+// does — e.g. a pinned session floats to the top of the list — so
+// reordering against ByProject's own recomputed peers either silently
+// no-ops or reorders a pair the user never saw adjacent on screen.
 // Here the caller's order is the reverse of the sessions' stored Order,
 // simulating exactly that divergence, and the persisted order must follow
 // it, not Order.

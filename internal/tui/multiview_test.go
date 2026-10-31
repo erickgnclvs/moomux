@@ -419,21 +419,20 @@ func TestMultiViewCursorIsPerProject(t *testing.T) {
 	}
 }
 
-// TestMultiViewDownFollowsPanelOrderWithLiveSession is the regression test
+// TestMultiViewDownFollowsPanelOrderWithPinnedSession is the regression test
 // for arrow nav "skipping" sessions in a grid panel: multiViewSessionsFor
-// (what the panel renders) must float live-tmux sessions to the top the same
+// (what the panel renders) must float pinned sessions to the top the same
 // way refreshSessions does for m.sessions (what cursor movement acts on) —
 // otherwise Down walks the sorted order while the panel displays the
 // unsorted one, and the highlight jumps past whatever row that reordering
 // skipped over.
-func TestMultiViewDownFollowsPanelOrderWithLiveSession(t *testing.T) {
+func TestMultiViewDownFollowsPanelOrderWithPinnedSession(t *testing.T) {
 	be := &fakeBackend{
 		sessions: []session.Session{
 			{ID: "a1", Project: "alpha", Name: "a1"},
-			{ID: "a2", Project: "alpha", Name: "a2"},
+			{ID: "a2", Project: "alpha", Name: "a2", Pinned: true},
 			{ID: "a3", Project: "alpha", Name: "a3"},
 		},
-		tmuxAlive: map[string]bool{"a2": true},
 	}
 	m := newMultiProjectTestModel(be)
 	m.mode = ModeMultiView
@@ -442,7 +441,7 @@ func TestMultiViewDownFollowsPanelOrderWithLiveSession(t *testing.T) {
 
 	panelOrder := m.multiViewSessionsFor("alpha")
 	if len(panelOrder) != 3 || panelOrder[0].ID != "a2" {
-		t.Fatalf("panel order = %v, want a2 first (live session floats to top)", panelOrder)
+		t.Fatalf("panel order = %v, want a2 first (pinned session floats to top)", panelOrder)
 	}
 
 	m.updateMultiView(tea.KeyMsg{Type: tea.KeyDown})
