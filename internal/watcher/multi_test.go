@@ -47,6 +47,59 @@ func TestMultiWatcherMergesSnapshots(t *testing.T) {
 	}
 }
 
+// chanWatcher forwards whatever the test feeds it.
+type chanWatcher chan Snapshot
+
+func (c chanWatcher) Run(ctx context.Context, out chan<- Snapshot) {
+	for {
+		select {
+		case snap := <-c:
+			send(ctx, out, snap)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// Two agents that know the same worktree (a Codex thread left behind where
+// Claude now runs) must not overwrite each other: the session's state used to
+// flip with whichever watcher ticked last.
+func TestMultiWatcherMaxMergesSamePathAcrossWatchers(t *testing.T) {
+	claude, codex := make(chanWatcher), make(chanWatcher)
+	m := &MultiWatcher{Watchers: []Watcher{claude, codex}}
+	out := make(chan Snapshot)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go m.Run(ctx, out)
+
+	next := func(feed chanWatcher, st State) State {
+		t.Helper()
+		feed <- Snapshot{States: map[string]State{"/wt": st}}
+		select {
+		case snap := <-out:
+			return snap.States["/wt"]
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for a snapshot")
+			return Unknown
+		}
+	}
+
+	next(claude, NeedsInput)
+	for range 3 {
+		if got := next(codex, Done); got != NeedsInput {
+			t.Fatalf("codex's Done tick: got %v, want NeedsInput from claude", got)
+		}
+	}
+	// A watcher's own state can still drop: claude answered, now Working,
+	// and Working still outranks codex's Done.
+	if got := next(claude, Working); got != Working {
+		t.Fatalf("after claude went Working: got %v, want Working", got)
+	}
+	if got := next(claude, Done); got != Done {
+		t.Fatalf("after claude went Done: got %v, want Done", got)
+	}
+}
+
 func TestMultiWatcherEmpty(t *testing.T) {
 	m := &MultiWatcher{}
 	ch := make(chan Snapshot, 1)
