@@ -37,8 +37,8 @@ type SQLiteWatcher struct {
 	// MarkerDir, if set, is scanned each tick for the *.json needs-input
 	// marker files internal/codexhook writes and clears (see dirScanner.scan). The
 	// merge must happen in the same tick as the SQLite query: NeedsInput and
-	// Working both come from Codex here, and update.go's per-watcher
-	// last-snapshot-wins semantics mean combining them across separate
+	// Working both come from Codex here, and MultiWatcher keeps only each
+	// watcher's latest snapshot, so combining them across separate
 	// snapshots would let whichever tick lands last clobber the other.
 	MarkerDir string
 	// URIPaths says the first column is a file:// URI rather than a plain
