@@ -13,6 +13,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/tmux"
+	"github.com/erickgnclvs/moomux/internal/usage"
 	"github.com/erickgnclvs/moomux/internal/userscript"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
@@ -41,6 +43,11 @@ type App struct {
 	Git          *gitwt.Client
 	PR           *prstatus.Client
 	WorktreeRoot string
+	// ModelsPath is agent-usage's models.json, the source of claude's and
+	// codex's models and thinking levels (see AgentOptions). Empty means none.
+	ModelsPath string
+	// models caches ModelsPath between AgentOptions calls, one per snapshot.
+	models usage.ModelsReader
 
 	// fetchMu guards lastFetch, written concurrently by WorktreeStatus calls
 	// for different sessions running on separate tea.Cmd goroutines.
@@ -146,43 +153,78 @@ func (a *App) forgetFetch(id string) {
 // front end read this same table via AgentOptions, instead of each keeping
 // its own copy that silently drifts the next time an agent is added here.
 //
+// claude and codex take their models and thinking levels from agent-usage
+// at call time (see AgentOptions), so the table lists neither for them.
 // opencode has no Models entry: it has no small fixed model list worth
 // hardcoding, so a picker offers a free-text field instead of a selector.
 // opencode is also the one agent with no launch-time reasoning-effort flag,
 // so its thinking level is a phrase prepended to the first prompt instead
-// (see FirstPrompt). claude's levels are Claude Code's own --effort values.
+// (see FirstPrompt).
 var agentOptionsTable = []config.AgentOption{
-	{
-		Name:     "claude",
-		Models:   []string{"default", "sonnet", "opus", "fable"},
-		Thinking: []string{"default", "low", "medium", "high", "xhigh", "max"},
-	},
-	{
-		Name:     "codex",
-		Models:   []string{"default", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"},
-		Thinking: []string{"default", "minimal", "low", "medium", "high", "xhigh"},
-	},
+	{Name: "claude"},
+	{Name: "codex"},
 	{
 		Name:     "opencode",
 		Thinking: []string{"default", "think", "think hard", "think harder", "ultrathink"},
 	},
 	{
-		// Every agy model name bakes its reasoning effort in, which is why the
-		// Low/Medium/High variants are listed separately rather than left to
-		// the Thinking column: agy rejects --effort outright whenever --model
-		// is given, so Thinking here only reaches the user's own default model.
-		// Deliberately a slice of what `agy models` offers — the older 3.7/3.6
-		// Flash generations and the Claude/GPT-OSS entries are dropped.
+		// No source lists agy's models, so the picker offers only its
+		// default. A model named elsewhere (`moomux spawn -model`) still
+		// reaches agy; see buildAgentCmd for why --effort is then dropped.
 		Name:     "antigravity",
-		Models:   []string{"default", "Gemini 3.8 Flash (High)", "Gemini 3.8 Flash (Medium)", "Gemini 3.8 Flash (Low)", "Gemini 3.1 Pro (High)", "Gemini 3.1 Pro (Low)"},
+		Models:   []string{"default"},
 		Thinking: []string{"default", "low", "medium", "high"},
 	},
 }
 
-// AgentOptions returns agentOptionsTable. A pure static lookup today, but a
-// method (not just an exported var) so a caller — in-process or, via
-// internal/ipc, over the socket — never has to care which.
-func (a *App) AgentOptions() []config.AgentOption { return agentOptionsTable }
+// AgentOptions returns agentOptionsTable with claude's and codex's models
+// and thinking levels filled in from agent-usage's models.json at
+// ModelsPath. There is no built-in fallback: without agent-usage data the
+// only choice for either is "default", so the agent uses its own defaults.
+//
+// Thinking levels belong to a model, so each model gets its own list in
+// ModelThinking. Model "default" could be any of them, so its list (Thinking)
+// is every level any model offers.
+func (a *App) AgentOptions() []config.AgentOption {
+	opts := slices.Clone(agentOptionsTable)
+	for i, o := range opts {
+		if o.Name != "claude" && o.Name != "codex" {
+			continue
+		}
+		models := a.models.Models(a.ModelsPath, o.Name)
+		opts[i].Models = []string{"default"}
+		opts[i].ModelNames = map[string]string{}
+		opts[i].ModelThinking = map[string][]string{}
+		var all []string
+		for _, m := range models {
+			opts[i].Models = append(opts[i].Models, m.ID)
+			if m.Name != "" {
+				opts[i].ModelNames[m.ID] = m.Name
+			}
+			opts[i].ModelThinking[m.ID] = append([]string{"default"}, m.ThinkingLevels...)
+			all = mergeLevels(all, m.ThinkingLevels)
+		}
+		opts[i].Thinking = append([]string{"default"}, all...)
+	}
+	return opts
+}
+
+// mergeLevels adds levels' entries missing from all, each placed right after
+// the entry before it in levels, so lists that are each lowest-first merge
+// into one that still is: [low high] and [low medium high] give
+// [low medium high].
+func mergeLevels(all, levels []string) []string {
+	at := 0
+	for _, l := range levels {
+		if i := slices.Index(all, l); i >= 0 {
+			at = i + 1
+			continue
+		}
+		all = slices.Insert(all, at, l)
+		at++
+	}
+	return all
+}
 
 // agentCmd returns the CLI binary name for the given agent.
 func agentCmd(agent string) string {
@@ -2452,6 +2494,23 @@ func (a *App) SetTerminalPane(on bool) error {
 	a.Cfg.NoTerminalPane = !on
 	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
 		a.Cfg.NoTerminalPane = prev
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
+}
+
+// SetModelExcluded adds agent's model id to, or removes it from, the list
+// model pickers leave out (config.ExcludedModels).
+func (a *App) SetModelExcluded(agent, id string, excluded bool) error {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
+		return fmt.Errorf("reload config: %w", err)
+	}
+	prev := a.Cfg.ExcludedModels
+	a.Cfg.SetModelExcluded(agent, id, excluded)
+	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
+		a.Cfg.ExcludedModels = prev
 		return fmt.Errorf("save config: %w", err)
 	}
 	return nil

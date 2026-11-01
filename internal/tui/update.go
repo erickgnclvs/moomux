@@ -70,6 +70,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// dot, drop every git badge and PR status, and reorder the list, as
 		// if the core had told us all that. Keep rendering the last real
 		// answer instead; the flash is what says it's stale.
+		// Both the config and the agent table below can change the lists
+		// an open form indexes into, so its choices are kept by value.
+		sel := m.captureFormSelection()
 		m.applyStreamedCfg(msg.Snap)
 		mergedNote := ""
 		if msg.Snap.Views != nil {
@@ -89,6 +92,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.snapOrder[s.ID] = i
 			}
 		}
+		if msg.Snap.Agents != nil {
+			m.agentOptions = msg.Snap.Agents
+		}
+		m.restoreFormSelection(sel)
 		m.maybeShowWhatsNew(msg.Snap.WhatsNew)
 		m.invalidateSessions()
 		// Re-filter the visible list out of the new snapshot's list right
@@ -548,6 +555,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateProjectPicker(msg)
 		case ModeThemePicker:
 			return m.updateThemePicker(msg)
+		case ModeModelFilter:
+			return m.updateModelFilter(msg)
 		case ModeMultiView:
 			return m.updateMultiView(msg)
 		case ModeSearch:
@@ -608,6 +617,7 @@ func (m *Model) openNewSessionForm() {
 	// The agent the last session was created with — global, not per project.
 	// Model and thinking start on "default" above: those are never remembered.
 	m.newFormAgentIdx = m.agentNameIndex(config.AgentName(m.cfg.LastAgent))
+	m.newFormExtraModel = ""
 }
 
 func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1342,6 +1352,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// previous agent could point at the wrong value, so reset both
 			// whenever the agent changes.
 			m.newFormModelIdx = 0
+			m.newFormExtraModel = ""
 			m.newFormModelInput.SetValue("")
 			m.newFormThinkingIdx = 0
 			return m, nil
@@ -1353,17 +1364,20 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				// movement, handled by the default routing below.
 				break
 			}
-			names := m.modelNamesFor(agent)
+			names := m.newFormModelChoices(agent)
+			// Each model has its own thinking levels; keep the chosen one
+			// where the new model offers it.
+			prev := m.newFormThinkingNames()[m.newFormThinkingIdx]
 			if key.Matches(msg, m.keys.Left) {
 				m.newFormModelIdx = (m.newFormModelIdx - 1 + len(names)) % len(names)
 			} else {
 				m.newFormModelIdx = (m.newFormModelIdx + 1) % len(names)
 			}
+			m.newFormKeepThinking(prev)
 			return m, nil
 		}
 		if m.newFormFocus == newFormThinkingFocus {
-			agent := m.agentNames()[m.newFormAgentIdx]
-			names := m.thinkingNamesFor(agent)
+			names := m.newFormThinkingNames()
 			if key.Matches(msg, m.keys.Left) {
 				m.newFormThinkingIdx = (m.newFormThinkingIdx - 1 + len(names)) % len(names)
 			} else {
@@ -1398,11 +1412,8 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.newFormErr = ""
 		proj := m.projects[m.newFormProjIdx]
 		agent := m.agentNames()[m.newFormAgentIdx]
-		model := m.newFormModelInput.Value()
-		if !m.agentUsesFreeTextModel(agent) {
-			model = m.modelNamesFor(agent)[m.newFormModelIdx]
-		}
-		thinking := m.thinkingNamesFor(agent)[m.newFormThinkingIdx]
+		_, model := m.newFormAgentModel()
+		thinking := m.newFormThinkingNames()[m.newFormThinkingIdx]
 		openTerminal := !m.newFormOpenInBackground
 		// Saved before the create runs, so the prompt outlives the TUI
 		// itself dying mid-create; SessionCreatedMsg clears it.
@@ -2177,7 +2188,7 @@ func (m *Model) applySettingsRow(i int) (tea.Model, tea.Cmd) {
 	case settingsRowInfo:
 		return m, nil
 	case settingsRowDrill:
-		m.openThemePicker()
+		row.open(m)
 		return m, nil
 	case settingsRowText:
 		m.settingsInput = textinput.New()

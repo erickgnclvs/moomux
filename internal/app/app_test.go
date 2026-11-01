@@ -4085,3 +4085,65 @@ func TestModelFlagQuotesForTheShell(t *testing.T) {
 		}
 	}
 }
+
+// TestAgentOptionsWithoutAgentUsage pins that there is no built-in model or
+// thinking list: with no agent-usage data, claude and codex offer only
+// "default" for both.
+func TestAgentOptionsWithoutAgentUsage(t *testing.T) {
+	a := &App{ModelsPath: filepath.Join(t.TempDir(), "missing.json")}
+	for _, o := range a.AgentOptions() {
+		if o.Name != "claude" && o.Name != "codex" {
+			continue
+		}
+		if !slices.Equal(o.Models, []string{"default"}) || !slices.Equal(o.Thinking, []string{"default"}) {
+			t.Errorf("%s: Models = %v, Thinking = %v, want [default] for both", o.Name, o.Models, o.Thinking)
+		}
+	}
+}
+
+// TestAgentOptionsThinkingPerModel pins that each model gets its own levels,
+// and that model "default" offers every level, still lowest first.
+func TestAgentOptionsThinkingPerModel(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "models.json")
+	body := `{"schema":1,"agents":[{"agent":"codex","models":[
+	  {"id":"a","thinkingLevels":["low","high"]},
+	  {"id":"b","thinkingLevels":["minimal","low","medium","high"]},
+	  {"id":"c"}]}]}`
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := &App{ModelsPath: p}
+	i := slices.IndexFunc(a.AgentOptions(), func(o config.AgentOption) bool { return o.Name == "codex" })
+	o := a.AgentOptions()[i]
+	if want := []string{"default", "a", "b", "c"}; !slices.Equal(o.Models, want) {
+		t.Errorf("Models = %v, want %v", o.Models, want)
+	}
+	if want := []string{"default", "minimal", "low", "medium", "high"}; !slices.Equal(o.Thinking, want) {
+		t.Errorf("Thinking = %v, want %v", o.Thinking, want)
+	}
+	if got := o.ModelThinking["a"]; !slices.Equal(got, []string{"default", "low", "high"}) {
+		t.Errorf("ModelThinking[a] = %v", got)
+	}
+	if got := o.ModelThinking["c"]; !slices.Equal(got, []string{"default"}) {
+		t.Errorf("ModelThinking[c] = %v, want [default]", got)
+	}
+}
+
+// TestSetModelExcludedPersists pins that hiding a model is saved to
+// config.toml, and that showing it again removes the agent's entry.
+func TestSetModelExcludedPersists(t *testing.T) {
+	a, _, _ := newTestApp(t, map[string]config.Project{})
+	if err := a.SetModelExcluded("claude", "claude-haiku-5-5", true); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.Load(a.CfgPath)
+	if err != nil || !loaded.ModelExcluded("claude", "claude-haiku-5-5") {
+		t.Fatalf("exclusion not persisted: %v (err %v)", loaded.ExcludedModels, err)
+	}
+	if err := a.SetModelExcluded("claude", "claude-haiku-5-5", false); err != nil {
+		t.Fatal(err)
+	}
+	if loaded, err := config.Load(a.CfgPath); err != nil || len(loaded.ExcludedModels) != 0 {
+		t.Fatalf("ExcludedModels = %v after showing it again (err %v)", loaded.ExcludedModels, err)
+	}
+}

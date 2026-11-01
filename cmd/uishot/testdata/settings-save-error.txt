@@ -1,5 +1,4 @@
 === 40x20 ===
-                                        
 ╭──────────────────────────────────────╮
 │                                      │
 │  SETTINGS                            │
@@ -10,6 +9,7 @@
 │     auto-submit default      [off]   │
 │     compact detail view      [off]   │
 │   ▸ terminal pane             [on]   │
+│     hidden models             none   │
 │     diff tool              not set   │
 │     Agent usage      not available   │
 │                                      │
@@ -37,6 +37,7 @@
            │     auto-submit default                                            [off]   │           
            │     compact detail view                                            [off]   │           
            │   ▸ terminal pane                                                   [on]   │           
+           │     hidden models                                                   none   │           
            │     diff tool                                                    not set   │           
            │     Agent usage                                            not available   │           
            │                                                                            │           
@@ -44,7 +45,6 @@
            │  ↑↓ select  enter/←→ change  esc close                                     │           
            │                                                                            │           
            ╰────────────────────────────────────────────────────────────────────────────╯           
-                                                                                                    
                                                                                                     
                                                                                                     
                                                                                                     

@@ -30,7 +30,7 @@ git clone https://github.com/erickgnclvs/moomux && cd moomux && make install
 
 Requires `tmux`, `git`, and `claude` on `$PATH`.
 
-**Agent usage (optional, macOS)**: to see Claude and Codex usage, also install [agent-usage](https://github.com/afitzgerald/agent-usage) — see [Agent usage](#agent-usage):
+**Agent usage (macOS)**: Homebrew installs [agent-usage](https://github.com/afitzgerald/agent-usage) with moomux, and moomux starts its service on first run. It supplies Claude and Codex usage and the Claude and Codex models and thinking levels in the new-session form; without it, the only choice for either is `default`. See [Agent usage](#agent-usage). With any other install method, install it yourself:
 
 ```bash
 brew install afitzgerald/agent-usage/agent-usage

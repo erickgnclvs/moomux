@@ -475,6 +475,10 @@ func (c *Client) SetTerminalPane(on bool) error {
 	return c.mut("SetTerminalPane", Args{On: on})
 }
 
+func (c *Client) SetModelExcluded(agent, id string, excluded bool) error {
+	return c.mut("SetModelExcluded", Args{Agent: agent, Model: id, On: excluded})
+}
+
 // Nudge implements sessionview.Source, asking the server for a snapshot now
 // instead of at its next tick. Handed to the live stream goroutine rather
 // than written to the connection here, so it can't race that goroutine's

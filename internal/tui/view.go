@@ -251,6 +251,10 @@ func (m *Model) focusedOverlayLine(content string) int {
 		}
 	case ModeThemePicker:
 		return lineContaining(content, themePickerRowMarker+themeNames[m.themeCursor])
+	case ModeModelFilter:
+		// Only the selected row carries the marker. Its label isn't a safe
+		// needle: rows truncate it, and two agents can share a name.
+		return lineContaining(content, modelFilterRowMarker)
 	case ModeSettings:
 		if m.settingsCursor < len(settingsRows) {
 			return lineContaining(content, settingsRowMarker+settingsRows[m.settingsCursor].label)
@@ -422,6 +426,13 @@ func (m *Model) View() string {
 	case ModeThemePicker:
 		content := m.compactOverlayContent(m.renderThemePicker())
 		return m.renderOverlay(content, m.themePickerFooter(), m.focusedOverlayLine(content))
+	case ModeModelFilter:
+		content := m.compactOverlayContent(m.renderModelFilter())
+		footer := m.modelFilterFooter()
+		if line := m.flashLine(m.overlayWidth(formHintWidth)); line != "" {
+			footer = line + "\n" + footer
+		}
+		return m.renderOverlay(content, footer, m.focusedOverlayLine(content))
 	case ModeSettings:
 		content := m.compactOverlayContent(m.renderSettings())
 		footer := m.settingsFooter()

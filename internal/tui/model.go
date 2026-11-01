@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -169,6 +170,9 @@ type Backend interface {
 	// SetTerminalPane persists whether new sessions get a shell pane beside
 	// the agent.
 	SetTerminalPane(on bool) error
+	// SetModelExcluded adds agent's model id to, or removes it from, the
+	// list model pickers leave out.
+	SetModelExcluded(agent, id string, excluded bool) error
 	// ConfigSnapshot returns the backend's current config. Only ever call
 	// this from inside a tea.Cmd closure, after the mutation it's reporting
 	// on — never from Update()/View() directly (it may do I/O, e.g. an IPC
@@ -199,6 +203,7 @@ const (
 	ModeSettings
 	ModeFolderForm
 	ModeFolders
+	ModeModelFilter
 	ModeConfirmDeleteFolder
 	ModeWhatsNew
 )
@@ -209,8 +214,8 @@ const (
 // -style list — opencode has no permission-skipping flag (see dangerousFlag
 // in internal/app), so its toggle is simply a no-op.
 //
-// Sourced from m.agentOptions, fetched from the backend once at startup
-// (App.AgentOptions, served remotely by internal/ipc) — this used to be a
+// Sourced from m.agentOptions, fetched from the backend at startup and then
+// replaced by each snapshot's Agents (App.AgentOptions) — this used to be a
 // hardcoded copy here that could silently drift from what the core actually
 // launches; now the TUI and any other front end read the same table.
 func (m *Model) agentNames() []string {
@@ -257,7 +262,7 @@ func (m *Model) agentUsesFreeTextModel(agent string) bool {
 func (m *Model) modelNamesFor(agent string) []string {
 	for _, o := range m.agentOptions {
 		if o.Name == agent && len(o.Models) > 0 {
-			return o.Models
+			return m.shownModels(agent, o.Models)
 		}
 	}
 	if len(m.agentOptions) > 0 {
@@ -266,22 +271,125 @@ func (m *Model) modelNamesFor(agent string) []string {
 	return nil
 }
 
-// thinkingNamesFor returns agent's thinking/reasoning-level choices, with
-// the same core-served fallback as modelNamesFor. What a level *means* per
-// agent — a real launch flag (-c model_reasoning_effort, --effort), or a phrase prepended to
-// the first prompt — is the core's too; see App.FirstPrompt. "default"
-// always means "pass/prepend nothing".
-func (m *Model) thinkingNamesFor(agent string) []string {
+// shownModels drops the models the hidden-models screen excluded (read live
+// from m.cfg, which the core streams), always keeping "default".
+func (m *Model) shownModels(agent string, ids []string) []string {
+	return slices.DeleteFunc(slices.Clone(ids), func(id string) bool {
+		return id != "default" && m.cfg.ModelExcluded(agent, id)
+	})
+}
+
+// modelLabels returns what a picker shows for agent's model IDs: each one's
+// display name from the core (ModelNames), or the ID itself when it has none.
+// Only the labels change; the form still stores and submits the ID.
+func (m *Model) modelLabels(agent string, ids []string) []string {
+	var names map[string]string
+	for _, o := range m.agentOptions {
+		if o.Name == agent {
+			names = o.ModelNames
+		}
+	}
+	labels := make([]string, len(ids))
+	for i, id := range ids {
+		labels[i] = id
+		if n, ok := names[id]; ok {
+			labels[i] = n
+		}
+	}
+	return labels
+}
+
+// thinkingNamesFor returns the thinking/reasoning-level choices for model
+// on agent: the model's own list when the core serves one (ModelThinking),
+// else the agent's, with the same core-served fallback as modelNamesFor.
+// What a level *means* per agent — a real launch flag
+// (-c model_reasoning_effort, --effort), or a phrase prepended to the first
+// prompt — is the core's too; see App.FirstPrompt. "default" always means
+// "pass/prepend nothing".
+func (m *Model) thinkingNamesFor(agent, model string) []string {
 	var fallback []string
 	if len(m.agentOptions) > 0 {
 		fallback = m.agentOptions[0].Thinking
 	}
 	for _, o := range m.agentOptions {
 		if o.Name == agent {
+			if levels, ok := o.ModelThinking[model]; ok {
+				return levels
+			}
 			return o.Thinking
 		}
 	}
 	return fallback
+}
+
+// newFormAgentModel returns the new-session form's current agent and model
+// ("" for an agent not yet chosen; the typed text for a free-text model).
+func (m *Model) newFormAgentModel() (agent, model string) {
+	if m.newFormAgentIdx >= 0 {
+		agent = m.agentNames()[m.newFormAgentIdx]
+	}
+	if m.agentUsesFreeTextModel(agent) {
+		return agent, m.newFormModelInput.Value()
+	}
+	if names := m.newFormModelChoices(agent); m.newFormModelIdx >= 0 && m.newFormModelIdx < len(names) {
+		model = names[m.newFormModelIdx]
+	}
+	return agent, model
+}
+
+// newFormThinkingNames is thinkingNamesFor the form's current agent and model.
+func (m *Model) newFormThinkingNames() []string {
+	return m.thinkingNamesFor(m.newFormAgentModel())
+}
+
+// newFormModelChoices is the new-session form's model selector: the agent's
+// shown models, plus newFormExtraModel (a chosen model that dropped out of
+// them under the open form: hidden from another front end, or no longer in
+// models.json) right after "default", so it isn't swapped for a neighbour.
+func (m *Model) newFormModelChoices(agent string) []string {
+	choices := m.modelNamesFor(agent)
+	if e := m.newFormExtraModel; e != "" && len(choices) > 0 && !slices.Contains(choices, e) {
+		return slices.Insert(slices.Clone(choices), 1, e)
+	}
+	return choices
+}
+
+// formSelection is what the new-session form has chosen, by value, so it can
+// be put back after the lists under it change.
+type formSelection struct {
+	agent, model, thinking string
+}
+
+// captureFormSelection records the form's choices before a snapshot changes
+// the lists they index into: the agent table (models.json was rewritten) or
+// the config (a model hidden or shown from another front end).
+func (m *Model) captureFormSelection() formSelection {
+	var s formSelection
+	s.agent, s.model = m.newFormAgentModel()
+	if names := m.newFormThinkingNames(); m.newFormThinkingIdx >= 0 && m.newFormThinkingIdx < len(names) {
+		s.thinking = names[m.newFormThinkingIdx]
+	}
+	return s
+}
+
+// restoreFormSelection re-points the form's indexes at the values s recorded.
+// A model that dropped out of its list stays chosen as the extra entry rather
+// than becoming a neighbour.
+func (m *Model) restoreFormSelection(s formSelection) {
+	if !m.agentUsesFreeTextModel(s.agent) {
+		if s.model != "" && s.model != "default" && !slices.Contains(m.newFormModelChoices(s.agent), s.model) {
+			m.newFormExtraModel = s.model
+		}
+		m.newFormModelIdx = max(slices.Index(m.newFormModelChoices(s.agent), s.model), 0)
+	}
+	m.newFormKeepThinking(s.thinking)
+	m.modelFilterCursor = min(m.modelFilterCursor, max(len(m.modelFilterRows())-1, 0))
+}
+
+// newFormKeepThinking re-points newFormThinkingIdx after the model changes:
+// at the same level if the new model offers it, else at "default".
+func (m *Model) newFormKeepThinking(prev string) {
+	m.newFormThinkingIdx = max(slices.Index(m.newFormThinkingNames(), prev), 0)
 }
 
 // agentNameIndex finds agent's position in agentNames, defaulting to 0
@@ -406,7 +514,8 @@ type Model struct {
 	cfgAppliedAt time.Time
 	backend      Backend
 	// agentOptions is the core's agent/model/thinking-level tables, fetched
-	// once at startup (see New) — the single source every form's agent,
+	// at startup (see New) and refreshed from the stream (setAgentOptions) —
+	// the single source every form's agent,
 	// model and thinking selectors read from instead of a copy of their own.
 	agentOptions []config.AgentOption
 	keys         KeyMap
@@ -495,12 +604,13 @@ type Model struct {
 	newFormModelInput       textinput.Model // opencode's free-text model field; unused for claude/codex
 	newFormFocus            int             // 0=project selector, 1=nameInput, 2=branchInput, 3=baseBranchInput, 4=promptInput, 5=ticketInput, 6=prInput, 7=agent selector, 8=model selector, 9=thinking selector, 10=open-terminal toggle, 11=auto-submit toggle
 	newFormErr              string
-	newFormAgentIdx         int  // index into agentNames; preset to the last agent used
-	newFormModelIdx         int  // index into modelNamesFor(chosen agent); 0 ("default") initially, reset on agent change
-	newFormThinkingIdx      int  // index into thinkingNamesFor(chosen agent); 0 ("default") initially, reset on agent change
-	newFormProjIdx          int  // project selector in the new-session form; index into m.projects
-	newFormOpenInBackground bool // whether to skip opening a terminal window for the new session; off by default
-	newFormAutoSubmit       bool // whether to press Enter after typing the first prompt into the pane; seeded from cfg.AutoSubmitDefault
+	newFormAgentIdx         int    // index into agentNames; preset to the last agent used
+	newFormModelIdx         int    // index into newFormModelChoices(chosen agent); 0 ("default") initially, reset on agent change
+	newFormExtraModel       string // a chosen model that dropped out of the shown list under the open form; see newFormModelChoices
+	newFormThinkingIdx      int    // index into newFormThinkingNames(); 0 ("default") initially, reset on agent change, kept by name on model change
+	newFormProjIdx          int    // project selector in the new-session form; index into m.projects
+	newFormOpenInBackground bool   // whether to skip opening a terminal window for the new session; off by default
+	newFormAutoSubmit       bool   // whether to press Enter after typing the first prompt into the pane; seeded from cfg.AutoSubmitDefault
 	projForm                projectForm
 	sessionForm             sessionForm
 	editProjectName         string
@@ -567,6 +677,9 @@ type Model struct {
 	// finishes; a session that failed to delete is still in the store, so
 	// it simply reappears.
 	deleting map[string]bool
+	// modelFilterCursor is an index into modelFilterRows() while
+	// ModeModelFilter is open.
+	modelFilterCursor int
 	// themeCursor is an index into themeNames while ModeThemePicker is open.
 	// previewAppearance holds the appearance being live-previewed there
 	// ("", "light", or "dark") until Enter persists it or Esc reverts to

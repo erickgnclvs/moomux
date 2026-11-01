@@ -87,6 +87,8 @@ func TestScreens(t *testing.T) {
 	// renders whatever the developer happens to have configured, and the
 	// golden passes locally and fails in CI.
 	t.Setenv("XDG_CONFIG_HOME", "/home/moo/.config")
+	// UISHOT_MODELS previews a real models.json; the goldens use the sample.
+	t.Setenv("UISHOT_MODELS", "")
 
 	for name := range screens {
 		t.Run(name, func(t *testing.T) {

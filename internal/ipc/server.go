@@ -802,6 +802,8 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		return s.mutResult(b.SetCompactDetail(a.On))
 	case "SetTerminalPane":
 		return s.mutResult(b.SetTerminalPane(a.On))
+	case "SetModelExcluded":
+		return s.mutResult(b.SetModelExcluded(a.Agent, a.Model, a.On))
 	}
 	return Result{}, fmt.Errorf("unknown method %q", method)
 }

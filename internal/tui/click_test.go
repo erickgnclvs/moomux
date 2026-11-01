@@ -23,10 +23,22 @@ import (
 // would serve in production, kept in lockstep with it by
 // TestAgentOptionsMatchesTUIFixture in agent_options_test.go.
 var testAgentOptions = []config.AgentOption{
-	{Name: "claude", Models: []string{"default", "sonnet", "opus", "fable"}, Thinking: []string{"default", "low", "medium", "high", "xhigh", "max"}},
-	{Name: "codex", Models: []string{"default", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}, Thinking: []string{"default", "minimal", "low", "medium", "high", "xhigh"}},
+	{Name: "claude", Models: []string{"default", "sonnet", "opus", "fable"}, Thinking: []string{"default", "low", "medium", "high", "xhigh", "max"},
+		ModelNames: map[string]string{"sonnet": "Sonnet", "opus": "Opus", "fable": "Fable"},
+		ModelThinking: map[string][]string{
+			"sonnet": {"default", "low", "medium", "high"},
+			"opus":   {"default", "low", "medium", "high", "xhigh", "max"},
+			"fable":  {"default", "low", "medium", "high", "xhigh", "max"},
+		}},
+	{Name: "codex", Models: []string{"default", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}, Thinking: []string{"default", "minimal", "low", "medium", "high", "xhigh"},
+		ModelNames: map[string]string{"gpt-5.6-sol": "Sol", "gpt-5.6-terra": "Terra", "gpt-5.6-luna": "Luna"},
+		ModelThinking: map[string][]string{
+			"gpt-5.6-sol":   {"default", "minimal", "low", "medium", "high", "xhigh"},
+			"gpt-5.6-terra": {"default", "low", "medium", "high"},
+			"gpt-5.6-luna":  {"default"},
+		}},
 	{Name: "opencode", Thinking: []string{"default", "think", "think hard", "think harder", "ultrathink"}},
-	{Name: "antigravity", Models: []string{"default", "Gemini 3.8 Flash (High)", "Gemini 3.8 Flash (Medium)", "Gemini 3.8 Flash (Low)", "Gemini 3.1 Pro (High)", "Gemini 3.1 Pro (Low)"}, Thinking: []string{"default", "low", "medium", "high"}},
+	{Name: "antigravity", Models: []string{"default"}, Thinking: []string{"default", "low", "medium", "high"}},
 }
 
 type fakeBackend struct {
@@ -38,7 +50,9 @@ type fakeBackend struct {
 	tmuxAliveCalls atomic.Int64
 
 	reorderSessionsCalls []reorderSessionsCall
-	reorderSessionsErr   error
+
+	setModelExcludedCalls []setModelExcludedCall
+	reorderSessionsErr    error
 
 	moveProjectCalls []moveProjectCall
 	moveProjectErr   error
@@ -592,6 +606,16 @@ func (f *fakeBackend) SetAutoTmux(autoTmux bool) error {
 }
 
 func (f *fakeBackend) SetTerminalPane(bool) error { return nil }
+
+func (f *fakeBackend) SetModelExcluded(agent, id string, excluded bool) error {
+	f.setModelExcludedCalls = append(f.setModelExcludedCalls, setModelExcludedCall{agent, id, excluded})
+	return nil
+}
+
+type setModelExcludedCall struct {
+	agent, id string
+	excluded  bool
+}
 
 func (f *fakeBackend) SetCompactDetail(compact bool) error {
 	f.setCompactDetailCalls = append(f.setCompactDetailCalls, compact)

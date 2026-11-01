@@ -113,6 +113,12 @@ type Snapshot struct {
 	// UsageSetup says why Usage is omitted (usage.NotInstalled et al.), so a
 	// client can tell the user how to turn it on; empty whenever Usage is set.
 	UsageSetup string `json:"usage_setup,omitempty"`
+	// Agents is App.AgentOptions as of PollTime. It rides the stream because
+	// claude's and codex's models come from agent-usage's models.json, which
+	// changes under a running core (hourly, and first appears minutes after
+	// install). Absent (an older core, the error-only snapshot) means "no
+	// answer": keep the last one.
+	Agents []config.AgentOption `json:"agents,omitempty"`
 	// UpdateAvailable is set when GitHub Releases has a version newer than
 	// the one this core runs; absent otherwise (up to date, a dev build, or
 	// the check hasn't answered yet), so absent means nothing to draw.
@@ -198,6 +204,8 @@ type Watcher struct {
 
 	// WhatsNew is copied into every snapshot.
 	WhatsNew *whatsnew.Notes
+	// Agents, when set, is called for every snapshot's Agents.
+	Agents func() []config.AgentOption
 
 	// latest is the newest release tag seen, owned by the run loop.
 	latest string
@@ -541,6 +549,10 @@ func (w *Watcher) build() (Snapshot, map[string]watcher.State) {
 		u, setup = w.Usage.Read(now)
 		codex, _ = w.Usage.ReadAgent(now, "codex")
 	}
+	var agents []config.AgentOption
+	if w.Agents != nil {
+		agents = w.Agents()
+	}
 	var upd *UpdateInfo
 	if updatecheck.Newer(w.Version, w.latest) {
 		upd = &UpdateInfo{
@@ -554,6 +566,7 @@ func (w *Watcher) build() (Snapshot, map[string]watcher.State) {
 		Usage:           u,
 		CodexUsage:      codex,
 		UsageSetup:      setup,
+		Agents:          agents,
 		Sessions:        ordered,
 		Views:           views,
 		Rows:            rows,

@@ -563,3 +563,22 @@ func TestSaveWritesPreFoldersBackupOnce(t *testing.T) {
 		t.Fatalf("second Save overwrote the backup: %q", got)
 	}
 }
+
+// SetModelExcluded must not edit the map it replaces: App restores the old
+// value when a save fails, and a Config copy may share that map.
+func TestSetModelExcludedLeavesOldMap(t *testing.T) {
+	c := &Config{ExcludedModels: map[string][]string{"claude": {"a"}, "codex": {"x"}}}
+	prev := c.ExcludedModels
+	c.SetModelExcluded("claude", "b", true)
+	if !c.ModelExcluded("claude", "a") || !c.ModelExcluded("claude", "b") || !c.ModelExcluded("codex", "x") {
+		t.Fatalf("after hide: %v", c.ExcludedModels)
+	}
+	if len(prev["claude"]) != 1 {
+		t.Fatalf("old map changed: %v", prev)
+	}
+	c.SetModelExcluded("claude", "a", false)
+	c.SetModelExcluded("claude", "b", false)
+	if _, ok := c.ExcludedModels["claude"]; ok {
+		t.Fatalf("empty agent entry kept: %v", c.ExcludedModels)
+	}
+}

@@ -8,7 +8,7 @@
 │                                      │
 │  agent:  ‹ [antigravity] ›           │
 │                                      │
-│  model:  ‹ [default] ›               │
+│  model:  [default]                   │
 │                                      │
 │  open in background:  [off]          │
 │                                      │
@@ -42,7 +42,7 @@
            │                                                                            │           
            │  agent:  claude  codex  opencode  [antigravity]                            │           
            │                                                                            │           
-           │  model:  ‹ [default] ›                                                     │           
+           │  model:  [default]                                                         │           
            │                                                                            │           
            │  open in background:  [off]                                                │           
            │                                                                            │           

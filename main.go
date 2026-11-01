@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -310,6 +311,7 @@ func relaunchInTmux() error {
 // spawn subcommand — neither the tmux-setup/auto-tmux first-run prompts nor
 // relaunchInTmux belong in the non-interactive path, so those stay in run().
 func newApp() (*app.App, error) {
+	home, _ := os.UserHomeDir()
 	cfgPath := config.DefaultPath()
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
@@ -341,9 +343,57 @@ func newApp() (*app.App, error) {
 		Git:          gitwt.New(),
 		PR:           prstatus.New(),
 		WorktreeRoot: app.WorktreeRootDefault(),
+		ModelsPath:   usage.ModelsPath(home),
 	}
 	a.InstallKnownCommands()
 	return a, nil
+}
+
+// startAgentUsage starts agent-usage's Homebrew service once, the first time
+// moomux finds it installed (moomux's formula depends on it on macOS) but its
+// file not yet written. Homebrew installs a dependency but can't start its
+// service, and until it runs there is no usage and no model or thinking list.
+// marker records the attempt, so a service the user later stops on purpose
+// stays stopped. Best-effort and in the background: a failure only logs, and
+// leaves no marker, so the next launch tries again.
+func startAgentUsage(path, marker string) {
+	if !agentUsageNeedsStart(runtime.GOOS, path, marker, exec.LookPath) {
+		return
+	}
+	go func() {
+		if out, err := exec.Command("brew", "services", "start", "agent-usage").CombinedOutput(); err != nil {
+			slog.Warn("brew services start agent-usage failed", "err", err, "output", strings.TrimSpace(string(out)))
+			return
+		}
+		if err := os.WriteFile(marker, nil, 0o644); err != nil {
+			slog.Warn("record agent-usage start", "err", err)
+		}
+	}()
+}
+
+// agentUsageMarker is startAgentUsage's marker, next to config.toml.
+func agentUsageMarker() string {
+	return filepath.Join(filepath.Dir(config.DefaultPath()), "agent-usage-started")
+}
+
+// agentUsageNeedsStart is startAgentUsage's check: macOS, never started
+// before (no marker), no usage file yet, and both agent-usage and brew on
+// PATH.
+func agentUsageNeedsStart(goos, path, marker string, lookPath func(string) (string, error)) bool {
+	if goos != "darwin" {
+		return false
+	}
+	for _, f := range []string{path, marker} {
+		if _, err := os.Stat(f); !os.IsNotExist(err) {
+			return false
+		}
+	}
+	for _, bin := range []string{"agent-usage", "brew"} {
+		if _, err := lookPath(bin); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // setupLogging points slog at ~/.local/share/moomux/moomux.log. It must run
@@ -698,6 +748,7 @@ func run() error {
 	// Before the branch: both paths render a TUI, and a TUI that logs to
 	// stderr writes over its own alt screen.
 	setupLogging()
+	startAgentUsage(usage.DefaultPath(home), agentUsageMarker())
 
 	if c, cfg, agentOptions, err := connect(ipc.DefaultSocket(home)); err == nil {
 		// Both of these are about the terminal *this* process is sitting
@@ -850,6 +901,7 @@ func runServe(args []string) error {
 		return err
 	}
 	go a.EmptyTrash()
+	startAgentUsage(usage.DefaultPath(home), agentUsageMarker())
 	ln, err := ipc.Listen(*sock)
 	if err != nil {
 		return err
@@ -901,6 +953,7 @@ func buildSource(a *app.App, home string) *sessionview.Watcher {
 	return &sessionview.Watcher{
 		Core: a, Raw: buildWatcher(home), Home: home,
 		Usage:   &usage.Reader{Path: usage.DefaultPath(home)},
+		Agents:  a.AgentOptions,
 		Version: version, WhatsNew: whatsnew.Load(version),
 	}
 }

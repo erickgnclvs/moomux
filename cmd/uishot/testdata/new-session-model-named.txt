@@ -6,16 +6,16 @@
 │                                      │
 │  > PR url (optional)                 │
 │                                      │
-│  agent:  ‹ [antigravity] ›           │
+│  agent:  ‹ [codex] ›                 │
 │                                      │
-│  model:  [Gemini 3.8 Flash (High)]   │
+│  model:  ‹ [Sol] ›                   │
 │                                      │
 │  open in background:  [off]          │
 │                                      │
 │  auto-submit:  [off]                 │
 │                                      │
-│  named model — the thinking level    │
-│  above will be ignored               │
+│  optional — passed as --model to     │
+│  the agent; "default" omits the      │
 │  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
@@ -28,7 +28,7 @@
            │  >                                                                         │           
            │  >                                                                         │           
            │                                                                            │           
-           │  thinking:  default  [low]  medium  high                                   │           
+           │  thinking:  [default]  minimal  low  medium  high  xhigh                   │           
            │                                                                            │           
            │  > session name (optional)                                                 │           
            │                                                                            │           
@@ -40,15 +40,15 @@
            │                                                                            │           
            │  > PR url (optional)                                                       │           
            │                                                                            │           
-           │  agent:  claude  codex  opencode  [antigravity]                            │           
+           │  agent:  claude  [codex]  opencode  antigravity                            │           
            │                                                                            │           
-           │  model:  ‹ [Gemini 3.8 Flash (High)] ›                                     │           
+           │  model:  default  [Sol]  Terra  Luna                                       │           
            │                                                                            │           
            │  open in background:  [off]                                                │           
            │                                                                            │           
            │  auto-submit:  [off]                                                       │           
            │                                                                            │           
-           │  named model — the thinking level above will be ignored                    │           
+           │  optional — passed as --model to the agent; "default" omits the flag       │           
            │  tab/↑↓ fields  ←→ choose  enter  esc cancel                               │           
            │                                                                            │           
            ╰────────────────────────────────────────────────────────────────────────────╯           
