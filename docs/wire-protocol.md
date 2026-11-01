@@ -81,6 +81,42 @@ handler. Two listeners, one `Server`; `Serve` has always taken a
   place it surfaces: it wakes a retry asleep in its backoff, and if that
   still doesn't bind, says "couldn't listen on Tailscale yet" with the
   latest reason.
+- **A browser proxy rides along, on `ipc.TailnetProxyPort` (45877).** It
+  binds the moment the listener does, before `Pair` hears it is up, on the
+  same address and behind the same whois check — one shared result cache,
+  so a phone using both ports costs one `tailscale whois`. `moomux serve`
+  turns it on with `Tailnet.ProxyPort`; zero is no proxy, which is what the
+  tests' loopback listeners get. It is an HTTP `CONNECT` proxy and nothing else —
+  WebKit's proxy configuration tunnels plain `http` through `CONNECT` too.
+  The iPhone app points its browser at it, so every name is resolved and
+  dialled on this machine: dev servers bound to `127.0.0.1`, and hosts only
+  this machine's `/etc/hosts` knows. Trust: it reaches whatever this
+  machine can, including loopback-only services, for the same one user the
+  IPC port already admits — and that port runs `CreateSession`, so the
+  proxy grants nothing new. Failing to bind (the port taken) is logged,
+  not retried, never fatal, and never touches `Pair`: the phone loses its
+  browser until a restart, nothing else.
+- **What the proxy guards against is the pages that browser loads**, which
+  run as that user too. Checked on the address actually dialled, after
+  resolution, so a name can't answer one way for the check and another for
+  the connection:
+  - *DNS rebinding.* A browser never resolves through a `CONNECT` proxy, so
+    it can't pin an answer, and a page could flip its own name to
+    `127.0.0.1` between two requests and read local services as its own
+    origin. So a name may resolve to a loopback, private, link-local or
+    tailnet (`100.64.0.0/10`) address only if nobody can register it: IP
+    literals, `localhost` and `*.localhost` (RFC 6761; macOS resolves every
+    one to loopback by itself), and `*.invalid`. Anything else is a `403`.
+  - *moomux itself.* A dial from the proxy arrives from this machine's own
+    tailnet address, which whois admits, so the proxy's own port and
+    `TailnetPort` on that address are refused.
+  - *Descriptor exhaustion.* Tunnels share the core's process, so at most
+    256 are open (`503` past that), and one idle both ways for 10 minutes
+    is closed.
+- **Never point `tailscale serve` or Funnel at either port.** Connections
+  it forwards arrive from this machine's own address, which whois admits,
+  so that would open `CreateSession`, and the proxy, to whoever reaches
+  the forward.
 
 Deliberately not `tsnet`. Becoming a tailnet node of its own is the more
 correct answer — it never touches the host's network stack, so there is no

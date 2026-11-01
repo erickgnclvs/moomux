@@ -124,7 +124,8 @@ type tailnetListener struct {
 	// briefly, only to blunt a connection storm into something that doesn't
 	// fork `tailscale` per packet. The cost of the positive TTL is that a
 	// node that leaves the tailnet stays authorized for up to that long.
-	mu sync.Mutex
+	// Shared with any sibling, so a phone using both ports costs one fork.
+	mu *sync.Mutex
 	ok map[string]*authEntry
 }
 
@@ -150,8 +151,17 @@ func newTailnetListener(ln net.Listener, owner string) *tailnetListener {
 		conns:    make(chan net.Conn),
 		fail:     make(chan error, 1),
 		done:     make(chan struct{}),
+		mu:       &sync.Mutex{},
 		ok:       map[string]*authEntry{},
 	}
+}
+
+// sibling wraps ln behind the same check as l: the same owner and the same
+// result cache.
+func (l *tailnetListener) sibling(ln net.Listener) *tailnetListener {
+	s := newTailnetListener(ln, l.owner)
+	s.mu, s.ok = l.mu, l.ok
+	return s
 }
 
 // Owner is the tailnet login this listener admits, fixed when it bound.
@@ -222,7 +232,7 @@ func (l *tailnetListener) pump() {
 func (l *tailnetListener) admit(c net.Conn) {
 	peer, _, err := net.SplitHostPort(c.RemoteAddr().String())
 	if err != nil || !l.authorized(peer) {
-		slog.Warn("ipc: refused tailnet peer", "peer", c.RemoteAddr().String())
+		slog.Warn("ipc: refused tailnet peer", "peer", c.RemoteAddr().String(), "on", l.Addr().String())
 		_ = c.Close()
 		return
 	}
@@ -414,6 +424,9 @@ var errTailnetChanged = errors.New("Tailscale changed since moomux started. Rest
 // process.
 type Tailnet struct {
 	Srv *Server
+	// ProxyPort, when set, also serves ServeProxy on that port, beside the
+	// listener and behind its check. Zero is no proxy.
+	ProxyPort int
 	// listen binds the listener, blocking until it can; onErr hears each
 	// reason it can't yet, and a receive on wake is a reason to try again
 	// now. Nil is ListenTailnetRetry on TailnetPort — a field so a test can
@@ -464,17 +477,50 @@ func (t *Tailnet) serve(listen func(wake <-chan struct{}, onErr func(error)) net
 			fmt.Fprintln(os.Stderr, "moomux: no tailnet listener yet, retrying:", err)
 		}
 	})
-	t.ln = ln
-	close(t.bound)
-	fmt.Fprintln(os.Stderr, "moomux: also serving on", ln.Addr())
 	// Serve returning means nothing is accepting on this listener any
 	// more: close it, or the port stays bound and any connection already
 	// past the tailnet auth check sits on its fd until the process exits.
 	defer ln.Close()
+	// Bound before t.bound closes, so a Pair that succeeds hands the phone
+	// a browser that is already up.
+	if pl := t.bindProxy(ln); pl != nil {
+		defer pl.Close()
+		go func() {
+			if err := ServeProxy(pl); !errors.Is(err, net.ErrClosed) {
+				slog.Error("tailnet browser proxy stopped", "err", err)
+			}
+		}()
+	}
+	t.ln = ln
+	close(t.bound)
+	fmt.Fprintln(os.Stderr, "moomux: also serving on", ln.Addr())
 	// Serve only ever returns a non-nil error.
 	if err := t.Srv.Serve(ln); !errors.Is(err, net.ErrClosed) {
 		slog.Error("tailnet listener stopped", "err", err)
 	}
+}
+
+// bindProxy binds ProxyPort on ln's address, behind ln's own check, or
+// returns nil. It asks Tailscale nothing: ln already holds the address and
+// owner. Never fatal, and Pair never hears of it: a proxy that can't bind
+// costs the phone its browser and nothing else.
+func (t *Tailnet) bindProxy(ln net.Listener) net.Listener {
+	if t.ProxyPort == 0 {
+		return nil
+	}
+	// A listener that can't say whom it admits gets no proxy: fail closed.
+	tl, _ := ln.(*tailnetListener)
+	if tl == nil {
+		return nil
+	}
+	host, _, _ := net.SplitHostPort(tl.Addr().String())
+	raw, err := net.Listen("tcp", net.JoinHostPort(host, fmt.Sprint(t.ProxyPort)))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "moomux: no tailnet browser proxy:", err)
+		return nil
+	}
+	fmt.Fprintln(os.Stderr, "moomux: browser proxy on", raw.Addr())
+	return tl.sibling(raw)
 }
 
 // Pair makes sure the listener is up and answers what a phone needs to
