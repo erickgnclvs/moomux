@@ -1,0 +1,10 @@
+{"schema":1,"generatedAt":"2026-09-30T17:05:00Z","agents":[
+  {"agent":"claude","models":[
+    {"id":"sonnet","name":"Sonnet","thinkingLevels":["low","medium","high"]},
+    {"id":"opus","name":"Opus","thinkingLevels":["low","medium","high","xhigh","max"]},
+    {"id":"fable","name":"Fable","thinkingLevels":["low","medium","high","xhigh","max"]}]},
+  {"agent":"codex","models":[
+    {"id":"gpt-5.6-sol","name":"Sol","thinkingLevels":["minimal","low","medium","high","xhigh"]},
+    {"id":"gpt-5.6-terra","name":"Terra","thinkingLevels":["low","medium","high"]},
+    {"id":"gpt-5.6-luna","name":"Luna"}]}
+]}

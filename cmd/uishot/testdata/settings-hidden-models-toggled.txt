@@ -1,0 +1,54 @@
+=== 40x20 ===
+                                        
+╭──────────────────────────────────────╮
+│                                      │
+│  MODELS SHOWN IN PICKERS             │
+│                                      │
+│  claude                              │
+│     Sonnet                    [on]   │
+│   ▸ Opus                     [off]   │
+│     Fable                     [on]   │
+│                                      │
+│  codex                               │
+│     Sol                       [on]   │
+│     Terra                     [on]   │
+│     Luna                      [on]   │
+│                                      │
+│  ✓ Opus: hidden from model pickers   │
+│  esc back  enter toggle              │
+│                                      │
+╰──────────────────────────────────────╯
+                                        
+=== 100x32 ===
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+           ╭────────────────────────────────────────────────────────────────────────────╮           
+           │                                                                            │           
+           │  MODELS SHOWN IN PICKERS                                                   │           
+           │                                                                            │           
+           │  claude                                                                    │           
+           │     Sonnet                                                          [on]   │           
+           │   ▸ Opus                                                           [off]   │           
+           │     Fable                                                           [on]   │           
+           │                                                                            │           
+           │  codex                                                                     │           
+           │     Sol                                                             [on]   │           
+           │     Terra                                                           [on]   │           
+           │     Luna                                                            [on]   │           
+           │                                                                            │           
+           │  ✓ Opus: hidden from model pickers                                         │           
+           │  ↑↓ select  enter/←→ show or hide  esc back                                │           
+           │                                                                            │           
+           ╰────────────────────────────────────────────────────────────────────────────╯           
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    

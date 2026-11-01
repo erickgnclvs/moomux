@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 )
@@ -76,39 +77,39 @@ func TestRenderSelectorOutOfRangeSelection(t *testing.T) {
 	}
 }
 
-// TestNewFormHintWarnsWhenAgyModelEatsThinking pins the second half of the
-// agy effort rule: the thinking row's own hint only reaches someone standing
-// on it, so picking the level first and a named model second would drop the
-// level with nothing on screen saying so (buildAgentCmd logs a warning the
-// user never sees).
-func TestNewFormHintWarnsWhenAgyModelEatsThinking(t *testing.T) {
-	m := newTestModel(&fakeBackend{})
-	agy := slices.Index(m.agentNames(), "antigravity")
-	if agy < 0 {
-		t.Fatal("antigravity missing from testAgentOptions")
+// Thinking levels belong to a model: switching models keeps the chosen level
+// where the new model offers it and falls back to "default" where it
+// doesn't, so the form never submits a level the model rejects.
+func TestNewFormThinkingFollowsModel(t *testing.T) {
+	be := &fakeBackend{}
+	m := newTestModel(be)
+	m.Update(keyRune("n"))
+	tabTo(t, m, newFormThinkingFocus)
+	for range 5 { // default model: default, low, medium, high, xhigh, max
+		press(m, tea.KeyRight)
 	}
-	m.newFormAgentIdx = agy
-	m.newFormFocus = newFormModelFocus
-
-	// default model: nothing is dropped, so the row keeps its normal hint.
-	m.newFormModelIdx, m.newFormThinkingIdx = 0, 3
-	if got := m.newFormFieldHint(); got != newFormFieldHints[newFormModelFocus] {
-		t.Errorf("default model hint = %q, want the plain model hint", got)
+	if got := m.newFormThinkingNames()[m.newFormThinkingIdx]; got != "max" {
+		t.Fatalf("thinking = %q, want max", got)
 	}
-	// A named model with a level picked: warn.
-	m.newFormModelIdx = 1
-	if got := m.newFormFieldHint(); !strings.Contains(got, "ignored") {
-		t.Errorf("named-model hint = %q, want it to say the thinking level is ignored", got)
+	tabTo(t, m, newFormModelFocus)
+	press(m, tea.KeyRight) // default -> sonnet, which has no max
+	if got := m.newFormThinkingNames(); !slices.Equal(got, []string{"default", "low", "medium", "high"}) {
+		t.Fatalf("sonnet thinking = %v", got)
 	}
-	// A named model with no level: nothing to warn about.
-	m.newFormThinkingIdx = 0
-	if got := m.newFormFieldHint(); got != newFormFieldHints[newFormModelFocus] {
-		t.Errorf("no-thinking hint = %q, want the plain model hint", got)
+	if m.newFormThinkingIdx != 0 {
+		t.Fatalf("thinking idx = %d, want 0 (default)", m.newFormThinkingIdx)
 	}
-	// Another agent never gets the agy warning.
-	m.newFormAgentIdx = slices.Index(m.agentNames(), "codex")
-	m.newFormModelIdx, m.newFormThinkingIdx = 1, 3
-	if got := m.newFormFieldHint(); got != newFormFieldHints[newFormModelFocus] {
-		t.Errorf("codex hint = %q, want the plain model hint", got)
+	m.newFormThinkingIdx = 3 // high
+	press(m, tea.KeyRight)   // sonnet -> opus, which has high too
+	if got := m.newFormThinkingNames()[m.newFormThinkingIdx]; got != "high" {
+		t.Fatalf("thinking after opus = %q, want high", got)
+	}
+	// The picker shows the display name; the ID is what gets submitted.
+	if got := m.renderNewFormModelSelector(); !strings.Contains(got, "Opus") || strings.Contains(got, "opus") {
+		t.Fatalf("model selector = %q, want display names", got)
+	}
+	run(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(be.createCalls) != 1 || be.createCalls[0].Model != "opus" || be.createCalls[0].Thinking != "high" {
+		t.Fatalf("createCalls = %+v", be.createCalls)
 	}
 }

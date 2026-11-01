@@ -791,3 +791,21 @@ func TestPinnedSessionsServedFirst(t *testing.T) {
 		t.Fatalf("order = %v, want %v", got, want)
 	}
 }
+
+// TestAgentsRideTheSnapshot: claude's and codex's models come from a file
+// agent-usage rewrites under a running core, so every snapshot asks again
+// rather than a client keeping what it fetched at connect.
+func TestAgentsRideTheSnapshot(t *testing.T) {
+	models := []string{"default"}
+	w := newWatcher(&fakeCore{})
+	w.Agents = func() []config.AgentOption { return []config.AgentOption{{Name: "claude", Models: models}} }
+	snap, _ := w.build()
+	if got := snap.Agents[0].Models; !slices.Equal(got, []string{"default"}) {
+		t.Fatalf("Agents[0].Models = %v", got)
+	}
+	models = []string{"default", "claude-opus-5-5"}
+	snap, _ = w.build()
+	if got := snap.Agents[0].Models; !slices.Equal(got, models) {
+		t.Fatalf("after models.json changed: Agents[0].Models = %v, want %v", got, models)
+	}
+}

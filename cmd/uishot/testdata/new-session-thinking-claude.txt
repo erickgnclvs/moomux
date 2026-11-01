@@ -42,7 +42,7 @@
            │                                                                            │           
            │  agent:  [claude]  codex  opencode  antigravity                            │           
            │                                                                            │           
-           │  model:  [default]  sonnet  opus  fable                                    │           
+           │  model:  [default]  Sonnet  Opus  Fable                                    │           
            │                                                                            │           
            │  open in background:  [off]                                                │           
            │                                                                            │           

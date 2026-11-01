@@ -399,3 +399,37 @@ func TestWaitForCoreOutlastsARestart(t *testing.T) {
 		t.Fatalf("relaunch would not attach to the restarted core: %v", err)
 	}
 }
+
+func TestAgentUsageNeedsStart(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "usage.json")
+	found := func(string) (string, error) { return "/bin/x", nil }
+	notFound := func(bin string) func(string) (string, error) {
+		return func(b string) (string, error) {
+			if b == bin {
+				return "", exec.ErrNotFound
+			}
+			return "/bin/" + b, nil
+		}
+	}
+	present := filepath.Join(t.TempDir(), "usage.json")
+	if err := os.WriteFile(present, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	noMarker := filepath.Join(t.TempDir(), "agent-usage-started")
+	for _, tc := range []struct {
+		name, goos, path, marker string
+		lookPath                 func(string) (string, error)
+		want                     bool
+	}{
+		{"mac, installed, never ran", "darwin", missing, noMarker, found, true},
+		{"linux", "linux", missing, noMarker, found, false},
+		{"already writing", "darwin", present, noMarker, found, false},
+		{"started once before (user may have stopped it)", "darwin", missing, present, found, false},
+		{"agent-usage not installed", "darwin", missing, noMarker, notFound("agent-usage"), false},
+		{"no brew", "darwin", missing, noMarker, notFound("brew"), false},
+	} {
+		if got := agentUsageNeedsStart(tc.goos, tc.path, tc.marker, tc.lookPath); got != tc.want {
+			t.Errorf("%s: agentUsageNeedsStart = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

@@ -36,6 +36,7 @@ type settingsRow struct {
 	set             func(*config.Config, bool) // toggle rows only
 	persist         func(Backend, bool) error  // toggle rows only
 	flash           func(next bool) string     // toggle rows only; status line shown after applying
+	open            func(m *Model)             // drill rows only; opens the row's own screen
 	renderValue     func(m *Model) string      // right-hand column
 	refreshSessions bool                       // whether applying should also refresh the session list (sort mode only)
 }
@@ -64,6 +65,7 @@ var settingsRows = []settingsRow{
 	{
 		label: "theme & appearance",
 		kind:  settingsRowDrill,
+		open:  (*Model).openThemePicker,
 		renderValue: func(m *Model) string {
 			return themeNames[themeIndex(m.cfg.Theme)] + " / " + appearanceLabel(m.cfg.Appearance)
 		},
@@ -123,6 +125,17 @@ var settingsRows = []settingsRow{
 			return "terminal pane: off — new sessions open as the agent alone"
 		},
 		renderValue: func(m *Model) string { return renderToggle(!m.cfg.NoTerminalPane, false) },
+	},
+	{
+		label: "hidden models",
+		kind:  settingsRowDrill,
+		open:  (*Model).openModelFilter,
+		renderValue: func(m *Model) string {
+			if n := m.hiddenModelCount(); n > 0 {
+				return fmt.Sprintf("%d hidden", n)
+			}
+			return "none"
+		},
 	},
 	{
 		label: "diff tool",

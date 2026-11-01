@@ -56,6 +56,10 @@ brews:
     dependencies:
       - name: tmux
       - name: git
+      # Usage and the claude/codex models and thinking levels come from
+      # agent-usage; moomux starts its service on first run (startAgentUsage).
+      - name: afitzgerald/agent-usage/agent-usage
+        os: mac
     test: |
       system "#{bin}/moomux", "--version"
     install: |

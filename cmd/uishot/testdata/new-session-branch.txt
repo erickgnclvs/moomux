@@ -42,7 +42,7 @@
            │                                                                            │           
            │  agent:  claude  [codex]  opencode  antigravity                            │           
            │                                                                            │           
-           │  model:  [default]  gpt-5.6-sol  gpt-5.6-terra  gpt-5.6-luna               │           
+           │  model:  [default]  Sol  Terra  Luna                                       │           
            │                                                                            │           
            │  open in background:  [off]                                                │           
            │                                                                            │           

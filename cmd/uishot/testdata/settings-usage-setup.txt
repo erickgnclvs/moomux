@@ -1,13 +1,13 @@
 === 40x20 ===
 ╭──────────────────────────────────────╮
 │                                      │
-│                                      │
 │     sort mode    manual (shift+↑↓)   │
 │     theme & appear… default / auto   │
 │     auto-tmux                [off]   │
 │     auto-submit default      [off]   │
 │     compact detail view      [off]   │
 │     terminal pane             [on]   │
+│     hidden models             none   │
 │     diff tool              not set   │
 │   ▸ Agent usage         not set up   │
 │                                      │
@@ -25,7 +25,6 @@
                                                                                                     
                                                                                                     
                                                                                                     
-                                                                                                    
            ╭────────────────────────────────────────────────────────────────────────────╮           
            │                                                                            │           
            │  SETTINGS                                                                  │           
@@ -36,6 +35,7 @@
            │     auto-submit default                                            [off]   │           
            │     compact detail view                                            [off]   │           
            │     terminal pane                                                   [on]   │           
+           │     hidden models                                                   none   │           
            │     diff tool                                                    not set   │           
            │   ▸ Agent usage                                               not set up   │           
            │                                                                            │           

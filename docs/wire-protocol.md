@@ -221,6 +221,15 @@ describes the machine a person is sitting at, not the sessions being
 orchestrated, and the core has no method for it at all. See the front-end
 split further down.
 
+### `agents`: the agent/model/thinking table
+
+`AgentOptions`'s answer, in every snapshot. claude's and codex's models come
+from agent-usage's `models.json`, which agent-usage rewrites about hourly and
+first writes minutes after install, so a table fetched once at connect goes
+stale under a running client. Absent (an older core, the error-only snapshot)
+means "no answer": keep the last one. A client with a form open keeps the
+chosen model and thinking level by value across a new table.
+
 ### `usage` and `codex_usage`: agent usage, read from agent-usage
 
 Optional keys: `usage` is Claude and `codex_usage` is Codex. Both are read from the `usage.json` that
@@ -403,6 +412,13 @@ as plain folder" dialog.
 **Read** — `Config`, `Sessions`, `AgentOptions`, `Themes`, `GhosttyConfig`,
 `SuggestedProject`, `WorktreeStatus`, `ChangeSummary`, `Capture`, `Diff`,
 `ReadBaseFile`.
+
+`AgentOptions` builds claude's and codex's `models` from agent-usage's
+`models.json`, with `"default"` first and no built-in fallback. Each model's
+display name is in `model_names` and its thinking levels in `model_thinking`
+(both keyed by model ID); `thinking` is then the list for model `"default"`,
+every level any model offers. `models` is the full list. A picker leaves out
+the IDs in `Config.excluded_models[agent]`, which `SetModelExcluded` edits.
 
 **Session lifecycle** — `CreateSession`, `EnsureTmux`, `DeleteSession`,
 `KillTmux` (park), `Review`, `SelectWindow`, `ResizeAttach` (see `Attach` below).
@@ -1001,7 +1017,7 @@ that; over the wire it is still just `ReorderSessions` with the full list.
 `UpdateProject`, `RemoveProject`, `MoveProject`.
 
 **Settings** — `SetTheme`, `SetAutoSubmitDefault`, `SetSortRecentFirst`,
-`SetAutoTmux`, `SetCompactDetail`, `SetTerminalPane`.
+`SetAutoTmux`, `SetCompactDetail`, `SetTerminalPane`, `SetModelExcluded` (`agent`, `model`, `on` = hidden).
 
 Front-end-owned settings deliberately have no method here — see "act on the
 right one" below.

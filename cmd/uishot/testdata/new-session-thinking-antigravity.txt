@@ -14,8 +14,8 @@
 │                                      │
 │  > PR url (optional)                 │
 │                                      │
-│  only with model "default" — agy     │
-│  models bake in their effort         │
+│  optional — agy --effort level;      │
+│  "default" omits it                  │
 │  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
@@ -42,13 +42,13 @@
            │                                                                            │           
            │  agent:  claude  codex  opencode  [antigravity]                            │           
            │                                                                            │           
-           │  model:  ‹ [default] ›                                                     │           
+           │  model:  [default]                                                         │           
            │                                                                            │           
            │  open in background:  [off]                                                │           
            │                                                                            │           
            │  auto-submit:  [off]                                                       │           
            │                                                                            │           
-           │  only with model "default" — agy models bake in their effort               │           
+           │  optional — agy --effort level; "default" omits it                         │           
            │  tab/↑↓ fields  ←→ choose  enter  esc cancel                               │           
            │                                                                            │           
            ╰────────────────────────────────────────────────────────────────────────────╯           

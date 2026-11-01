@@ -74,6 +74,7 @@ type Args struct {
 	NewName    string `json:"new_name,omitempty"`
 	Project    string `json:"project,omitempty"`
 	Agent      string `json:"agent,omitempty"`
+	Model      string `json:"model,omitempty"` // SetModelExcluded
 	Ticket     string `json:"ticket,omitempty"`
 	PR         string `json:"pr,omitempty"`
 	Prompt     string `json:"prompt,omitempty"`

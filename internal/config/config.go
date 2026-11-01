@@ -32,9 +32,16 @@ type AgentOption struct {
 	// Models is nil for an agent with no fixed list worth hardcoding (a
 	// free-text field is more honest than a stale one).
 	Models []string `json:"models,omitempty"`
+	// ModelNames maps a model ID in Models to the name a picker shows
+	// ("Opus 5.5"). An ID with no entry shows as itself.
+	ModelNames map[string]string `json:"model_names,omitempty"`
 	// Thinking is the thinking/reasoning-level choices for this agent;
 	// "default" always means "pass nothing".
 	Thinking []string `json:"thinking,omitempty"`
+	// ModelThinking, when set, gives the thinking choices per model in
+	// Models, and Thinking then applies to model "default" only. A model
+	// with no reasoning-effort setting maps to just "default".
+	ModelThinking map[string][]string `json:"model_thinking,omitempty"`
 }
 
 type Project struct {
@@ -141,6 +148,32 @@ func (p Project) IsPlain() bool { return p.Kind == "plain" }
 // their own emoji (Project.Emoji) — picked deterministically per project
 // name so the same project always gets the same glyph.
 var ProjectEmojiPalette = []string{"🐙", "🦊", "🚀", "🔥", "🌊", "🍀", "⚡", "🎯", "🐝", "🦉", "🐄"}
+
+// ModelExcluded reports whether agent's model id is on ExcludedModels.
+func (c *Config) ModelExcluded(agent, id string) bool {
+	return slices.Contains(c.ExcludedModels[agent], id)
+}
+
+// SetModelExcluded adds agent's model id to ExcludedModels or removes it.
+// It builds a new map rather than editing the old one, so a caller that kept
+// the previous value can restore it, and a copy of this Config that shares
+// the map is left alone.
+func (c *Config) SetModelExcluded(agent, id string, excluded bool) {
+	next := map[string][]string{}
+	for a, ids := range c.ExcludedModels {
+		if a != agent {
+			next[a] = ids
+		}
+	}
+	ids := slices.DeleteFunc(slices.Clone(c.ExcludedModels[agent]), func(s string) bool { return s == id })
+	if excluded {
+		ids = append(ids, id)
+	}
+	if len(ids) > 0 {
+		next[agent] = ids
+	}
+	c.ExcludedModels = next
+}
 
 // ProjectEmoji returns project's configured emoji, falling back to a
 // deterministic pick from ProjectEmojiPalette if none is set.
@@ -263,6 +296,9 @@ type Config struct {
 	// the zero value keeps the split everyone had before it existed. A
 	// worktree's .moomux-panes.toml still wins.
 	NoTerminalPane bool `toml:"no_terminal_pane,omitempty" json:"no_terminal_pane,omitempty"`
+	// ExcludedModels lists, per agent, the model IDs model pickers leave
+	// out. A model named elsewhere (`moomux spawn -model`) still runs.
+	ExcludedModels map[string][]string `toml:"excluded_models,omitempty" json:"excluded_models,omitempty"`
 	// TailnetListen, when true, makes `moomux serve` bind a second listener
 	// on this machine's Tailscale address (ipc.TailnetPort) alongside the
 	// unix socket, so a phone on the same tailnet reaches the same core.

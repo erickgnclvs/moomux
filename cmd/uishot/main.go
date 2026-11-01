@@ -8,10 +8,12 @@
 package main
 
 import (
+	_ "embed"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -62,6 +64,9 @@ var screens = map[string][]string{
 	// The model selector, the furthest row down with its own scroll-into-view
 	// and hint text.
 	"new-session-model": append([]string{"n"}, keys("tab", 9)...),
+	// One "right" picks codex's first named model, and the thinking row
+	// switches to that model's own levels.
+	"new-session-model-named": append(append([]string{"n"}, keys("tab", 9)...), "right"),
 	// The agent selector, which the active sample project ("demo") defaults
 	// to codex; one "right" cycles it to opencode, then a tab lands on the
 	// model row, which for opencode is a free-text input instead of the
@@ -69,20 +74,12 @@ var screens = map[string][]string{
 	"new-session-model-opencode": append(append([]string{"n"}, keys("tab", 8)...), "right", "tab"),
 	// two "right" presses cycle to antigravity, then tab to model row.
 	"new-session-model-antigravity": append(append([]string{"n"}, keys("tab", 8)...), "right", "right", "tab"),
-	// Back up six rows from the agent to the thinking row, whose hint for
-	// antigravity says the effort flag only applies to model "default" — see
-	// newFormFieldHint.
+	// Back up six rows from the agent to the thinking row, with antigravity's
+	// own --effort hint — see newFormFieldHint.
 	"new-session-thinking-antigravity": append(append([]string{"n"}, keys("tab", 8)...), append([]string{"right", "right"}, keys("shift+tab", 6)...)...),
 	// "left" from the sample project's codex is claude; back up to its
 	// thinking row — Claude Code's --effort levels, and a hint saying so.
 	"new-session-thinking-claude": append(append([]string{"n"}, keys("tab", 8)...), append([]string{"left"}, keys("shift+tab", 6)...)...),
-	// Named model *and* a thinking level: the model row warns that the level
-	// is about to be dropped, which the thinking row's own hint can't say to
-	// someone who set the level first — see newFormAgyEffortDropped. Model
-	// picked, up seven rows to thinking, level picked, down seven to model.
-	"new-session-agy-effort-dropped": slices.Concat(
-		[]string{"n"}, keys("tab", 8), []string{"right", "right", "tab", "right"},
-		keys("shift+tab", 7), []string{"right"}, keys("tab", 7)),
 	// The first tab lands on the first-prompt textarea — both Enter and
 	// ctrl+j insert a newline there, since that field is the one exception
 	// to Enter submitting the form.
@@ -201,12 +198,17 @@ var screens = map[string][]string{
 	"project-picker-emptied": {"/", "d", "y"},
 	"settings":               {"s"},
 	// settings-usage-setup is the settings screen on a machine without
-	// agent-usage, cursor on the Claude usage row (index 7, the last; "up"
+	// agent-usage, cursor on the Claude usage row (index 8, the last; "up"
 	// wraps to it) so its install commands show under the list.
 	"settings-usage-setup": {"s", "up"},
-	// Diff tool is the settings screen's row at index 6: six "down"s
+	// Diff tool is the settings screen's row at index 7: seven "down"s
 	// from sort mode, then enter opens its inline text editor.
-	"settings-difftool": {"s", "down", "down", "down", "down", "down", "down", "enter"},
+	"settings-difftool": append(append([]string{"s"}, keys("down", 7)...), "enter"),
+	// Hidden models is row 6; enter opens its list of every served model.
+	"settings-hidden-models": append(append([]string{"s"}, keys("down", 6)...), "enter"),
+	// The same list after hiding the second model (Opus): its toggle reads
+	// off and the flash says so.
+	"settings-hidden-models-toggled": append(append([]string{"s"}, keys("down", 6)...), "enter", "down", "enter"),
 	// Theme is the settings screen's second row (index 1): one "down" from
 	// sort mode, then enter drills into the existing theme picker.
 	"theme-picker": {"s", "down", "enter"},
@@ -463,6 +465,13 @@ func (f *fakeBackend) SetTerminalPane(on bool) error {
 	}
 	if f.cfg != nil {
 		f.cfg.NoTerminalPane = !on
+	}
+	return nil
+}
+
+func (f *fakeBackend) SetModelExcluded(agent, id string, excluded bool) error {
+	if f.cfg != nil {
+		f.cfg.SetModelExcluded(agent, id, excluded)
 	}
 	return nil
 }
@@ -782,7 +791,23 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 		}
 	}
 	tui.ApplySettings(cfg)
-	m := tui.New(cfg, be, (&app.App{}).AgentOptions(), statusCh, func() {})
+	// claude's and codex's models and thinking levels come from agent-usage's
+	// models.json, so the core reads a sample one rather than this machine's.
+	modelsDir, err := os.MkdirTemp("", "uishot-models")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(modelsDir)
+	modelsPath := filepath.Join(modelsDir, "models.json")
+	if err := os.WriteFile(modelsPath, sampleModels, 0o644); err != nil {
+		return "", err
+	}
+	// UISHOT_MODELS renders against another models.json, such as this
+	// machine's, to preview real lists. The goldens never set it.
+	if p := os.Getenv("UISHOT_MODELS"); p != "" {
+		modelsPath = p
+	}
+	m := tui.New(cfg, be, (&app.App{ModelsPath: modelsPath}).AgentOptions(), statusCh, func() {})
 	m.Version = "dev"
 	if screenName == "update-available" {
 		m.Version = "0.5.3"
@@ -849,6 +874,9 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 
 	return m.View(), nil
 }
+
+//go:embed samplemodels.json
+var sampleModels []byte
 
 func main() {
 	screen := flag.String("screen", "list", fmt.Sprintf("screen to render: %s", screenNames()))
