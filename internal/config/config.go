@@ -42,19 +42,15 @@ type Project struct {
 	Repo         string `toml:"repo" json:"repo"`
 	BranchPrefix string `toml:"branch_prefix,omitempty" json:"branch_prefix,omitempty"`
 	BaseBranch   string `toml:"base_branch,omitempty" json:"base_branch,omitempty"`
-	Agent        string `toml:"agent,omitempty" json:"agent,omitempty"` // "claude" (default), "codex", "opencode", "antigravity"
-	// Model is the default model for new sessions of this project, named as
-	// Agent's AgentOption.Models lists it. Empty means "not specified" —
-	// nothing is passed and the agent falls back to the user's own default.
-	Model string `toml:"model,omitempty" json:"model,omitempty"`
-	// Dangerous, when true, runs Agent with its permission-skipping flag
-	// (claude/antigravity: --dangerously-skip-permissions, codex: --yolo); no-op for
-	// opencode. Applies as the default for new sessions of this project.
+	// DEPRECATED: the agent is global now (Config.LastAgent). Like Folders,
+	// this survives only as a migration source: Load folds it into an empty
+	// LastAgent and clears it on every project, so Save never writes it
+	// again. json:"-" keeps it off the wire.
+	Agent string `toml:"agent,omitempty" json:"-"`
+	// Dangerous, when true, runs new sessions' agent with its
+	// permission-skipping flag (claude/antigravity:
+	// --dangerously-skip-permissions, codex: --yolo); no-op for opencode.
 	Dangerous bool `toml:"dangerous,omitempty" json:"dangerous,omitempty"`
-	// PromptAgent, when true, skips preselecting Agent as the default in the
-	// new-session form — the user must explicitly pick an agent before the
-	// form can be submitted.
-	PromptAgent bool `toml:"prompt_agent,omitempty" json:"prompt_agent,omitempty"`
 	// NoWorktree, when true on a "git" project, keeps every session in Repo
 	// itself instead of giving each one its own worktree/branch — the same
 	// single-folder behavior as a "plain" project, but for a real git repo.
@@ -194,15 +190,16 @@ func (c *Config) OrderedProjectNames() []string {
 	return append(out, rest...)
 }
 
-// AgentName returns the effective agent name, defaulting to "claude".
-func (p Project) AgentName() string {
-	if p.Agent == "" {
+// AgentName returns the effective agent name for a stored value, defaulting
+// to "claude" and resolving the "agy" alias.
+func AgentName(agent string) string {
+	switch agent {
+	case "":
 		return "claude"
-	}
-	if p.Agent == "agy" {
+	case "agy":
 		return "antigravity"
 	}
-	return p.Agent
+	return agent
 }
 
 type Config struct {
@@ -243,6 +240,11 @@ type Config struct {
 	// On until set: Load seeds it true before decoding, so it has no
 	// omitempty — an explicit false has to reach the file and the wire.
 	AutoSubmitDefault bool `toml:"auto_submit_default" json:"auto_submit_default"`
+	// LastAgent is the agent the most recent session was created with, and
+	// the default for the next one. Global rather than per project: the
+	// agent follows the user, not the repo. Empty means "claude"; read it
+	// through AgentName.
+	LastAgent string `toml:"last_agent,omitempty" json:"last_agent,omitempty"`
 	// SortRecentFirst, when true, lists sessions most-recently-opened first
 	// instead of the manual Order set by shift+↑↓. The two don't compose —
 	// manual reordering is disabled while this is on, since every open would
@@ -315,12 +317,14 @@ func Load(path string) (*Config, error) {
 		cfg.Projects = map[string]Project{}
 	}
 	migrated := migrateFolders(cfg)
+	migrateLastAgent(cfg)
 	for k, p := range cfg.Projects {
 		p.Repo = ExpandHome(p.Repo)
 		// Project.Folders is a migration source, never a live field: leave
 		// it populated and Save would keep rewriting a second, stale copy of
 		// the folder table for some future reader to disagree with.
 		p.Folders = nil
+		p.Agent = ""
 		cfg.Projects[k] = p
 	}
 	if migrated {
@@ -382,6 +386,28 @@ func migrateFolders(cfg *Config) bool {
 	}
 	cfg.Folders = folders
 	return true
+}
+
+// migrateLastAgent seeds an unset LastAgent from the per-project agents of
+// a config written before the agent went global: the one most projects
+// used, ties broken by name so every process reading the same file agrees.
+// The other projects' choices are dropped — one global default can't keep
+// them. Pure, like migrateFolders.
+func migrateLastAgent(cfg *Config) {
+	if cfg.LastAgent != "" {
+		return
+	}
+	counts := map[string]int{}
+	for _, p := range cfg.Projects {
+		if p.Agent != "" {
+			counts[AgentName(p.Agent)]++
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(counts)) {
+		if counts[name] > counts[cfg.LastAgent] {
+			cfg.LastAgent = name
+		}
+	}
 }
 
 // Reload re-reads path and overwrites cfg's fields in place — same

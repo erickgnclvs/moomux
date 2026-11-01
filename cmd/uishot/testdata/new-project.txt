@@ -1,4 +1,5 @@
 === 40x20 ===
+                                        
 ╭──────────────────────────────────────╮
 │                                      │
 │  Add project                         │
@@ -6,8 +7,6 @@
 │  repo:> repo path (e.g. ~/Devel…     │
 │  name:> name (e.g. eg_system)        │
 │  base branch:> base branch (def…     │
-│  agent:‹ [claude] ›                  │
-│  model:‹ [default] ›                 │
 │  dangerous:[off]                     │
 │  branch prefix:> branch prefix …     │
 │  worktrees:[on]                      │
@@ -19,7 +18,9 @@
 │                                      │
 ╰──────────────────────────────────────╯
                                         
+                                        
 === 100x32 ===
+                                                                                                    
                                                                                                     
                                                                                                     
                                                                                                     
@@ -34,8 +35,6 @@
            │  repo:          > repo path (e.g. ~/Development/eg_system)                 │           
            │  name:          > name (e.g. eg_system)                                    │           
            │  base branch:   > base branch (default:…                                   │           
-           │  agent:         [claude]  codex  opencode  antigravity  ask each time      │           
-           │  model:         [default]  sonnet  opus  fable                             │           
            │  dangerous:     [off]                                                      │           
            │  branch prefix: > branch prefix (option…                                   │           
            │  worktrees:     [on]                                                       │           
@@ -45,6 +44,7 @@
            │  tab/↑↓  ←→ choose  enter save  esc cancel                                 │           
            │                                                                            │           
            ╰────────────────────────────────────────────────────────────────────────────╯           
+                                                                                                    
                                                                                                     
                                                                                                     
                                                                                                     

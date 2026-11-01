@@ -239,27 +239,11 @@ func TestReloadRefreshesInPlace(t *testing.T) {
 	}
 }
 
-func TestProjectAgentNameDefaultsToClaude(t *testing.T) {
-	p := Project{}
-	if got := p.AgentName(); got != "claude" {
-		t.Fatalf("expected claude, got %q", got)
-	}
-}
-
-func TestProjectAgentNameReturnsSetValue(t *testing.T) {
-	tests := []string{"codex", "opencode", "antigravity"}
-	for _, agent := range tests {
-		p := Project{Agent: agent}
-		if got := p.AgentName(); got != agent {
-			t.Fatalf("expected %q, got %q", agent, got)
+func TestAgentName(t *testing.T) {
+	for in, want := range map[string]string{"": "claude", "agy": "antigravity", "codex": "codex", "opencode": "opencode"} {
+		if got := AgentName(in); got != want {
+			t.Fatalf("AgentName(%q) = %q, want %q", in, got, want)
 		}
-	}
-}
-
-func TestProjectAgentNameAgyAlias(t *testing.T) {
-	p := Project{Agent: "agy"}
-	if got := p.AgentName(); got != "antigravity" {
-		t.Fatalf("expected antigravity, got %q", got)
 	}
 }
 
@@ -293,21 +277,63 @@ func TestOrderedProjectNamesDropsStaleEntries(t *testing.T) {
 	}
 }
 
-func TestProjectAgentRoundtrip(t *testing.T) {
+func TestLastAgentRoundtrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "out.toml")
-	cfg := &Config{Projects: map[string]Project{
-		"codex_proj": {Repo: "/tmp/codex", Agent: "codex", BaseBranch: "main"},
-	}}
-	if err := Save(path, cfg); err != nil {
+	if err := Save(path, &Config{LastAgent: "codex"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Projects["codex_proj"].Agent != "codex" {
-		t.Fatalf("Agent = %q", got.Projects["codex_proj"].Agent)
+	if got.LastAgent != "codex" {
+		t.Fatalf("LastAgent = %q", got.LastAgent)
+	}
+}
+
+// A config.toml written before the agent moved off projects seeds LastAgent
+// from the agent most projects used, and the next Save drops the old
+// per-project keys.
+func TestLoadMigratesLegacyProjectAgent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	legacy := "[projects.p]\nrepo = \"/tmp/p\"\nagent = \"codex\"\nmodel = \"o3\"\nprompt_agent = true\n" +
+		"[projects.q]\nrepo = \"/tmp/q\"\nagent = \"codex\"\n" +
+		"[projects.r]\nrepo = \"/tmp/r\"\nagent = \"agy\"\n"
+	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Projects["p"].Repo != "/tmp/p" {
+		t.Fatalf("project not loaded: %+v", cfg.Projects)
+	}
+	if cfg.LastAgent != "codex" {
+		t.Fatalf("LastAgent = %q, want codex (2 of 3 projects)", cfg.LastAgent)
+	}
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := os.ReadFile(path)
+	if strings.Contains(string(out), "\nagent") || strings.Contains(string(out), "model") || !strings.Contains(string(out), `last_agent = "codex"`) {
+		t.Fatalf("legacy keys survived Save:\n%s", out)
+	}
+}
+
+// An explicit last_agent wins over the legacy per-project keys, and a tie
+// between them breaks by name.
+func TestMigrateLastAgent(t *testing.T) {
+	cfg := &Config{LastAgent: "opencode", Projects: map[string]Project{"p": {Agent: "codex"}}}
+	migrateLastAgent(cfg)
+	if cfg.LastAgent != "opencode" {
+		t.Fatalf("LastAgent = %q, want opencode kept", cfg.LastAgent)
+	}
+	cfg = &Config{Projects: map[string]Project{"p": {Agent: "codex"}, "q": {Agent: "claude"}, "r": {}}}
+	migrateLastAgent(cfg)
+	if cfg.LastAgent != "claude" {
+		t.Fatalf("LastAgent = %q, want claude (tie broken by name)", cfg.LastAgent)
 	}
 }
 

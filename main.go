@@ -451,7 +451,7 @@ func runSpawn(args []string) error {
 	s, report, err := a.CreateSessionReport(session.CreateRequest{
 		Project: *project, Name: *name, Agent: *agent, Branch: *branch, Ticket: *ticket,
 		Model: *model, Thinking: *thinking, Prompt: *prompt, AutoSubmit: *prompt != "",
-		Dangerous: dangerousOverride,
+		Dangerous: dangerousOverride, Spawned: true,
 	})
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)

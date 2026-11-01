@@ -140,7 +140,7 @@ func (m *Model) renderFormHint(text string) string {
 // newFormFieldCount is the focus cycle length. A newFormFocus value names a
 // field, not a position — where each sits on screen is newFormFields'.
 const (
-	newFormFieldCount        = 13
+	newFormFieldCount        = 12
 	newFormNameFocus         = 1
 	newFormBranchFocus       = 2
 	newFormBaseBranchFocus   = 3
@@ -150,40 +150,20 @@ const (
 	newFormAgentFocus        = 7
 	newFormModelFocus        = 8
 	newFormThinkingFocus     = 9
-	newFormDangerousFocus    = 10
-	newFormOpenTerminalFocus = 11
-	newFormAutoSubmitFocus   = 12
+	newFormOpenTerminalFocus = 10
+	newFormAutoSubmitFocus   = 11
 )
 
 // newFormFields is the rendered and tab order of the new-session form, the
 // same as the macOS app's New Session sheet: what changes per session first
 // (project, then the prompt the name is derived from), what rarely does last.
-//
-// A project that asks for an agent every time gets the agent row, and the
-// permission toggle with it, right under the project — both are questions it
-// needs answered. Any other project has its own agent and dangerous setting,
-// which are right as they stand: the agent row moves down among the
-// rarely-changed ones, and the toggle isn't shown at all.
 func (m *Model) newFormFields() []int {
-	fields := []int{newFormProjFocus}
-	askAgent := m.newFormAsksAgent()
-	if askAgent {
-		fields = append(fields, newFormAgentFocus, newFormDangerousFocus)
-	}
-	fields = append(fields,
-		newFormPromptFocus, newFormThinkingFocus,
+	return []int{
+		newFormProjFocus, newFormPromptFocus, newFormThinkingFocus,
 		newFormNameFocus, newFormBranchFocus, newFormBaseBranchFocus,
-		newFormTicketFocus, newFormPRFocus)
-	if !askAgent {
-		fields = append(fields, newFormAgentFocus)
+		newFormTicketFocus, newFormPRFocus,
+		newFormAgentFocus, newFormModelFocus, newFormOpenTerminalFocus, newFormAutoSubmitFocus,
 	}
-	return append(fields, newFormModelFocus, newFormOpenTerminalFocus, newFormAutoSubmitFocus)
-}
-
-// newFormAsksAgent reports whether the form's project is a prompt_agent one,
-// which starts every session with no agent chosen.
-func (m *Model) newFormAsksAgent() bool {
-	return m.newFormProjIdx >= 0 && m.cfg.Projects[m.projects[m.newFormProjIdx]].PromptAgent
 }
 
 var newFormFieldHints = []string{
@@ -194,12 +174,11 @@ var newFormFieldHints = []string{
 	4:  "optional — the agent's first task; enter for a newline, tab away to submit, ctrl+v pastes an image",
 	5:  "optional — shown as a clickable ticket icon next to the session",
 	6:  "optional — shown as a clickable PR icon next to the session",
-	7:  "which agent CLI runs in the session's pane — ←→ to choose",
+	7:  "which agent CLI runs in the session's pane — ←→ to choose; remembered for the next session",
 	8:  "optional — passed as --model to the agent; \"default\" omits the flag",
 	9:  "optional — prepended to the first prompt (e.g. \"think hard: ...\"); no effect without a prompt",
-	10: "on: skips permission prompts (--dangerously-skip-permissions / --yolo); no effect for opencode",
-	11: "on: starts the session in the background, no terminal window",
-	12: "on: presses enter after typing the first prompt so the agent starts right away; off: leaves it typed for you to review first",
+	10: "on: starts the session in the background, no terminal window",
+	11: "on: presses enter after typing the first prompt so the agent starts right away; off: leaves it typed for you to review first",
 }
 
 func (m *Model) renderNewForm() string {
@@ -235,8 +214,6 @@ func (m *Model) renderNewFormRow(field int) string {
 		return muteStyle.Render("model:  ") + m.renderNewFormModelSelector()
 	case newFormThinkingFocus:
 		return muteStyle.Render("thinking:  ") + m.renderNewFormThinkingSelector()
-	case newFormDangerousFocus:
-		return muteStyle.Render("dangerous:  ") + m.renderNewFormDangerousToggle()
 	case newFormOpenTerminalFocus:
 		return muteStyle.Render("open in background:  ") + m.renderNewFormOpenTerminalToggle()
 	case newFormAutoSubmitFocus:
@@ -285,10 +262,6 @@ func renderSelector(choices []string, selected int, focused bool, available int)
 	return rendered
 }
 
-func (m *Model) renderNewFormDangerousToggle() string {
-	return renderToggle(m.newFormDangerous, m.newFormFocus == newFormDangerousFocus)
-}
-
 func (m *Model) renderNewFormOpenTerminalToggle() string {
 	return renderToggle(m.newFormOpenInBackground, m.newFormFocus == newFormOpenTerminalFocus)
 }
@@ -315,9 +288,6 @@ func (m *Model) renderNewFormProjectSelector() string {
 }
 
 func (m *Model) renderNewFormAgentSelector() string {
-	if m.newFormAgentIdx < 0 {
-		return warnStyle.Render("choose an agent (←→)")
-	}
 	return renderSelector(
 		m.agentNames(), m.newFormAgentIdx, m.newFormFocus == newFormAgentFocus,
 		m.overlayWidth(formHintWidth)-lipgloss.Width("agent:  "),
@@ -325,10 +295,7 @@ func (m *Model) renderNewFormAgentSelector() string {
 }
 
 func (m *Model) renderNewFormModelSelector() string {
-	agent := ""
-	if m.newFormAgentIdx >= 0 {
-		agent = m.agentNames()[m.newFormAgentIdx]
-	}
+	agent := m.agentNames()[m.newFormAgentIdx]
 	if m.agentUsesFreeTextModel(agent) {
 		return m.newFormModelInput.View()
 	}
@@ -344,10 +311,7 @@ func (m *Model) renderNewFormModelSelector() string {
 // (a real launch flag) than for opencode (a phrase prepended to the first
 // prompt).
 func (m *Model) newFormFieldHint() string {
-	agent := ""
-	if m.newFormAgentIdx >= 0 {
-		agent = m.agentNames()[m.newFormAgentIdx]
-	}
+	agent := m.agentNames()[m.newFormAgentIdx]
 	switch m.newFormFocus {
 	case newFormThinkingFocus:
 		switch agent {
@@ -386,10 +350,7 @@ func (m *Model) newFormAgyEffortDropped() bool {
 }
 
 func (m *Model) renderNewFormThinkingSelector() string {
-	agent := ""
-	if m.newFormAgentIdx >= 0 {
-		agent = m.agentNames()[m.newFormAgentIdx]
-	}
+	agent := m.agentNames()[m.newFormAgentIdx]
 	return renderSelector(
 		m.thinkingNamesFor(agent), m.newFormThinkingIdx, m.newFormFocus == newFormThinkingFocus,
 		m.overlayWidth(formHintWidth)-lipgloss.Width("thinking:  "),
@@ -459,10 +420,8 @@ var projFormFieldHints = []string{
 	2: "the branch new session worktrees branch off of (usually main or master)",
 	3: "prepended to new branch names, e.g. alice/feature-x — blank to skip",
 	4: "shown instead of the project name in all-sessions — ←→ to choose",
-	5: "default agent for new sessions — \"ask each time\" prompts every time",
-	6: "default model for new sessions — \"default\" leaves it to the agent",
-	7: "on: new sessions run with the agent's permission-skipping flag; no effect for opencode or \"ask each time\"",
-	8: "off: sessions run directly in the repo, no worktree/branch",
+	5: "on: new sessions run with the agent's permission-skipping flag; no effect for opencode",
+	6: "off: sessions run directly in the repo, no worktree/branch",
 }
 
 var editProjectFieldHints = []string{
@@ -471,10 +430,8 @@ var editProjectFieldHints = []string{
 	2: "base branch used when creating new session worktrees",
 	3: "prepended to branches created for new sessions — leave blank to skip",
 	4: "shown instead of the project name in all-sessions — ←→ to choose",
-	5: "default agent for new sessions — \"ask each time\" prompts every time",
-	6: "default model for new sessions — \"default\" leaves it to the agent",
-	7: "on: new sessions run with the agent's permission-skipping flag; no effect for opencode or \"ask each time\"",
-	8: "changes worktree behavior for new sessions only",
+	5: "on: new sessions run with the agent's permission-skipping flag; no effect for opencode",
+	6: "changes worktree behavior for new sessions only",
 }
 
 func (m *Model) renderNewProject() string {
@@ -501,15 +458,9 @@ func (m *Model) writeProjFormRow(b *strings.Builder, focus int) {
 		b.WriteString(m.renderFormLabel("emoji", 15))
 		b.WriteString(m.renderProjectEmojiSelector())
 	case focus == projFormInputCount+1:
-		b.WriteString(m.renderFormLabel("agent", 15))
-		b.WriteString(m.renderAgentSelector())
-	case focus == projFormInputCount+2:
-		b.WriteString(m.renderFormLabel("model", 15))
-		b.WriteString(m.renderProjectModelSelector())
-	case focus == projFormInputCount+3:
 		b.WriteString(m.renderFormLabel("dangerous", 15))
 		b.WriteString(m.renderProjectDangerousToggle())
-	case focus == projFormInputCount+4:
+	case focus == projFormInputCount+2:
 		b.WriteString(m.renderFormLabel("worktrees", 15))
 		b.WriteString(m.renderWorktreeToggle())
 	}
@@ -540,70 +491,11 @@ func (m *Model) renderProjectEmojiSelector() string {
 }
 
 func (m *Model) renderWorktreeToggle() string {
-	return renderToggle(!m.projForm.noWorktree, m.projForm.focus == projFormInputCount+4)
+	return renderToggle(!m.projForm.noWorktree, m.projForm.focus == projFormInputCount+2)
 }
 
 func (m *Model) renderProjectDangerousToggle() string {
-	return renderToggle(m.projForm.dangerous, m.projForm.focus == projFormInputCount+3)
-}
-
-// projectAgentChoices is the project form's agent selector: the real agents,
-// plus a trailing "ask each time" entry (index askAgentIdx maps to it) that
-// defers the choice to each new-session form instead of fixing one here.
-func (m *Model) projectAgentChoices() []string {
-	return append(append([]string{}, m.agentNames()...), "ask each time")
-}
-
-func (m *Model) renderAgentSelector() string {
-	selectedIdx := m.projForm.agentIdx
-	if selectedIdx == askAgentIdx {
-		selectedIdx = len(m.agentNames())
-	}
-	return renderSelector(
-		m.projectAgentChoices(), selectedIdx,
-		m.projForm.focus == projFormInputCount+1,
-		m.overlayWidth(formHintWidth)-m.formLabelWidth("agent", 15),
-	)
-}
-
-// projectModelChoices is the project form's model selector: the chosen
-// agent's fixed model list, or just "default" for an agent that has none
-// (opencode) and for "ask each time", where there's no agent to pin a
-// model to.
-func (m *Model) projectModelChoices(agentIdx int) []string {
-	if agentIdx == askAgentIdx || agentIdx >= len(m.agentNames()) {
-		return []string{"default"}
-	}
-	name := m.agentNames()[agentIdx]
-	for _, o := range m.agentOptions {
-		if o.Name == name && len(o.Models) > 0 {
-			return o.Models
-		}
-	}
-	return []string{"default"}
-}
-
-// projFormModelChoices is projectModelChoices for the form's current agent,
-// plus any extraModel the project already had stored (see projectForm).
-func (m *Model) projFormModelChoices() []string {
-	choices := m.projectModelChoices(m.projForm.agentIdx)
-	if e := m.projForm.extraModel; e != "" {
-		return append([]string{choices[0], e}, choices[1:]...)
-	}
-	return choices
-}
-
-func (m *Model) renderProjectModelSelector() string {
-	choices := m.projFormModelChoices()
-	idx := m.projForm.modelIdx
-	if idx < 0 || idx >= len(choices) {
-		idx = 0
-	}
-	return renderSelector(
-		choices, idx,
-		m.projForm.focus == projFormInputCount+2,
-		m.overlayWidth(formHintWidth)-m.formLabelWidth("model", 15),
-	)
+	return renderToggle(m.projForm.dangerous, m.projForm.focus == projFormInputCount+1)
 }
 
 // tagFormFieldHints gives a one-line explanation for whichever field of the

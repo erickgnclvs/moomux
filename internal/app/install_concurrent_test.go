@@ -10,6 +10,7 @@ import (
 
 	"github.com/erickgnclvs/moomux/internal/claudehook"
 	"github.com/erickgnclvs/moomux/internal/config"
+	"github.com/erickgnclvs/moomux/internal/session"
 )
 
 // TestInstallKnownCommandsConcurrent pins the two properties that let
@@ -31,10 +32,13 @@ func TestInstallKnownCommandsConcurrent(t *testing.T) {
 	// Both agents referenced, so every installer in agentInstallers runs.
 	// newTestApp sandboxes HOME itself; read it back rather than setting our
 	// own, which it would overwrite.
-	a, _, _ := newTestApp(t, map[string]config.Project{
-		"claude-proj": {Kind: "plain", Agent: "claude"},
-		"codex-proj":  {Kind: "plain", Agent: "codex"},
-	})
+	a, _, _ := newTestApp(t, map[string]config.Project{})
+	if err := a.rememberAgent("codex"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.Put(session.Session{ID: "p:c", Project: "p", Name: "c", Agent: "claude"}); err != nil {
+		t.Fatal(err)
+	}
 	home := os.Getenv("HOME")
 
 	var wg sync.WaitGroup

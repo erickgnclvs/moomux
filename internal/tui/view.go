@@ -200,17 +200,12 @@ func (m *Model) focusedOverlayLine(content string) int {
 			return lineContaining(content, muteStyle.Render("model:  ")+m.renderNewFormModelSelector())
 		case newFormThinkingFocus:
 			return lineContaining(content, muteStyle.Render("thinking:  ")+m.renderNewFormThinkingSelector())
-		case newFormDangerousFocus:
+		case newFormOpenTerminalFocus:
 			// Both toggle rows render an identical "[on]"/"[off]" value, so
 			// searching for the value alone can match the wrong row (their
 			// focused/unfocused styling collapses to the same text when
 			// colors are unavailable, e.g. NO_COLOR) — include the row's
 			// label to keep the two unambiguous.
-			return lineContaining(content, muteStyle.Render("dangerous:  ")+m.renderNewFormDangerousToggle())
-		case newFormOpenTerminalFocus:
-			// Same "[on]"/"[off]" collision as newFormDangerousFocus above,
-			// now three-way with the auto-submit toggle too — label included
-			// for the same reason.
 			return lineContaining(content, muteStyle.Render("open in background:  ")+m.renderNewFormOpenTerminalToggle())
 		case newFormAutoSubmitFocus:
 			return lineContaining(content, muteStyle.Render("auto-submit:  ")+m.renderNewFormAutoSubmitToggle())
@@ -225,12 +220,8 @@ func (m *Model) focusedOverlayLine(content string) int {
 		case projFormInputCount:
 			return lineContaining(content, m.renderProjectEmojiSelector())
 		case projFormInputCount + 1:
-			return lineContaining(content, m.renderAgentSelector())
-		case projFormInputCount + 2:
-			return lineContaining(content, m.renderFormLabel("model", 15)+m.renderProjectModelSelector())
-		case projFormInputCount + 3:
 			// The dangerous and worktree toggles render an identical
-			// "[on]"/"[off]" value — see the newFormDangerousFocus case
+			// "[on]"/"[off]" value — see the newFormOpenTerminalFocus case
 			// above for why the label has to be part of the needle too.
 			return lineContaining(content, m.renderFormLabel("dangerous", 15)+m.renderProjectDangerousToggle())
 		}
