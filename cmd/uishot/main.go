@@ -83,9 +83,6 @@ var screens = map[string][]string{
 	"new-session-agy-effort-dropped": slices.Concat(
 		[]string{"n"}, keys("tab", 8), []string{"right", "right", "tab", "right"},
 		keys("shift+tab", 7), []string{"right"}, keys("tab", 7)),
-	// A project that asks for the agent every time: the agent and dangerous
-	// rows move up under the project, the dangerous one focused here.
-	"new-session-ask-agent": {"n", "tab", "tab"},
 	// The first tab lands on the first-prompt textarea — both Enter and
 	// ctrl+j insert a newline there, since that field is the one exception
 	// to Enter submitting the form.
@@ -575,18 +572,13 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 	cfg := &config.Config{Projects: map[string]config.Project{
 		"demo": {
 			Kind: "git", Repo: "/tmp/demo", BaseBranch: "main",
-			BranchPrefix: "feature", Agent: "codex",
+			BranchPrefix: "feature",
 		},
 		"spare": {
 			Kind: "git", Repo: "/tmp/spare", BaseBranch: "main",
-			BranchPrefix: "feature", Agent: "claude",
+			BranchPrefix: "feature",
 		},
-	}}
-	if screenName == "new-session-ask-agent" {
-		p := cfg.Projects["demo"]
-		p.PromptAgent = true
-		cfg.Projects["demo"] = p
-	}
+	}, LastAgent: "codex"}
 	sessions := sampleSessions()
 	switch screenName {
 	case "long-list", "long-list-scrolled":

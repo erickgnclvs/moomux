@@ -74,6 +74,10 @@ type CreateRequest struct {
 	// "use the project's own default" — a plain bool can't express that,
 	// since an explicit false and an unset field would be identical.
 	Dangerous *bool
+	// Spawned marks a create made by `moomux spawn` — some agent delegating
+	// work, not the user choosing — so it doesn't change the remembered
+	// default agent (config.Config.LastAgent).
+	Spawned bool
 }
 
 // AgentName returns the effective agent name, defaulting to "claude" for legacy sessions.

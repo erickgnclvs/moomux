@@ -92,13 +92,6 @@ func (a *App) project(name string) (config.Project, bool) {
 	return p, ok
 }
 
-// projectsSnapshot copies the project map for callers that iterate it.
-func (a *App) projectsSnapshot() map[string]config.Project {
-	a.cfgMu.RLock()
-	defer a.cfgMu.RUnlock()
-	return maps.Clone(a.Cfg.Projects)
-}
-
 // ConfigSnapshot returns a copy of the live config, with the reference-typed
 // fields cloned so the caller neither races a concurrent write nor holds a
 // handle on App's own state. This is how everything outside App reads Cfg,
@@ -190,18 +183,6 @@ var agentOptionsTable = []config.AgentOption{
 // method (not just an exported var) so a caller — in-process or, via
 // internal/ipc, over the socket — never has to care which.
 func (a *App) AgentOptions() []config.AgentOption { return agentOptionsTable }
-
-// normalizeAgent folds the "agy" alias — the binary's name, and what a user
-// most often types — to "antigravity", the name moomux stores. Every entry
-// point that takes an agent name calls this, and Session.AgentName /
-// Project.AgentName fold anything already on disk, so nothing below this
-// line has to know the alias exists.
-func normalizeAgent(agent string) string {
-	if agent == "agy" {
-		return "antigravity"
-	}
-	return agent
-}
 
 // agentCmd returns the CLI binary name for the given agent.
 func agentCmd(agent string) string {
@@ -502,7 +483,7 @@ func trustWorktree(agent, wt string) {
 }
 
 // InstallKnownCommands backfills custom commands for every agent referenced
-// by a configured project or existing session. It intentionally skips hook
+// last used to create a session, or referenced by an existing session. It intentionally skips hook
 // installers: newly written hooks require an in-agent trust prompt, whose hint
 // is only meaningful while creating or opening that agent's session.
 //
@@ -510,9 +491,7 @@ func trustWorktree(agent, wt string) {
 // without requiring the user to reopen a particular session first.
 func (a *App) InstallKnownCommands() {
 	agents := make(map[string]bool)
-	for _, project := range a.projectsSnapshot() {
-		agents[project.AgentName()] = true
-	}
+	agents[a.lastAgent()] = true
 	for _, s := range a.Store.All() {
 		agents[s.AgentName()] = true
 	}
@@ -943,6 +922,14 @@ func (a *App) CreateSessionReport(req session.CreateRequest) (session.Session, C
 	if err != nil {
 		return session.Session{}, report, err
 	}
+	// Best-effort: failing to remember the default must not fail a session
+	// that already exists. A spawned session is some agent's choice, not the
+	// user's, so it leaves the default alone.
+	if !req.Spawned {
+		if err := a.rememberAgent(s.AgentName()); err != nil {
+			slog.Warn("remember last agent failed", "agent", s.AgentName(), "err", err)
+		}
+	}
 	if req.PR != "" {
 		if updated, tagErr := a.SetSessionTags(s.ID, req.Ticket, req.PR); tagErr != nil {
 			hint = joinHint(hint, fmt.Sprintf("couldn't set PR tag: %v", tagErr))
@@ -951,11 +938,11 @@ func (a *App) CreateSessionReport(req session.CreateRequest) (session.Session, C
 		}
 	}
 	// Compose off the agent that actually launched, not the one the request
-	// named: an empty Agent means "the project's default", which
+	// named: an empty Agent means "the last agent used", which
 	// createSession resolves — and whether the thinking level became a
 	// launch flag or a prompt prefix depends on which agent that turned out
 	// to be. Composing off the unresolved name applied it both ways for a
-	// codex-default project asked for with no explicit -agent.
+	// codex default asked for with no explicit -agent.
 	resolved := req
 	resolved.Agent = s.AgentName()
 	if prompt := a.FirstPrompt(resolved); prompt != "" {
@@ -1057,15 +1044,9 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 		name = sanitizeName(name)
 	}
 	if agent == "" {
-		agent = proj.AgentName()
+		agent = a.lastAgent()
 	}
-	agent = normalizeAgent(agent)
-	if model == "" && agent == proj.AgentName() {
-		// Unspecified: fall through to the project's default model. Gated on
-		// the agent matching, since a model name only means anything for the
-		// agent it was picked for.
-		model = proj.Model
-	}
+	agent = config.AgentName(agent)
 	if err := validateAgent(agent); err != nil {
 		return session.Session{}, "", err
 	}
@@ -1939,7 +1920,7 @@ func (a *App) RenameSession(id, newName string) (session.Session, error) {
 
 func (a *App) SetSessionAgent(id, agent string, dangerous bool) (session.Session, error) {
 	// Normalize first: validateAgent only knows the stored names.
-	agent = normalizeAgent(agent)
+	agent = config.AgentName(agent)
 	if err := validateAgent(agent); err != nil {
 		return session.Session{}, err
 	}
@@ -2181,13 +2162,6 @@ func (a *App) validateProjectLocked(name string, p *config.Project) error {
 	if p.Repo == "" {
 		return fmt.Errorf("repo path required")
 	}
-	// p.Agent == "" is a legitimate "use the default" value at rest (see
-	// AgentName), so validate the resolved name rather than the raw field —
-	// only a genuinely bogus value (e.g. a config typo) should be rejected.
-	p.Agent = normalizeAgent(p.Agent)
-	if err := validateAgent(p.AgentName()); err != nil {
-		return err
-	}
 	if p.BaseBranch == "" {
 		p.BaseBranch = "main"
 	}
@@ -2271,13 +2245,6 @@ func (a *App) UpdateProject(name string, updated config.Project) error {
 	if !ok {
 		return fmt.Errorf("unknown project %q", name)
 	}
-	// updated.Agent == "" is a legitimate "use the default" value at rest
-	// (see AgentName), same as in validateProject — validate the resolved
-	// name rather than the raw field.
-	updated.Agent = normalizeAgent(updated.Agent)
-	if err := validateAgent(updated.AgentName()); err != nil {
-		return err
-	}
 	if updated.Repo == "" {
 		return fmt.Errorf("repo path required")
 	}
@@ -2333,6 +2300,45 @@ func (a *App) SetTheme(theme, appearance string) error {
 	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
 		a.Cfg.Theme = prevTheme
 		a.Cfg.Appearance = prevAppearance
+		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
+}
+
+// lastAgent is the agent a session gets when its create names none. Read
+// from the file, not a.Cfg: another moomux process (a second TUI) may have
+// remembered a newer one since this core last reloaded.
+func (a *App) lastAgent() string {
+	if fresh, err := config.Load(a.CfgPath); err == nil {
+		return config.AgentName(fresh.LastAgent)
+	}
+	a.cfgMu.RLock()
+	defer a.cfgMu.RUnlock()
+	return config.AgentName(a.Cfg.LastAgent)
+}
+
+// rememberAgent stores agent as the default for the next session, following
+// the same reload -> mutate -> save idiom as SetTheme. Every non-spawned
+// create goes through it, so the remembered agent is the same in every
+// front end.
+func (a *App) rememberAgent(agent string) error {
+	// The usual case is "same agent as last time": answer it from a plain
+	// read, without holding the write lock over a parse.
+	if fresh, err := config.Load(a.CfgPath); err == nil && fresh.LastAgent == agent {
+		return nil
+	}
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
+		return fmt.Errorf("reload config: %w", err)
+	}
+	if a.Cfg.LastAgent == agent {
+		return nil
+	}
+	prev := a.Cfg.LastAgent
+	a.Cfg.LastAgent = agent
+	if err := config.Save(a.CfgPath, a.Cfg); err != nil {
+		a.Cfg.LastAgent = prev
 		return fmt.Errorf("save config: %w", err)
 	}
 	return nil

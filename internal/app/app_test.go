@@ -216,18 +216,11 @@ func seedFolders(t *testing.T, a *App, names ...string) {
 	}
 }
 
-// TestNormalizeAgent pins the one place that knows about the "agy" alias:
-// everything below normalizeAgent (agentCmd, dangerousFlag,
+// TestValidateAgentRejectsAlias pins config.AgentName as the one place that
+// knows about the "agy" alias: everything below it (agentCmd, dangerousFlag,
 // reasoningEffortFlag, validateAgent, prompt.ForAgent) only ever sees
 // "antigravity", so none of them carries a second spelling.
-func TestNormalizeAgent(t *testing.T) {
-	for in, want := range map[string]string{
-		"agy": "antigravity", "antigravity": "antigravity", "claude": "claude", "": "",
-	} {
-		if got := normalizeAgent(in); got != want {
-			t.Errorf("normalizeAgent(%q) = %q, want %q", in, got, want)
-		}
-	}
+func TestValidateAgentRejectsAlias(t *testing.T) {
 	if err := validateAgent("agy"); err == nil {
 		t.Error("validateAgent(\"agy\") = nil; the alias must be normalized before it gets here")
 	}
@@ -809,42 +802,68 @@ func TestCreateSessionDangerousDefaultsFromProject(t *testing.T) {
 	}
 }
 
-// TestCreateSessionProjectDefaultModel: an unspecified model falls through
-// to the project's configured default, and only for the project's own agent
-// — a model name means nothing to a different agent.
-func TestCreateSessionProjectDefaultModel(t *testing.T) {
-	cases := []struct {
-		agent   string
-		wantCmd string
-	}{
-		{"", "claude --model opus"},
-		{"claude", "claude --model opus"},
-		{"codex", "codex"},
+// TestCreateSessionRemembersLastAgent: a create with no agent uses whichever
+// agent the previous create launched, and passes no model or thinking flag —
+// those are chosen per session and never remembered.
+func TestCreateSessionRemembersLastAgent(t *testing.T) {
+	a, git, tm := newTestApp(t, gitProject("/repo"))
+	for _, name := range []string{"one", "two"} {
+		tm.out["list-panes -t ="+TmuxSessionName("demo:"+name, name)+":^ -F #{pane_id}"] = "%0\n"
+		noBranch(git, name)
 	}
-	for _, tc := range cases {
-		t.Run("agent="+tc.agent, func(t *testing.T) {
-			projects := gitProject("/repo")
-			p := projects["demo"]
-			p.Agent, p.Model = "claude", "opus"
-			projects["demo"] = p
-			a, git, tm := newTestApp(t, projects)
-			tn := TmuxSessionName("demo:feat", "feat")
-			tm.out["list-panes -t ="+tn+":^ -F #{pane_id}"] = "%0\n"
-			noBranch(git, "feat")
 
-			if _, _, err := a.createSession("demo", "feat", tc.agent, "", "", true, boolPtr(false), "", "", ""); err != nil {
-				t.Fatal(err)
-			}
-			found := false
-			for _, c := range tm.calls {
-				if slices.Contains(c, tc.wantCmd) {
-					found = true
-				}
-			}
-			if !found {
-				t.Fatalf("no send-keys with %q; calls = %v", tc.wantCmd, tm.calls)
-			}
-		})
+	if _, _, err := a.CreateSession(session.CreateRequest{Project: "demo", Name: "one", Agent: "codex", Model: "o3", OpenTerminal: true, Dangerous: boolPtr(false)}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.Load(a.CfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.LastAgent != "codex" {
+		t.Fatalf("persisted LastAgent = %q, want codex", loaded.LastAgent)
+	}
+
+	tm.calls = nil
+	s, _, err := a.CreateSession(session.CreateRequest{Project: "demo", Name: "two", OpenTerminal: true, Dangerous: boolPtr(false)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.AgentName() != "codex" {
+		t.Fatalf("agent = %q, want the last-used codex", s.AgentName())
+	}
+	for _, c := range tm.calls {
+		if slices.ContainsFunc(c, func(arg string) bool { return strings.Contains(arg, "--model") }) {
+			t.Fatalf("model was remembered: %v", c)
+		}
+	}
+}
+
+// TestCreateSessionSpawnedKeepsLastAgent: `moomux spawn` is an agent
+// delegating, not the user choosing, so its agent must not become the
+// user's next default. Another process's remembered agent is picked up too,
+// without this core reloading first.
+func TestCreateSessionSpawnedKeepsLastAgent(t *testing.T) {
+	a, git, tm := newTestApp(t, gitProject("/repo"))
+	for _, name := range []string{"one", "two"} {
+		tm.out["list-panes -t ="+TmuxSessionName("demo:"+name, name)+":^ -F #{pane_id}"] = "%0\n"
+		noBranch(git, name)
+	}
+	// A second process remembers opencode; a.Cfg never sees it.
+	other := a.Cfg.Clone()
+	other.LastAgent = "opencode"
+	if err := config.Save(a.CfgPath, &other); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := a.CreateSession(session.CreateRequest{Project: "demo", Name: "one", Agent: "codex", Spawned: true, OpenTerminal: true, Dangerous: boolPtr(false)}); err != nil {
+		t.Fatal(err)
+	}
+	s, _, err := a.CreateSession(session.CreateRequest{Project: "demo", Name: "two", OpenTerminal: true, Dangerous: boolPtr(false)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.AgentName() != "opencode" {
+		t.Fatalf("agent = %q, want opencode: the spawn must not have replaced it", s.AgentName())
 	}
 }
 
@@ -1088,7 +1107,7 @@ func TestCreateSessionLeftoverWorktreeFolder(t *testing.T) {
 	}
 
 	git.calls = nil
-	_, _, err = a.CreateSession(session.CreateRequest{Project: "demo", Name: "fix-login-bug", Agent: "claude"})
+	_, _, err = a.CreateSession(session.CreateRequest{Project: "demo", Name: "fix-login-bug"})
 	if err == nil || !strings.Contains(err.Error(), "pick another session name") {
 		t.Fatalf("err = %v", err)
 	}
@@ -1266,16 +1285,16 @@ func TestCreateSessionRejectsBogusAgent(t *testing.T) {
 	}
 }
 
-func TestCreateSessionRejectsProjectDefaultBogusAgent(t *testing.T) {
-	// A hand-edited config.toml with a typo'd project-level agent must fail
-	// session creation instead of silently launching claude while storing
-	// the bogus name (agentCmd's switch defaults unrecognized values to "claude").
-	projects := map[string]config.Project{
-		"demo": {Kind: "git", Repo: "/repo", BaseBranch: "main", Agent: "clude"},
+func TestCreateSessionRejectsBogusLastAgent(t *testing.T) {
+	// A hand-edited config.toml with a typo'd last_agent must fail session
+	// creation instead of silently launching claude while storing the bogus
+	// name (agentCmd's switch defaults unrecognized values to "claude").
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	if err := a.rememberAgent("clude"); err != nil {
+		t.Fatal(err)
 	}
-	a, _, _ := newTestApp(t, projects)
 	if _, _, err := a.createSession("demo", "feat", "", "", "", true, boolPtr(false), "", "", ""); err == nil {
-		t.Fatal("bogus project-level agent must be rejected")
+		t.Fatal("bogus last agent must be rejected")
 	}
 }
 
@@ -2227,36 +2246,23 @@ func TestAddProject(t *testing.T) {
 	}
 }
 
-func TestAddProjectRejectsBogusAgent(t *testing.T) {
-	repo := t.TempDir()
-	mustGit(t, repo, "init", "-b", "main")
-	a, _, _ := newTestApp(t, map[string]config.Project{})
-
-	if _, err := a.AddProject("demo", config.Project{Repo: repo, Agent: "clude"}); err == nil {
-		t.Fatal("bogus agent must be rejected")
-	}
-	if _, ok := a.Cfg.Projects["demo"]; ok {
-		t.Fatal("rejected project must not be saved")
-	}
-}
-
 func TestUpdateProject(t *testing.T) {
 	repo := t.TempDir()
 	mustGit(t, repo, "init", "-b", "main")
 	a, _, _ := newTestApp(t, map[string]config.Project{
-		"demo": {Kind: "git", Repo: repo, BaseBranch: "main", Agent: "claude"},
+		"demo": {Kind: "git", Repo: repo, BaseBranch: "main"},
 	})
 
 	updated := config.Project{
 		Repo: repo, BaseBranch: "trunk", BranchPrefix: "alan",
-		Agent: "codex", NoWorktree: true,
+		NoWorktree: true,
 	}
 	if err := a.UpdateProject("demo", updated); err != nil {
 		t.Fatal(err)
 	}
 	got := a.Cfg.Projects["demo"]
 	if got.Kind != "git" || got.BaseBranch != "trunk" ||
-		got.BranchPrefix != "alan" || got.Agent != "codex" || !got.NoWorktree {
+		got.BranchPrefix != "alan" || !got.NoWorktree {
 		t.Fatalf("project = %+v", got)
 	}
 
@@ -2264,14 +2270,14 @@ func TestUpdateProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := loaded.Projects["demo"]; got.Agent != "codex" || got.Kind != "git" {
+	if got := loaded.Projects["demo"]; got.BranchPrefix != "alan" || got.Kind != "git" {
 		t.Fatalf("persisted project = %+v", got)
 	}
 }
 
 func TestSetAutoSubmitDefault(t *testing.T) {
 	a, _, _ := newTestApp(t, map[string]config.Project{
-		"demo": {Kind: "git", Repo: t.TempDir(), Agent: "claude"},
+		"demo": {Kind: "git", Repo: t.TempDir()},
 	})
 
 	if err := a.SetAutoSubmitDefault(true); err != nil {
@@ -2292,7 +2298,7 @@ func TestSetAutoSubmitDefault(t *testing.T) {
 
 func TestSetSortRecentFirst(t *testing.T) {
 	a, _, _ := newTestApp(t, map[string]config.Project{
-		"demo": {Kind: "git", Repo: t.TempDir(), Agent: "claude"},
+		"demo": {Kind: "git", Repo: t.TempDir()},
 	})
 
 	if err := a.SetSortRecentFirst(true); err != nil {
@@ -2315,7 +2321,7 @@ func TestSetSortRecentFirst(t *testing.T) {
 // call that actually turned the flag on says so.
 func TestSetTailnetListenReportsChange(t *testing.T) {
 	a, _, _ := newTestApp(t, map[string]config.Project{
-		"demo": {Kind: "git", Repo: t.TempDir(), Agent: "claude"},
+		"demo": {Kind: "git", Repo: t.TempDir()},
 	})
 
 	changed, err := a.SetTailnetListen(true)
@@ -2341,7 +2347,7 @@ func TestSetTailnetListenReportsChange(t *testing.T) {
 // the before and after are read under one hold of cfgMu.
 func TestSetTailnetListenReportsChangeOnceUnderConcurrency(t *testing.T) {
 	a, _, _ := newTestApp(t, map[string]config.Project{
-		"demo": {Kind: "git", Repo: t.TempDir(), Agent: "claude"},
+		"demo": {Kind: "git", Repo: t.TempDir()},
 	})
 
 	const n = 8
@@ -2373,7 +2379,7 @@ func TestSetTailnetListenReportsChangeOnceUnderConcurrency(t *testing.T) {
 
 func TestSetAutoTmux(t *testing.T) {
 	a, _, _ := newTestApp(t, map[string]config.Project{
-		"demo": {Kind: "git", Repo: t.TempDir(), Agent: "claude"},
+		"demo": {Kind: "git", Repo: t.TempDir()},
 	})
 
 	if err := a.SetAutoTmux(true); err != nil {
@@ -2397,7 +2403,7 @@ func TestSetAutoTmux(t *testing.T) {
 // alone, and the choice survives a reload.
 func TestSetTerminalPaneDropsTheShellSplit(t *testing.T) {
 	a, _, tm := newTestApp(t, map[string]config.Project{
-		"demo": {Kind: "git", Repo: t.TempDir(), Agent: "claude"},
+		"demo": {Kind: "git", Repo: t.TempDir()},
 	})
 	splits := func() int {
 		n := 0
@@ -2432,7 +2438,7 @@ func TestSetTerminalPaneDropsTheShellSplit(t *testing.T) {
 
 func TestSessionsSortsByLastOpenedWhenSortRecentFirstIsOn(t *testing.T) {
 	a, _, _ := newTestApp(t, map[string]config.Project{
-		"demo": {Kind: "git", Repo: t.TempDir(), Agent: "claude"},
+		"demo": {Kind: "git", Repo: t.TempDir()},
 	})
 	t0 := time.Now()
 	_ = a.Store.Put(session.Session{ID: "opened-earlier", Project: "demo", CreatedAt: t0.Add(-time.Hour), LastOpened: t0.Add(-time.Minute)})
@@ -2454,18 +2460,18 @@ func TestSessionsSortsByLastOpenedWhenSortRecentFirstIsOn(t *testing.T) {
 func TestUpdatePlainProjectPreservesKindAndClearsGitSettings(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "notes")
 	a, _, _ := newTestApp(t, map[string]config.Project{
-		"notes": {Kind: "plain", Repo: t.TempDir(), Agent: "claude"},
+		"notes": {Kind: "plain", Repo: t.TempDir()},
 	})
 
 	err := a.UpdateProject("notes", config.Project{
 		Kind: "git", Repo: repo, BaseBranch: "main", BranchPrefix: "x",
-		Agent: "opencode", NoWorktree: true,
+		NoWorktree: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := a.Cfg.Projects["notes"]
-	if got.Kind != "plain" || got.Repo != repo || got.Agent != "opencode" ||
+	if got.Kind != "plain" || got.Repo != repo ||
 		got.BaseBranch != "" || got.BranchPrefix != "" || got.NoWorktree {
 		t.Fatalf("project = %+v", got)
 	}
@@ -2479,7 +2485,6 @@ func TestUpdateProjectNoWorktreeFlipBlockedWithSessions(t *testing.T) {
 	_ = a.Store.Put(session.Session{ID: "demo:feat", Project: "demo", Name: "feat", WorktreePath: "/wt/feat"})
 
 	p := a.Cfg.Projects["demo"]
-	p.Agent = "claude"
 	p.NoWorktree = true
 	if err := a.UpdateProject("demo", p); err == nil {
 		t.Fatal("flipping worktree mode with live sessions must fail")
@@ -2492,18 +2497,13 @@ func TestUpdateProjectNoWorktreeFlipBlockedWithSessions(t *testing.T) {
 func TestUpdateProjectValidationAndRollback(t *testing.T) {
 	repo := t.TempDir()
 	mustGit(t, repo, "init", "-b", "main")
-	original := config.Project{Kind: "git", Repo: repo, BaseBranch: "main", Agent: "claude"}
+	original := config.Project{Kind: "git", Repo: repo, BaseBranch: "main"}
 	a, _, _ := newTestApp(t, map[string]config.Project{"demo": original})
 
 	if err := a.UpdateProject("missing", original); err == nil {
 		t.Fatal("unknown project must fail")
 	}
 	invalid := original
-	invalid.Agent = "other"
-	if err := a.UpdateProject("demo", invalid); err == nil {
-		t.Fatal("unknown agent must fail")
-	}
-	invalid = original
 	invalid.Repo = t.TempDir()
 	if err := a.UpdateProject("demo", invalid); !errors.Is(err, gitwt.ErrNotGitRepo) {
 		t.Fatalf("non-repository error = %v", err)
@@ -2511,29 +2511,12 @@ func TestUpdateProjectValidationAndRollback(t *testing.T) {
 
 	a.CfgPath = t.TempDir()
 	updated := original
-	updated.Agent = "codex"
+	updated.BranchPrefix = "alan"
 	if err := a.UpdateProject("demo", updated); err == nil {
 		t.Fatal("config write must fail")
 	}
 	if got := a.Cfg.Projects["demo"]; !reflect.DeepEqual(got, original) {
 		t.Fatalf("project after rollback = %+v, want %+v", got, original)
-	}
-}
-
-// TestUpdateProjectAcceptsDefaultAgent guards against validating the raw
-// Agent field instead of its resolved name: Agent == "" means "use the
-// default" (see config.Project.AgentName), the same legitimate value
-// validateProject already accepts, and must not be rejected as unknown.
-func TestUpdateProjectAcceptsDefaultAgent(t *testing.T) {
-	repo := t.TempDir()
-	mustGit(t, repo, "init", "-b", "main")
-	original := config.Project{Kind: "git", Repo: repo, BaseBranch: "main", Agent: "claude"}
-	a, _, _ := newTestApp(t, map[string]config.Project{"demo": original})
-
-	defaulted := original
-	defaulted.Agent = ""
-	if err := a.UpdateProject("demo", defaulted); err != nil {
-		t.Fatalf("default agent must be accepted: %v", err)
 	}
 }
 
@@ -3721,28 +3704,31 @@ func TestSuggestedProjectAnswersForThisMachine(t *testing.T) {
 	}
 }
 
-// TestFirstPromptUsesResolvedAgent: an empty Agent means "the project's
-// default", which createSession resolves before building the launch command.
+// TestFirstPromptUsesResolvedAgent: an empty Agent means "the last agent
+// used", which createSession resolves before building the launch command.
 // Composing the prompt off the *unresolved* name applied the thinking level
 // both ways for a codex-default project asked for with no explicit agent —
 // the launch flag and the magic-word prefix — which is exactly what
 // FirstPrompt promises never to do.
 func TestFirstPromptUsesResolvedAgent(t *testing.T) {
 	a, _, tm := newTestApp(t, map[string]config.Project{
-		"demo": {Repo: t.TempDir(), BaseBranch: "main", Agent: "codex"},
+		"demo": {Repo: t.TempDir(), BaseBranch: "main"},
 	})
+	if err := a.rememberAgent("codex"); err != nil {
+		t.Fatal(err)
+	}
 	tmuxName := TmuxSessionName(session.MakeID("demo", "feat"), "feat")
 	tm.out["capture-pane -p -t ="+tmuxName+":^"] = "agent-idle"
 
 	s, _, err := a.CreateSession(session.CreateRequest{
-		Project: "demo", Name: "feat", // no Agent: use the project's default
+		Project: "demo", Name: "feat", // no Agent: use the last one
 		Thinking: "high", Prompt: "do it",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.AgentName() != "codex" {
-		t.Fatalf("setup: session agent = %q, want the project default", s.AgentName())
+		t.Fatalf("setup: session agent = %q, want the last-used codex", s.AgentName())
 	}
 	if s.Prompt != "do it" {
 		t.Errorf("stored prompt = %q, want no magic-word prefix — codex got the real flag", s.Prompt)
@@ -4037,32 +4023,6 @@ func TestAntigravityAgentSupport(t *testing.T) {
 		}
 		if updated.Agent != "antigravity" {
 			t.Fatalf("updated.Agent = %q, want antigravity", updated.Agent)
-		}
-	})
-
-	t.Run("AddProject and UpdateProject Normalize Agy", func(t *testing.T) {
-		a, _, _ := newTestApp(t, nil)
-		repo := t.TempDir()
-		mustGit(t, repo, "init", "-b", "main")
-		// -c user.* scopes the identity to this commit, like gitwt.Create
-		// does: a CI runner has no global git identity configured.
-		mustGit(t, repo, "-c", "user.name=moomux", "-c", "user.email=moomux@localhost",
-			"commit", "--allow-empty", "-m", "init")
-
-		_, err := a.AddProject("p1", config.Project{Repo: repo, Agent: "agy"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if a.Cfg.Projects["p1"].Agent != "antigravity" {
-			t.Fatalf("AddProject Agent = %q, want antigravity", a.Cfg.Projects["p1"].Agent)
-		}
-
-		err = a.UpdateProject("p1", config.Project{Repo: repo, Agent: "agy"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if a.Cfg.Projects["p1"].Agent != "antigravity" {
-			t.Fatalf("UpdateProject Agent = %q, want antigravity", a.Cfg.Projects["p1"].Agent)
 		}
 	})
 

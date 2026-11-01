@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
+
 	"strings"
 	"testing"
 	"time"
@@ -365,25 +365,6 @@ func TestNewSessionFormEmptySubmitCreates(t *testing.T) {
 	}
 }
 
-func TestNewSessionFormAgentRequiredErrorRendered(t *testing.T) {
-	be := &fakeBackend{}
-	m := newTestModel(be)
-	m.cfg.Projects["demo"] = config.Project{Repo: "/repo", PromptAgent: true}
-	m.Update(keyRune("n"))
-	if m.newFormAgentIdx != -1 {
-		t.Fatalf("agentIdx = %d, want -1 for prompt_agent project", m.newFormAgentIdx)
-	}
-	tabTo(t, m, newFormNameFocus)
-	typeText(m, "myfeat")
-	press(m, tea.KeyEnter)
-	if len(be.createCalls) != 0 {
-		t.Fatalf("createCalls = %v", be.createCalls)
-	}
-	if v := m.View(); !strings.Contains(v, "requires choosing an agent") {
-		t.Fatalf("agent-required error not rendered:\n%s", v)
-	}
-}
-
 func TestNewSessionFormDefaultsToActiveProjectWithMultipleProjects(t *testing.T) {
 	be := &fakeBackend{}
 	m := newMultiProjectTestModel(be) // projects: alpha, beta; active = alpha
@@ -491,39 +472,20 @@ func TestNewSessionBlankNameWithPromptSubmits(t *testing.T) {
 }
 
 // The dangerous toggle is the project's to set, as on the macOS app: the
-// form only shows it — right under the project, with the agent it goes with —
-// for a project that asks for the agent every time. Anywhere else the request
-// leaves it nil, so the core applies the project's own setting.
-func TestNewSessionDangerousOnlyForAskAgentProjects(t *testing.T) {
+// form never shows it, and the request leaves it nil so the core applies the
+// project's own setting.
+func TestNewSessionDangerousIsTheProjects(t *testing.T) {
 	be := &fakeBackend{}
 	m := newTestModel(be)
 	m.Update(keyRune("n"))
-	if slices.Contains(m.newFormFields(), newFormDangerousFocus) || strings.Contains(m.View(), "dangerous:") {
-		t.Fatalf("dangerous toggle shown for a project with its own agent:\n%s", m.View())
+	if strings.Contains(m.View(), "dangerous:") {
+		t.Fatalf("dangerous toggle shown:\n%s", m.View())
 	}
 	tabTo(t, m, newFormNameFocus)
 	typeText(m, "a")
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(be.createCalls) != 1 || be.createCalls[0].Dangerous != nil {
 		t.Fatalf("createCalls = %+v, want Dangerous nil", be.createCalls)
-	}
-
-	m.cfg.Projects["demo"] = config.Project{Repo: "/tmp/demo", PromptAgent: true}
-	m.Update(keyRune("n"))
-	if got := m.newFormFields()[:4]; !slices.Equal(got, []int{newFormProjFocus, newFormAgentFocus, newFormDangerousFocus, newFormPromptFocus}) {
-		t.Fatalf("fields start %v, want project, agent, dangerous, prompt", got)
-	}
-	if v := m.View(); strings.Index(v, "dangerous:") > strings.Index(v, "first prompt") {
-		t.Fatalf("agent and dangerous rows should sit above the prompt:\n%s", v)
-	}
-	m.newFormAgentIdx = 0
-	tabTo(t, m, newFormDangerousFocus)
-	press(m, tea.KeyRight)
-	tabTo(t, m, newFormNameFocus)
-	typeText(m, "b")
-	run(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if len(be.createCalls) != 2 || be.createCalls[1].Dangerous == nil || !*be.createCalls[1].Dangerous {
-		t.Fatalf("createCalls[1] = %+v, want Dangerous true", be.createCalls[1:])
 	}
 }
 
@@ -823,13 +785,8 @@ func TestNewProjectFlow(t *testing.T) {
 	m.projForm.inputs[2].SetValue("") // base defaults to main
 	m.projForm.inputs[3].SetValue("me")
 
-	// walk focus to the agent selector and worktree toggle
-	m.projForm.focus = projFormInputCount + 1
-	press(m, tea.KeyRight) // agent claude -> codex
-	if m.agentNames()[m.projForm.agentIdx] != "codex" {
-		t.Fatalf("agent = %q", m.agentNames()[m.projForm.agentIdx])
-	}
-	m.projForm.focus = projFormInputCount + 4
+	// walk focus to the worktree toggle
+	m.projForm.focus = projFormInputCount + 2
 	press(m, tea.KeyLeft) // toggle no-worktree on
 	if !m.projForm.noWorktree {
 		t.Fatal("noWorktree not toggled")
@@ -846,7 +803,7 @@ func TestNewProjectFlow(t *testing.T) {
 	// BaseBranch is left empty: the form doesn't default it, the core does
 	// (validateProjectLocked in internal/app), so every front end gets the
 	// same answer instead of each carrying the literal.
-	want := config.Project{Repo: "/tmp/newproj", BranchPrefix: "me", Agent: "codex", NoWorktree: true}
+	want := config.Project{Repo: "/tmp/newproj", BranchPrefix: "me", NoWorktree: true}
 	if got.name != "newproj" || !reflect.DeepEqual(got.p, want) {
 		t.Fatalf("call = %+v", got)
 	}
@@ -973,7 +930,7 @@ func TestEditProjectFlow(t *testing.T) {
 	cfg := &config.Config{Projects: map[string]config.Project{
 		"demo": {
 			Kind: "git", Repo: "/tmp/demo", BaseBranch: "main",
-			BranchPrefix: "old", Agent: "codex",
+			BranchPrefix: "old",
 		},
 	}}
 	be := &fakeBackend{}
@@ -987,8 +944,7 @@ func TestEditProjectFlow(t *testing.T) {
 	}
 	if m.projForm.inputs[1].Value() != "/tmp/demo" ||
 		m.projForm.inputs[2].Value() != "main" ||
-		m.projForm.inputs[3].Value() != "old" ||
-		m.agentNames()[m.projForm.agentIdx] != "codex" {
+		m.projForm.inputs[3].Value() != "old" {
 		t.Fatalf("project form = %+v", m.projForm)
 	}
 	if view := m.View(); !strings.Contains(view, "Edit project") ||
@@ -999,7 +955,6 @@ func TestEditProjectFlow(t *testing.T) {
 	m.projForm.inputs[1].SetValue("/tmp/renamed")
 	m.projForm.inputs[2].SetValue("trunk")
 	m.projForm.inputs[3].SetValue("alan")
-	m.projForm.agentIdx = 2 // opencode
 	m.projForm.noWorktree = true
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -1009,7 +964,7 @@ func TestEditProjectFlow(t *testing.T) {
 	got := be.updateProjectCalls[0]
 	if got.name != "demo" || got.p.Kind != "git" || got.p.Repo != "/tmp/renamed" ||
 		got.p.BaseBranch != "trunk" || got.p.BranchPrefix != "alan" ||
-		got.p.Agent != "opencode" || !got.p.NoWorktree {
+		!got.p.NoWorktree {
 		t.Fatalf("call = %+v", got)
 	}
 	if m.mode != ModeProjectPicker || !strings.Contains(m.flash, "updated project demo") {
@@ -1065,9 +1020,9 @@ func TestEditProjectCancelAndError(t *testing.T) {
 	}
 }
 
-func TestEditPlainProjectShowsOnlyRepoAndAgent(t *testing.T) {
+func TestEditPlainProjectShowsNoBranchRows(t *testing.T) {
 	cfg := &config.Config{Projects: map[string]config.Project{
-		"notes": {Kind: "plain", Repo: "/tmp/notes", Agent: "claude"},
+		"notes": {Kind: "plain", Repo: "/tmp/notes"},
 	}}
 	be := &fakeBackend{}
 	m := New(cfg, be, testAgentOptions, make(chan sessionview.Snapshot), func() {})
@@ -1081,17 +1036,17 @@ func TestEditPlainProjectShowsOnlyRepoAndAgent(t *testing.T) {
 			t.Fatalf("plain project editor contains %q:\n%s", hidden, view)
 		}
 	}
-	press(m, tea.KeyTab) // repo -> agent: no branch rows in between
+	press(m, tea.KeyTab) // repo -> dangerous: no branch rows in between
 	if m.projForm.focus != projFormInputCount+1 {
-		t.Fatalf("focus = %d, want agent selector", m.projForm.focus)
+		t.Fatalf("focus = %d, want dangerous toggle", m.projForm.focus)
 	}
-	m.projForm.agentIdx = m.agentNameIndex("codex")
+	press(m, tea.KeyRight)
 	run(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(be.updateProjectCalls) != 1 {
 		t.Fatalf("updateProjectCalls = %v", be.updateProjectCalls)
 	}
 	got := be.updateProjectCalls[0].p
-	if got.Kind != "plain" || got.Repo != "/tmp/notes" || got.Agent != "codex" {
+	if got.Kind != "plain" || got.Repo != "/tmp/notes" || !got.Dangerous {
 		t.Fatalf("project = %+v", got)
 	}
 }

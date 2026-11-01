@@ -295,16 +295,10 @@ func (m *Model) agentNameIndex(agent string) int {
 	return 0
 }
 
-// askAgentIdx is a sentinel projectForm.agentIdx value, one past the real
-// agentNames, selected as an extra "ask each time" entry in the project
-// agent selector — it maps to config.Project.PromptAgent instead of Agent.
-const askAgentIdx = -1
-
 // projFormInputCount is the number of plain text inputs in the project form
 // (name, repo, base branch, branch prefix). Non-text controls follow at
 // fixed offsets from it: focus==projFormInputCount is the emoji selector,
-// +1 the agent selector, +2 the model selector, +3 the dangerous toggle,
-// +4 the worktree toggle.
+// +1 the dangerous toggle, +2 the worktree toggle.
 const projFormInputCount = 4
 
 type projectForm struct {
@@ -317,18 +311,9 @@ type projectForm struct {
 	// config) — otherwise it would be indistinguishable from "auto" and
 	// saving any unrelated field would silently discard it.
 	emojiChoices []string
-	agentIdx     int // index into agentNames, or askAgentIdx for "ask each time"
-	modelIdx     int // index into projFormModelChoices(); 0 ("default") means "not specified"
-	// extraModel is a stored Project.Model that isn't one of the chosen
-	// agent's listed models — opencode's free-text model, a hand-edited
-	// config value, or one saved while the agent was "ask each time". Kept
-	// as its own selectable entry (right after "default") for the same
-	// reason emojiChoices keeps an off-palette glyph: otherwise editing any
-	// unrelated field would silently discard it.
-	extraModel string
-	dangerous  bool // whether the chosen agent runs with its permission-skipping flag; meaningless when agentIdx is askAgentIdx
-	noWorktree bool
-	err        string
+	dangerous    bool // whether new sessions run with the agent's permission-skipping flag
+	noWorktree   bool
+	err          string
 }
 
 type pendingProject struct {
@@ -508,12 +493,11 @@ type Model struct {
 	prInput                 textinput.Model
 	promptInput             textarea.Model
 	newFormModelInput       textinput.Model // opencode's free-text model field; unused for claude/codex
-	newFormFocus            int             // 0=project selector, 1=nameInput, 2=branchInput, 3=baseBranchInput, 4=promptInput, 5=ticketInput, 6=prInput, 7=agent selector, 8=model selector, 9=thinking selector, 10=dangerous toggle, 11=open-terminal toggle, 12=auto-submit toggle
+	newFormFocus            int             // 0=project selector, 1=nameInput, 2=branchInput, 3=baseBranchInput, 4=promptInput, 5=ticketInput, 6=prInput, 7=agent selector, 8=model selector, 9=thinking selector, 10=open-terminal toggle, 11=auto-submit toggle
 	newFormErr              string
-	newFormAgentIdx         int  // index into agentNames; -1 means "not chosen yet"
+	newFormAgentIdx         int  // index into agentNames; preset to the last agent used
 	newFormModelIdx         int  // index into modelNamesFor(chosen agent); 0 ("default") initially, reset on agent change
 	newFormThinkingIdx      int  // index into thinkingNamesFor(chosen agent); 0 ("default") initially, reset on agent change
-	newFormDangerous        bool // whether to run the chosen agent with its permission-skipping flag; off by default
 	newFormProjIdx          int  // project selector in the new-session form; index into m.projects
 	newFormOpenInBackground bool // whether to skip opening a terminal window for the new session; off by default
 	newFormAutoSubmit       bool // whether to press Enter after typing the first prompt into the pane; seeded from cfg.AutoSubmitDefault
@@ -1150,22 +1134,7 @@ func (m *Model) editProjectForm(name string, p config.Project) projectForm {
 		pf.emojiChoices = append([]string{"auto", p.Emoji}, projectEmojiPalette...)
 		pf.emojiIdx = 1
 	}
-	if p.PromptAgent {
-		pf.agentIdx = askAgentIdx
-	} else {
-		pf.agentIdx = m.agentNameIndex(p.AgentName())
-		pf.dangerous = p.Dangerous
-	}
-	for i, name := range m.projectModelChoices(pf.agentIdx) {
-		if name == p.Model {
-			pf.modelIdx = i
-			break
-		}
-	}
-	if p.Model != "" && pf.modelIdx == 0 {
-		pf.extraModel = p.Model
-		pf.modelIdx = 1
-	}
+	pf.dangerous = p.Dangerous
 	pf.noWorktree = p.NoWorktree
 	return pf
 }

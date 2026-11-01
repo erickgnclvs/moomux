@@ -378,13 +378,9 @@ func TestShortFormViewportKeepsFocusedInputVisible(t *testing.T) {
 	m.prInput.SetValue("unique-pr")
 	m.resizeFormInputs()
 
-	values := []string{"[demo]", "unique-name", "unique-branch", "unique-basebranch", "unique-prompt", "unique-ticket", "unique-pr", "[claude]", "[default]", "[default]", "[off]", "[off]", "[off]"}
-	hints := []string{"which project", "folder name", "existing branch", "project's base branch", "agent's first task", "clickable ticket", "clickable PR", "←→ to choose", "omits the flag", "claude --effort level", "permission prompts", "background", "starts right away"}
+	values := []string{"[demo]", "unique-name", "unique-branch", "unique-basebranch", "unique-prompt", "unique-ticket", "unique-pr", "[claude]", "[default]", "[default]", "[off]", "[off]"}
+	hints := []string{"which project", "folder name", "existing branch", "project's base branch", "agent's first task", "clickable ticket", "clickable PR", "←→ to choose", "omits the flag", "claude --effort level", "background", "starts right away"}
 	for focus, value := range values {
-		if focus == newFormDangerousFocus {
-			// Not a row for this project — see TestNewSessionDangerousOnlyForAskAgentProjects.
-			continue
-		}
 		m.newFormBlurAll()
 		m.newFormFocus = focus
 		m.newFormFocusInput()
@@ -434,7 +430,6 @@ func TestFocusedOverlayLineCoversEveryNewFormField(t *testing.T) {
 		{newFormAgentFocus, "agent:"},
 		{newFormModelFocus, "model:"},
 		{newFormThinkingFocus, "thinking:"},
-		{newFormDangerousFocus, "dangerous:"},
 		{newFormOpenTerminalFocus, "open in background:"},
 		{newFormAutoSubmitFocus, "auto-submit:"},
 	}
@@ -452,7 +447,7 @@ func TestShortProjectFormKeepsBottomControlVisible(t *testing.T) {
 	m.width, m.height = 50, 12
 	m.mode = ModeNewProject
 	m.projForm = m.newProjectForm()
-	m.projForm.focus = projFormInputCount + 4 // the worktree toggle, the last control
+	m.projForm.focus = projFormInputCount + 2 // the worktree toggle, the last control
 	m.resizeFormInputs()
 
 	view := m.View()
