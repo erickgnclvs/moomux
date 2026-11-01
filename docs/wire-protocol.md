@@ -81,6 +81,21 @@ handler. Two listeners, one `Server`; `Serve` has always taken a
   place it surfaces: it wakes a retry asleep in its backoff, and if that
   still doesn't bind, says "couldn't listen on Tailscale yet" with the
   latest reason.
+- **A browser proxy rides along, on `ipc.TailnetProxyPort` (45877).** It
+  binds the moment the listener does, before `Pair` hears it is up, on the
+  same address and behind the same whois check — one shared result cache,
+  so a phone using both ports costs one `tailscale whois`. `moomux serve`
+  turns it on with `Tailnet.ProxyPort`; zero is no proxy, which is what the
+  tests' loopback listeners get. It is an HTTP `CONNECT` proxy and nothing else —
+  WebKit's proxy configuration tunnels plain `http` through `CONNECT` too.
+  The iPhone app points its browser at it, so every name is resolved and
+  dialled on this machine: dev servers bound to `127.0.0.1`, and hosts only
+  this machine's `/etc/hosts` knows. Trust: it reaches whatever this
+  machine can, including loopback-only services, for the same one user the
+  IPC port already admits — and that port runs `CreateSession`, so the
+  proxy grants nothing new. Failing to bind (the port taken) is logged,
+  not retried, never fatal, and never touches `Pair`: the phone loses its
+  browser until a restart, nothing else.
 
 Deliberately not `tsnet`. Becoming a tailnet node of its own is the more
 correct answer — it never touches the host's network stack, so there is no

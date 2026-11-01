@@ -918,7 +918,7 @@ func runServe(args []string) error {
 	// front end pairing a phone (`moomux pair`, the Mac app); Pair saves the
 	// flag only once the listener is up. One Tailnet for both, so the port
 	// is bound once.
-	tn := &ipc.Tailnet{Srv: srv}
+	tn := &ipc.Tailnet{Srv: srv, ProxyPort: ipc.TailnetProxyPort}
 	srv.Pair = func() (ipc.Pairing, error) {
 		return tn.Pair(func() (bool, error) { return a.SetTailnetListen(true) })
 	}
