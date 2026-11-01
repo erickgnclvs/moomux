@@ -96,6 +96,27 @@ handler. Two listeners, one `Server`; `Serve` has always taken a
   proxy grants nothing new. Failing to bind (the port taken) is logged,
   not retried, never fatal, and never touches `Pair`: the phone loses its
   browser until a restart, nothing else.
+- **What the proxy guards against is the pages that browser loads**, which
+  run as that user too. Checked on the address actually dialled, after
+  resolution, so a name can't answer one way for the check and another for
+  the connection:
+  - *DNS rebinding.* A browser never resolves through a `CONNECT` proxy, so
+    it can't pin an answer, and a page could flip its own name to
+    `127.0.0.1` between two requests and read local services as its own
+    origin. So a name may resolve to a loopback, private, link-local or
+    tailnet (`100.64.0.0/10`) address only if nobody can register it: IP
+    literals, `localhost` and `*.localhost` (RFC 6761; macOS resolves every
+    one to loopback by itself), and `*.invalid`. Anything else is a `403`.
+  - *moomux itself.* A dial from the proxy arrives from this machine's own
+    tailnet address, which whois admits, so the proxy's own port and
+    `TailnetPort` on that address are refused.
+  - *Descriptor exhaustion.* Tunnels share the core's process, so at most
+    256 are open (`503` past that), and one idle both ways for 10 minutes
+    is closed.
+- **Never point `tailscale serve` or Funnel at either port.** Connections
+  it forwards arrive from this machine's own address, which whois admits,
+  so that would open `CreateSession`, and the proxy, to whoever reaches
+  the forward.
 
 Deliberately not `tsnet`. Becoming a tailnet node of its own is the more
 correct answer — it never touches the host's network stack, so there is no

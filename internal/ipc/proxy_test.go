@@ -2,6 +2,7 @@ package ipc
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -136,5 +137,97 @@ func TestTailnetServesTheProxyBesideTheListener(t *testing.T) {
 	}
 	if n := whois.Load(); n != 1 {
 		t.Fatalf("whois ran %d times, want 1 shared by both ports", n)
+	}
+}
+
+// connectVia sends a CONNECT for target to the proxy at proxyAddr and
+// returns the open conn and the proxy's status.
+func connectVia(t *testing.T, proxyAddr, target string) (net.Conn, int) {
+	t.Helper()
+	c, err := net.Dial("tcp", proxyAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	_, _ = io.WriteString(c, "CONNECT "+target+" HTTP/1.1\r\nHost: x\r\n\r\n")
+	resp, err := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c, resp.StatusCode
+}
+
+// Only a name nobody can register may resolve inward: anything else doing
+// so is DNS rebinding. And moomux's own ports are never a target.
+func TestProxyAllowTarget(t *testing.T) {
+	p := &proxy{self: "100.71.5.0:45877"}
+	for _, tc := range []struct {
+		name, addr string
+		ok         bool
+	}{
+		{"127.0.0.1", "127.0.0.1:9000", true},
+		{"::1", "[::1]:9000", true},
+		{"localhost", "127.0.0.1:3000", true},
+		{"LocalHost.", "[::1]:3000", true},
+		{"shop.dev.localhost", "127.0.0.1:9000", true},
+		{"shop.dev.invalid", "127.0.0.1:9000", true},
+		{"192.168.1.1", "192.168.1.1:80", true},
+		{"example.com", "93.184.216.34:443", true},
+		{"rebind.example", "127.0.0.1:9000", false},
+		{"rebind.example", "[::ffff:127.0.0.1]:9000", false},
+		{"rebind.example", "10.0.0.5:80", false},
+		{"rebind.example", "169.254.169.254:80", false},
+		{"rebind.example", "100.100.1.1:22", false},
+		{"localhost.example", "127.0.0.1:9000", false},
+		{"100.71.5.0", "100.71.5.0:45877", false}, // the proxy itself
+		{"100.71.5.0", "100.71.5.0:45876", false}, // the IPC listener
+		{"100.71.5.0", "100.71.5.0:22", true},
+	} {
+		err := p.allowTarget(tc.name, tc.addr)
+		if (err == nil) != tc.ok || (err != nil && !errors.Is(err, errRefusedTarget)) {
+			t.Errorf("allowTarget(%q, %q) = %v, want ok %v", tc.name, tc.addr, err, tc.ok)
+		}
+	}
+}
+
+// A refusal is a 403, distinct from a server that isn't up.
+func TestServeProxyRefusesItself(t *testing.T) {
+	u := proxyOn(t)
+	if _, code := connectVia(t, u.Host, u.Host); code != http.StatusForbidden {
+		t.Fatalf("CONNECT to the proxy itself: %d, want 403", code)
+	}
+}
+
+func TestServeProxyCapsTunnels(t *testing.T) {
+	srv := httptest.NewServer(&proxy{slots: make(chan struct{})}) // no free slot
+	defer srv.Close()
+	if _, code := connectVia(t, srv.Listener.Addr().String(), "127.0.0.1:1"); code != http.StatusServiceUnavailable {
+		t.Fatalf("status %d, want 503", code)
+	}
+}
+
+// A tunnel nothing crosses is closed, freeing its slot and descriptors.
+func TestServeProxyClosesIdleTunnels(t *testing.T) {
+	srv := httptest.NewServer(&proxy{slots: make(chan struct{}, 1), idle: 50 * time.Millisecond})
+	defer srv.Close()
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	go func() {
+		c, err := target.Accept()
+		if err == nil {
+			defer c.Close()
+			_, _ = io.Copy(io.Discard, c) // silent, and never hangs up
+		}
+	}()
+	c, code := connectVia(t, srv.Listener.Addr().String(), target.Addr().String())
+	if code != http.StatusOK {
+		t.Fatalf("CONNECT: %d", code)
+	}
+	if _, err := c.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("read on an idle tunnel: %v, want EOF from the proxy closing it", err)
 	}
 }
