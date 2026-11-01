@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"strings"
 	"syscall"
 	"time"
@@ -44,12 +45,13 @@ var errRefusedTarget = errors.New("refused")
 // commands). What it guards against is the pages that browser loads: see
 // allowTarget.
 func ServeProxy(ln net.Listener) error {
-	p := &proxy{self: ln.Addr().String(), slots: make(chan struct{}, maxTunnels), idle: tunnelIdle}
+	p := &proxy{self: ln.Addr().String(), hosts: "/etc/hosts", slots: make(chan struct{}, maxTunnels), idle: tunnelIdle}
 	return (&http.Server{Handler: p, ReadHeaderTimeout: 10 * time.Second}).Serve(ln)
 }
 
 type proxy struct {
 	self  string // this listener's address, never a target
+	hosts string // the hosts file whose names may resolve inward
 	slots chan struct{}
 	idle  time.Duration
 }
@@ -121,7 +123,10 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // flip that name to 127.0.0.1 between two requests and read local services
 // as its own origin. Only names that can't be registered may point inward:
 // IP literals, localhost and *.localhost (RFC 6761, which macOS resolves to
-// loopback by itself), and *.invalid.
+// loopback by itself), and *.invalid. And names /etc/hosts lists: only this
+// machine's admin can write that file, so its answer is not an attacker's
+// (that is how local vhosts like app.example.local reach nginx). A
+// whole suffix like .local is not enough: a resolver can still answer for it.
 func (p *proxy) allowTarget(name, addr string) error {
 	if addr == p.self || addr == net.JoinHostPort(hostOf(p.self), fmt.Sprint(TailnetPort)) {
 		return fmt.Errorf("%w: %s is moomux itself", errRefusedTarget, addr)
@@ -139,7 +144,31 @@ func (p *proxy) allowTarget(name, addr string) error {
 	if _, err := netip.ParseAddr(n); err == nil || n == "localhost" || strings.HasSuffix(n, ".localhost") || strings.HasSuffix(n, ".invalid") {
 		return nil
 	}
+	// Read on the refusal path only, so an edit takes effect without a
+	// restart and the common case never touches the file.
+	if hostsLists(p.hosts, n) {
+		return nil
+	}
 	return fmt.Errorf("%w: %s resolves to %s, and only a local name may", errRefusedTarget, name, ip)
+}
+
+// hostsLists reports whether the hosts file at path names n, which is
+// lower-case without a trailing dot. A file that can't be read lists nothing.
+func hostsLists(path, n string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line, _, _ = strings.Cut(line, "#")
+		f := strings.Fields(line)
+		for i := 1; i < len(f); i++ {
+			if strings.ToLower(strings.TrimSuffix(f[i], ".")) == n {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func hostOf(addr string) string {

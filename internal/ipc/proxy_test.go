@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -159,9 +161,14 @@ func connectVia(t *testing.T, proxyAddr, target string) (net.Conn, int) {
 }
 
 // Only a name nobody can register may resolve inward: anything else doing
-// so is DNS rebinding. And moomux's own ports are never a target.
+// so is DNS rebinding, unless the admin's own hosts file says so. And
+// moomux's own ports are never a target.
 func TestProxyAllowTarget(t *testing.T) {
-	p := &proxy{self: "100.71.5.0:45877"}
+	hosts := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(hosts, []byte("# 127.0.0.1 old.example.local\n127.0.0.1\tlocalhost App.example.local portal.internal. # vhosts\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := &proxy{self: "100.71.5.0:45877", hosts: hosts}
 	for _, tc := range []struct {
 		name, addr string
 		ok         bool
@@ -180,6 +187,12 @@ func TestProxyAllowTarget(t *testing.T) {
 		{"rebind.example", "169.254.169.254:80", false},
 		{"rebind.example", "100.100.1.1:22", false},
 		{"localhost.example", "127.0.0.1:9000", false},
+		{"app.example.local", "127.0.0.1:443", true}, // listed in hosts
+		{"PORTAL.internal.", "127.0.0.1:443", true},
+		{"shop.example.local", "127.0.0.1:443", false}, // same suffix, unlisted
+		{"other.portal.internal", "127.0.0.1:443", false},
+		{"old.example.local", "127.0.0.1:443", false},
+		{"127.0.0.1", "127.0.0.1:443", true},
 		{"100.71.5.0", "100.71.5.0:45877", false}, // the proxy itself
 		{"100.71.5.0", "100.71.5.0:45876", false}, // the IPC listener
 		{"100.71.5.0", "100.71.5.0:22", true},
