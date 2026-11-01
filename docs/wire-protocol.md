@@ -106,7 +106,13 @@ handler. Two listeners, one `Server`; `Serve` has always taken a
     origin. So a name may resolve to a loopback, private, link-local or
     tailnet (`100.64.0.0/10`) address only if nobody can register it: IP
     literals, `localhost` and `*.localhost` (RFC 6761; macOS resolves every
-    one to loopback by itself), and `*.invalid`. Anything else is a `403`.
+    one to loopback by itself), `*.invalid`, and any name `/etc/hosts`
+    lists. Only the machine's admin can write that file, so a name in it is
+    not attacker-controlled; that is how local nginx vhosts such as
+    `app.example.local` work. A whole suffix (`.local`, `.internal`) is
+    not enough, since a resolver can still answer for names under it. The
+    file is read on the refusal path only, so edits apply without a restart.
+    Anything else is a `403`.
   - *moomux itself.* A dial from the proxy arrives from this machine's own
     tailnet address, which whois admits, so the proxy's own port and
     `TailnetPort` on that address are refused.
