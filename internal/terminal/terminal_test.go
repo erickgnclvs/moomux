@@ -123,6 +123,7 @@ func TestDetectReturnsFallbackForUnknown(t *testing.T) {
 	t.Setenv("XTERM_VERSION", "")
 	t.Setenv("VTE_VERSION", "")
 	t.Setenv("GHOSTTY_RESOURCES_DIR", "")
+	t.Setenv("WT_SESSION", "")
 	t.Setenv("TMUX", "")
 	// macOS has a fallback that can still open something (see
 	// commandFileOpener); everywhere else there is nothing to open.
