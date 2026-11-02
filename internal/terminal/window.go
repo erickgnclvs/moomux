@@ -150,7 +150,9 @@ func terminalAppArgs(title, tmuxSession string) []string {
 // to the user's default shell, and zsh equals-expands the "=" that pins
 // the session name, killing the tab with "=moomux-... not found".
 func windowsTerminalArgs(title, tmuxSession string) []string {
-	args := []string{"new-tab"}
+	// -w last lands the tab in the most recently used window instead of
+	// spawning a new one per session; wt creates a window when none exists.
+	args := []string{"-w", "last", "new-tab"}
 	if title != "" {
 		args = append(args, "--title", title)
 	}
