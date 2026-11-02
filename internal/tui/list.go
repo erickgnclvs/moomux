@@ -330,6 +330,9 @@ func renderRow(s session.Session, v sessionview.View, width int, selected, marke
 	if s.Pinned {
 		candidates = append(candidates, iconCandidate{iconTicketStyle, "📌", ""})
 	}
+	if s.Protected {
+		candidates = append(candidates, iconCandidate{iconTicketStyle, "🔒", ""})
+	}
 	if s.Ticket != "" {
 		candidates = append(candidates, iconCandidate{iconTicketStyle, "🎫", s.Ticket})
 	}

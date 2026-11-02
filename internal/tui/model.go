@@ -107,6 +107,8 @@ type Backend interface {
 	// SetSessionPinned lists a session first within its project or folder,
 	// or stops doing so. Display only — its manual order is untouched.
 	SetSessionPinned(id string, pinned bool) (session.Session, error)
+	// SetSessionProtected stops DeleteSession from deleting a session.
+	SetSessionProtected(id string, protected bool) (session.Session, error)
 	// ReorderSessions persists ids, verbatim, as the new manual Order for
 	// exactly those sessions. The caller supplies the fully-resolved final
 	// order (not a delta) — see internal/app.App.ReorderSessions's doc.
@@ -437,12 +439,14 @@ type tagForm struct {
 	focus  int
 }
 
-// sessionFormNameFocus, sessionFormAgentFocus, and sessionFormDangerousFocus
-// are the sessionForm.focus values for the edit-session form's controls.
+// sessionFormNameFocus through sessionFormProtectedFocus are the
+// sessionForm.focus values for the edit-session form's controls, in tab order.
 const (
 	sessionFormNameFocus      = 0
 	sessionFormAgentFocus     = 1
 	sessionFormDangerousFocus = 2
+	sessionFormProtectedFocus = 3
+	sessionFormFocusCount     = 4
 )
 
 type sessionForm struct {
@@ -451,11 +455,12 @@ type sessionForm struct {
 	nameInput textinput.Model
 	agentIdx  int
 	dangerous bool
-	focus     int // sessionFormNameFocus, sessionFormAgentFocus, or sessionFormDangerousFocus
+	protected bool
+	focus     int // one of the sessionForm*Focus values
 	err       string
 }
 
-func newSessionForm(id, project, name string, agentIdx int, dangerous bool) sessionForm {
+func newSessionForm(id, project, name string, agentIdx int, dangerous, protected bool) sessionForm {
 	ni := textinput.New()
 	ni.CharLimit = 256
 	ni.SetValue(name)
@@ -466,6 +471,7 @@ func newSessionForm(id, project, name string, agentIdx int, dangerous bool) sess
 		nameInput: ni,
 		agentIdx:  agentIdx,
 		dangerous: dangerous,
+		protected: protected,
 	}
 }
 

@@ -1993,6 +1993,11 @@ func (a *App) SetSessionPinned(id string, pinned bool) (session.Session, error) 
 	return a.Store.SetPinned(id, pinned)
 }
 
+// SetSessionProtected guards (or unguards) a session against DeleteSession.
+func (a *App) SetSessionProtected(id string, protected bool) (session.Session, error) {
+	return a.Store.SetProtected(id, protected)
+}
+
 // repairAgentSupport re-runs s's agent installers on open, backfilling
 // sessions created before a given integration existed. See
 // installAgentSupport — this only adds the "still a known project" guard.
@@ -2694,6 +2699,11 @@ func (a *App) DeleteSession(id string) (string, error) {
 	s, ok := a.Store.Get(id)
 	if !ok {
 		return "", fmt.Errorf("unknown session %q", id)
+	}
+	// Checked here rather than in each front end, so the Mac app and any
+	// other IPC client can't delete a protected session either.
+	if s.Protected {
+		return "", fmt.Errorf("%s is protected from deletion — turn it off in edit session first", s.Name)
 	}
 	// cleanupErr is recorded rather than returned immediately: Store.Delete
 	// below must still run even when tmux or git cleanup fails, or the user

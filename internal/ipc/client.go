@@ -374,6 +374,10 @@ func (c *Client) SetSessionPinned(id string, pinned bool) (session.Session, erro
 	return c.sess("SetSessionPinned", Args{ID: id, On: pinned})
 }
 
+func (c *Client) SetSessionProtected(id string, protected bool) (session.Session, error) {
+	return c.sess("SetSessionProtected", Args{ID: id, On: protected})
+}
+
 func (c *Client) ReorderSessions(ids []string) error {
 	return c.err0("ReorderSessions", Args{IDs: ids})
 }

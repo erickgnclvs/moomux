@@ -3033,6 +3033,24 @@ func TestDeleteSessionMissingWorktree(t *testing.T) {
 	}
 }
 
+func TestDeleteSessionRefusesProtected(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	_ = a.Store.Put(session.Session{ID: "demo:feat", Project: "demo", Name: "feat", Protected: true})
+
+	if _, err := a.DeleteSession("demo:feat"); err == nil || !strings.Contains(err.Error(), "protected") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, ok := a.Store.Get("demo:feat"); !ok {
+		t.Fatal("protected session was deleted")
+	}
+	if _, err := a.SetSessionProtected("demo:feat", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.DeleteSession("demo:feat"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCreateSessionDuplicateName(t *testing.T) {
 	a, git, tm := newTestApp(t, gitProject("/repo"))
 	tm.out["list-panes -t =moomux-feat:^ -F #{pane_id}"] = "%0\n"

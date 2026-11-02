@@ -148,6 +148,9 @@ func (f *fakeBackend) SetSessionArchived(id string, on bool) (session.Session, e
 func (f *fakeBackend) SetSessionPinned(id string, on bool) (session.Session, error) {
 	return session.Session{ID: id, Pinned: on}, nil
 }
+func (f *fakeBackend) SetSessionProtected(id string, on bool) (session.Session, error) {
+	return session.Session{ID: id, Protected: on}, nil
+}
 func (f *fakeBackend) ReorderSessions(ids []string) error {
 	f.reordered = ids
 	return nil

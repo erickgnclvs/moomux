@@ -394,6 +394,15 @@ func (f *fakeBackend) SetSessionPinned(id string, pinned bool) (session.Session,
 	}
 	return session.Session{ID: id, Pinned: pinned}, nil
 }
+func (f *fakeBackend) SetSessionProtected(id string, protected bool) (session.Session, error) {
+	for i, s := range f.sessions {
+		if s.ID == id {
+			f.sessions[i].Protected = protected
+			return f.sessions[i], nil
+		}
+	}
+	return session.Session{ID: id, Protected: protected}, nil
+}
 func (f *fakeBackend) ReorderSessions(ids []string) error {
 	f.reorderSessionsCalls = append(f.reorderSessionsCalls, reorderSessionsCall{ids: ids})
 	return f.reorderSessionsErr

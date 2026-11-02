@@ -403,6 +403,9 @@ func (f *fakeBackend) SetSessionArchived(id string, archived bool) (session.Sess
 func (f *fakeBackend) SetSessionPinned(id string, pinned bool) (session.Session, error) {
 	return session.Session{}, nil
 }
+func (f *fakeBackend) SetSessionProtected(id string, protected bool) (session.Session, error) {
+	return session.Session{}, nil
+}
 
 // TmuxAliveAll reports every sample session as alive so the core's
 // state join doesn't force them all to "parked" — that would hide whatever
@@ -534,6 +537,7 @@ func sampleSessions() []session.Session {
 			CreatedAt:    now,
 			Agent:        "claude",
 			Archived:     true,
+			Protected:    true,
 		},
 	}
 }

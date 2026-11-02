@@ -725,6 +725,9 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.openBatchDelete()
 		}
 		if len(m.sessions) > 0 {
+			if s := m.sessions[m.cursor]; s.Protected {
+				return m.flashError(fmt.Errorf("%s is protected — turn it off with e (edit session) to delete it", s.Name))
+			}
 			id := m.sessions[m.cursor].ID
 			// Opens instantly on the last snapshot's status so the dialog
 			// never visibly pauses, then fires a check of its own —
@@ -820,7 +823,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = ModeEditSession
 			m.sessionDialogReturn = ModeList
 			m.resetOverlayViewport()
-			m.sessionForm = newSessionForm(s.ID, s.Project, s.Name, m.agentNameIndex(s.AgentName()), s.Dangerous)
+			m.sessionForm = newSessionForm(s.ID, s.Project, s.Name, m.agentNameIndex(s.AgentName()), s.Dangerous, s.Protected)
 			m.resizeFormInputs()
 		}
 	case key.Matches(msg, m.keys.ProjectPicker):
@@ -1669,9 +1672,9 @@ func (m *Model) updateEditSession(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		forward := !(key.Matches(msg, m.keys.ShiftTab) || key.Matches(msg, m.keys.FormUp))
 		m.sessionForm.nameInput.Blur()
 		if forward {
-			m.sessionForm.focus = (m.sessionForm.focus + 1) % 3
+			m.sessionForm.focus = (m.sessionForm.focus + 1) % sessionFormFocusCount
 		} else {
-			m.sessionForm.focus = (m.sessionForm.focus + 2) % 3
+			m.sessionForm.focus = (m.sessionForm.focus + sessionFormFocusCount - 1) % sessionFormFocusCount
 		}
 		if m.sessionForm.focus == sessionFormNameFocus {
 			m.sessionForm.nameInput.Focus()
@@ -1686,6 +1689,8 @@ func (m *Model) updateEditSession(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case sessionFormDangerousFocus:
 			m.sessionForm.dangerous = !m.sessionForm.dangerous
+		case sessionFormProtectedFocus:
+			m.sessionForm.protected = !m.sessionForm.protected
 		case sessionFormNameFocus:
 			var cmd tea.Cmd
 			m.sessionForm.nameInput, cmd = m.sessionForm.nameInput.Update(msg)
@@ -1696,13 +1701,17 @@ func (m *Model) updateEditSession(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		newName := m.sessionForm.nameInput.Value()
 		agent := m.agentNames()[m.sessionForm.agentIdx]
 		dangerous := m.sessionForm.dangerous
+		protected := m.sessionForm.protected
 		m.busy = true
 		m.sessionForm.err = ""
 		return m, func() tea.Msg {
 			if _, err := m.backend.RenameSession(id, newName); err != nil {
 				return SessionAgentUpdatedMsg{Err: err}
 			}
-			s, err := m.backend.SetSessionAgent(id, agent, dangerous)
+			if _, err := m.backend.SetSessionAgent(id, agent, dangerous); err != nil {
+				return SessionAgentUpdatedMsg{Err: err}
+			}
+			s, err := m.backend.SetSessionProtected(id, protected)
 			return SessionAgentUpdatedMsg{Session: s, Err: err}
 		}
 	default:

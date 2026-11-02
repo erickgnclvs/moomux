@@ -907,6 +907,23 @@ func TestEditSessionFlowRenames(t *testing.T) {
 	}
 }
 
+func TestEditSessionSetsProtected(t *testing.T) {
+	be := &fakeBackend{sessions: []session.Session{
+		{ID: "demo:a", Project: "demo", Name: "a", Agent: "claude"},
+	}}
+	m := newTestModel(be)
+	m.Update(keyRune("e"))
+	press(m, tea.KeyShiftTab) // wraps from name to protected
+	if m.sessionForm.focus != sessionFormProtectedFocus {
+		t.Fatalf("focus = %d", m.sessionForm.focus)
+	}
+	press(m, tea.KeyRight)
+	run(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !be.sessions[0].Protected {
+		t.Fatal("session not protected after save")
+	}
+}
+
 func TestEditSessionCancelAndError(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{
 		{ID: "demo:a", Project: "demo", Name: "a", Agent: "claude"},
