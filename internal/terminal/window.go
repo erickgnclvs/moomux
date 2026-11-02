@@ -140,12 +140,27 @@ func terminalAppArgs(title, tmuxSession string) []string {
 	return []string{"-a", "Terminal"}
 }
 
+// windowsTerminalArgs opens a new Windows Terminal tab. This opener is only
+// ever selected from inside WSL (WT_SESSION reaches the Linux process via
+// WSLENV), but wt.exe executes the command after "--" on the *Windows* side,
+// where tmux doesn't exist — Windows fails the launch with "the system
+// cannot find the file specified". Route it back into the distro through
+// wsl.exe, pinning the distro moomux is running in when WSL names it.
+// -e (not wsl.exe's own "--") execs tmux directly: "--" hands the command
+// to the user's default shell, and zsh equals-expands the "=" that pins
+// the session name, killing the tab with "=moomux-... not found".
 func windowsTerminalArgs(title, tmuxSession string) []string {
-	args := []string{"new-tab"}
+	// -w last lands the tab in the most recently used window instead of
+	// spawning a new one per session; wt creates a window when none exists.
+	args := []string{"-w", "last", "new-tab"}
 	if title != "" {
 		args = append(args, "--title", title)
 	}
-	args = append(args, "--", "tmux", "attach", "-t", tmuxSession)
+	args = append(args, "--", "wsl.exe")
+	if distro := os.Getenv("WSL_DISTRO_NAME"); distro != "" {
+		args = append(args, "-d", distro)
+	}
+	args = append(args, "-e", "tmux", "attach", "-t", tmuxSession)
 	return args
 }
 
