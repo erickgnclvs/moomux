@@ -58,7 +58,7 @@ func TestWindowOpenerWindowsTerminalArgs(t *testing.T) {
 	}
 	// Order matters: wt.exe executes everything after its "--" on the
 	// Windows side, so tmux must sit behind wsl.exe, not next to it.
-	want := []string{"new-tab", "--title", "feat/bar", "--", "wsl.exe", "-d", "Ubuntu", "--", "tmux", "attach", "-t", "=moomux-foo"}
+	want := []string{"new-tab", "--title", "feat/bar", "--", "wsl.exe", "-d", "Ubuntu", "-e", "tmux", "attach", "-t", "=moomux-foo"}
 	if !slices.Equal(fe.args, want) {
 		t.Fatalf("args = %q, want %q", fe.args, want)
 	}
@@ -72,7 +72,7 @@ func TestWindowOpenerWindowsTerminalArgsWithoutDistroName(t *testing.T) {
 		t.Fatal(err)
 	}
 	// No -d flag: wsl.exe falls back to the default distro.
-	want := []string{"new-tab", "--title", "feat/bar", "--", "wsl.exe", "--", "tmux", "attach", "-t", "=moomux-foo"}
+	want := []string{"new-tab", "--title", "feat/bar", "--", "wsl.exe", "-e", "tmux", "attach", "-t", "=moomux-foo"}
 	if !slices.Equal(fe.args, want) {
 		t.Fatalf("args = %q, want %q", fe.args, want)
 	}
