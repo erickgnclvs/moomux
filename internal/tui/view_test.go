@@ -165,7 +165,7 @@ func TestNarrowEditSessionShowsCompactSelectedAgent(t *testing.T) {
 	m := layoutTestModel(1)
 	m.width, m.height = 24, 12
 	m.mode = ModeEditSession
-	m.sessionForm = newSessionForm("id", "demo", "session", 2, false) // opencode
+	m.sessionForm = newSessionForm("id", "demo", "session", 2, false, false) // opencode
 
 	view := m.View()
 
@@ -325,7 +325,7 @@ func TestOverlaysStayWithinKeyboardSizedViewport(t *testing.T) {
 			name: "edit session",
 			setup: func(m *Model) {
 				m.mode = ModeEditSession
-				m.sessionForm = newSessionForm("id", "demo", "session", 1, false)
+				m.sessionForm = newSessionForm("id", "demo", "session", 1, false, false)
 			},
 		},
 		{

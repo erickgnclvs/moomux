@@ -32,6 +32,7 @@ type Session struct {
 	LastOpened   time.Time `json:"last_opened,omitempty"` // when OpenSession last attached to this session; zero if never opened
 	Archived     bool      `json:"archived,omitempty"`    // hidden from the default list, but not deleted
 	Pinned       bool      `json:"pinned,omitempty"`      // listed first within its project or folder; display only, Order is untouched
+	Protected    bool      `json:"protected,omitempty"`   // App.DeleteSession refuses it until this is cleared
 	NewBranch    bool      `json:"new_branch,omitempty"`  // true if moomux created Branch fresh (vs. checking out an existing one); safe to delete on session delete
 	BaseBranch   string    `json:"base_branch,omitempty"` // the branch Branch was cut from, when NewBranch; empty for a resumed branch or a no-worktree project, where there is none to diff against
 	Prompt       string    `json:"prompt,omitempty"`      // first prompt typed into the agent at creation time, captured directly rather than relying on the agent's own log
@@ -177,6 +178,11 @@ func (s *Store) SetArchived(id string, archived bool) (Session, error) {
 // unpinning puts it back exactly where it was.
 func (s *Store) SetPinned(id string, pinned bool) (Session, error) {
 	return s.update(id, func(sess *Session) { sess.Pinned = pinned })
+}
+
+// SetProtected flips a session's Protected flag and persists it.
+func (s *Store) SetProtected(id string, protected bool) (Session, error) {
+	return s.update(id, func(sess *Session) { sess.Protected = protected })
 }
 
 // update applies edit to the freshly reloaded session id and persists it.

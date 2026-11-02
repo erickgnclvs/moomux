@@ -34,6 +34,10 @@ func (m *Model) toggleMark() {
 		return
 	}
 	id := m.sessions[m.cursor].ID
+	if m.sessions[m.cursor].Protected {
+		m.setFlash("error", m.sessions[m.cursor].Name+" is protected — can't mark it for deletion")
+		return
+	}
 	if m.marked[id] {
 		delete(m.marked, id)
 	} else {
@@ -55,7 +59,7 @@ func (m *Model) markFinished() {
 	n := 0
 	for _, s := range m.allSessions() {
 		pr := m.viewFor(s.ID).PR
-		if pr == nil || (pr.State != "MERGED" && pr.State != "CLOSED") || m.marked[s.ID] {
+		if pr == nil || (pr.State != "MERGED" && pr.State != "CLOSED") || m.marked[s.ID] || s.Protected {
 			continue
 		}
 		if m.marked == nil {
@@ -77,7 +81,8 @@ func (m *Model) markFinished() {
 func (m *Model) openBatchDelete() (tea.Model, tea.Cmd) {
 	m.batchIDs = nil
 	for _, s := range m.allSessions() {
-		if m.marked[s.ID] {
+		// A session protected after it was marked drops out here.
+		if m.marked[s.ID] && !s.Protected {
 			m.batchIDs = append(m.batchIDs, s.ID)
 		}
 	}

@@ -243,6 +243,8 @@ func (m *Model) focusedOverlayLine(content string) int {
 			return lineContaining(content, m.sessionForm.nameInput.View())
 		case sessionFormDangerousFocus:
 			return lineContaining(content, m.renderSessionDangerousToggle())
+		case sessionFormProtectedFocus:
+			return lineContaining(content, "protected:")
 		}
 		return lineContaining(content, m.renderSessionAgentSelector())
 	case ModeProjectPicker:

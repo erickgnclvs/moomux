@@ -195,3 +195,27 @@ func TestBatchDeleteFailureReappears(t *testing.T) {
 		t.Fatalf("failed delete stayed hidden: %v", m.sessions)
 	}
 }
+
+// A protected session can't be deleted from the TUI: d refuses it, space
+// won't mark it, and a mark made before it was protected is dropped.
+func TestProtectedSessionCannotBeDeleted(t *testing.T) {
+	be := threeSessions()
+	be.sessions[0].Protected = true
+	m := newTestModel(be)
+
+	pressDelete(m)
+	if m.mode != ModeList || !strings.Contains(m.flash, "protected") {
+		t.Fatalf("d on protected: mode=%v flash=%q", m.mode, m.flash)
+	}
+	space(m)
+	if m.marked["demo:a"] {
+		t.Fatal("protected session was marked")
+	}
+
+	m.marked = map[string]bool{"demo:a": true, "demo:b": true}
+	pressDelete(m)
+	run(m, keyRune("y"))
+	if !slices.Equal(be.deleteCalls, []string{"demo:b"}) {
+		t.Fatalf("deleteCalls = %v", be.deleteCalls)
+	}
+}

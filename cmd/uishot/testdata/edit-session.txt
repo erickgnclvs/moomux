@@ -1,6 +1,5 @@
 === 40x20 ===
                                         
-                                        
 ╭──────────────────────────────────────╮
 │                                      │
 │  Edit session                        │
@@ -12,15 +11,15 @@
 │                                      │
 │  dangerous:  [off]                   │
 │                                      │
+│  protected:  [off]                   │
+│                                      │
 │  display name; also renames the      │
 │  live tmux session so it stays       │
 │  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
                                         
-                                        
 === 100x32 ===
-                                                                                                    
                                                                                                     
                                                                                                     
                                                                                                     
@@ -39,11 +38,12 @@
            │                                                                            │           
            │  dangerous:  [off]                                                         │           
            │                                                                            │           
+           │  protected:  [off]                                                         │           
+           │                                                                            │           
            │  display name; also renames the live tmux session so it stays aligned      │           
            │  tab fields  ←→ change  enter save  esc cancel                             │           
            │                                                                            │           
            ╰────────────────────────────────────────────────────────────────────────────╯           
-                                                                                                    
                                                                                                     
                                                                                                     
                                                                                                     

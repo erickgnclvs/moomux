@@ -738,6 +738,8 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 		return sessionResult(b.SetSessionArchived(a.ID, a.On))
 	case "SetSessionPinned":
 		return sessionResult(b.SetSessionPinned(a.ID, a.On))
+	case "SetSessionProtected":
+		return sessionResult(b.SetSessionProtected(a.ID, a.On))
 	case "ReorderSessions":
 		return Result{}, b.ReorderSessions(a.IDs)
 	case "MoveSession":

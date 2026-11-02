@@ -363,6 +363,9 @@ func (m *Model) renderEditSession() string {
 	b.WriteString("\n\n")
 	b.WriteString(muteStyle.Render("dangerous:  "))
 	b.WriteString(m.renderSessionDangerousToggle())
+	b.WriteString("\n\n")
+	b.WriteString(muteStyle.Render("protected:  "))
+	b.WriteString(renderToggle(m.sessionForm.protected, m.sessionForm.focus == sessionFormProtectedFocus))
 	return b.String()
 }
 
@@ -384,6 +387,7 @@ var editSessionFieldHints = []string{
 	sessionFormNameFocus:      "display name; also renames the live tmux session so it stays aligned",
 	sessionFormAgentFocus:     "agent used the next time this session's tmux process is created",
 	sessionFormDangerousFocus: "on: skips permission prompts (--dangerously-skip-permissions / --yolo); no effect for opencode",
+	sessionFormProtectedFocus: "on: this session can't be deleted until you turn it off again",
 }
 
 // projFormFieldHints gives a one-line explanation for whichever field of the

@@ -912,7 +912,12 @@ ids and wezterm pane ids restart from zero with the process, so a remembered
 one can name a stranger's tab.
 
 **Session edits** — `SetSessionTags`, `SetSessionPrompt`, `SetSessionAgent`,
-`RenameSession`, `SetSessionArchived`, `SetSessionPinned`, `ReorderSessions`.
+`RenameSession`, `SetSessionArchived`, `SetSessionPinned`, `SetSessionProtected`,
+`ReorderSessions`.
+
+`SetSessionProtected` (`id`, `on`) sets `protected` on the session.
+`DeleteSession` refuses a protected session with an error, so a client
+should hide or disable its delete action for one rather than rely on that.
 
 `SetSessionPinned` (`id`, `on`) is display only: a pinned session is listed
 first within its group — its project's loose sessions, or its folder's
