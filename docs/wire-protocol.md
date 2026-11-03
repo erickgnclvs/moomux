@@ -1102,6 +1102,7 @@ It takes one `session.CreateRequest` and the core runs the whole sequence:
 
 ```
 worktree + branch  →  tmux pane + agent
+                   →  file into folder
                    →  attach PR tag
                    →  compose the first prompt
                    →  store it on the session

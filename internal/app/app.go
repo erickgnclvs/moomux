@@ -959,6 +959,11 @@ func (a *App) CreateSessionReport(req session.CreateRequest) (session.Session, C
 		}
 		name = a.uniqueName(req.Project, base)
 	}
+	if req.Folder != "" {
+		if _, err := config.CleanFolderName(req.Folder); err != nil {
+			return session.Session{}, report, err
+		}
+	}
 	s, hint, err := a.createSession(req.Project, name, req.Agent, req.Branch, req.Ticket,
 		req.OpenTerminal, req.Dangerous, req.BaseBranch, req.Model, req.Thinking)
 	if err != nil {
@@ -970,6 +975,13 @@ func (a *App) CreateSessionReport(req session.CreateRequest) (session.Session, C
 	if !req.Spawned {
 		if err := a.rememberAgent(s.AgentName()); err != nil {
 			slog.Warn("remember last agent failed", "agent", s.AgentName(), "err", err)
+		}
+	}
+	if req.Folder != "" {
+		if updated, folderErr := a.SetSessionFolder(s.ID, req.Folder); folderErr != nil {
+			hint = joinHint(hint, fmt.Sprintf("couldn't file into folder %q: %v", req.Folder, folderErr))
+		} else {
+			s = updated
 		}
 	}
 	if req.PR != "" {

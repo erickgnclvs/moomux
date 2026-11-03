@@ -867,6 +867,30 @@ func TestCreateSessionSpawnedKeepsLastAgent(t *testing.T) {
 	}
 }
 
+func TestCreateSessionFilesIntoFolder(t *testing.T) {
+	a, git, tm := newTestApp(t, gitProject("/repo"))
+	tm.out["list-panes -t ="+TmuxSessionName("demo:one", "one")+":^ -F #{pane_id}"] = "%0\n"
+	noBranch(git, "one")
+
+	s, _, err := a.CreateSession(session.CreateRequest{Project: "demo", Name: "one", Folder: " auth ", OpenTerminal: true, Dangerous: boolPtr(false)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored, _ := a.Store.Get(s.ID); stored.Folder != "auth" {
+		t.Fatalf("stored folder = %q, want auth", stored.Folder)
+	}
+	if _, ok := a.Cfg.Folders["auth"]; !ok {
+		t.Fatalf("folder auth not created: %v", a.Cfg.Folders)
+	}
+
+	if _, _, err := a.CreateSession(session.CreateRequest{Project: "demo", Name: "two", Folder: "  ", OpenTerminal: true}); err == nil {
+		t.Fatal("blank folder accepted, want an error before anything is created")
+	}
+	if _, ok := a.Store.Get("demo:two"); ok {
+		t.Fatal("session created despite an invalid folder")
+	}
+}
+
 // TestCreateSessionModelAppendsFlag guards buildAgentCmd/modelFlag: a chosen
 // model must be appended as --model, and "default" (or empty) must omit the
 // flag entirely rather than passing it through literally.

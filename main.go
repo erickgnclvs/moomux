@@ -451,6 +451,7 @@ func runSpawn(args []string) error {
 	dangerous := fs.Bool("dangerous", false, "run the agent with its permission-skipping flag (claude/antigravity: --dangerously-skip-permissions, codex: --yolo)")
 	branch := fs.String("branch", "", "existing branch to check out, instead of creating a new one")
 	ticket := fs.String("ticket", "", "ticket URL to attach to the session")
+	folder := fs.String("folder", "", "folder to file the session under (created if it doesn't exist yet)")
 	prompt := fs.String("prompt", "", "initial prompt to type into the new session's agent pane")
 	peers := fs.String("peers", "", "comma-separated names of the sessions this one has to agree with; appends the coordination rules from docs/multi-repo-sessions.md to -prompt (needs -contract)")
 	contract := fs.String("contract", "", "path (or URL) of the shared contract the -peers sessions work to")
@@ -501,7 +502,7 @@ func runSpawn(args []string) error {
 	s, report, err := a.CreateSessionReport(session.CreateRequest{
 		Project: *project, Name: *name, Agent: *agent, Branch: *branch, Ticket: *ticket,
 		Model: *model, Thinking: *thinking, Prompt: *prompt, AutoSubmit: *prompt != "",
-		Dangerous: dangerousOverride, Spawned: true,
+		Dangerous: dangerousOverride, Spawned: true, Folder: *folder,
 	})
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
