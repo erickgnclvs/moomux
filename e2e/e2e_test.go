@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/erickgnclvs/moomux/internal/app"
 	"github.com/erickgnclvs/moomux/internal/config"
@@ -109,14 +110,23 @@ func resolved(t *testing.T, p string) string {
 	return r
 }
 
-func tmuxPaneCwd(t *testing.T, name string) string {
+func waitPaneCwd(t *testing.T, name, want, what string) {
 	t.Helper()
-	out, err := exec.Command("tmux", "list-panes", "-t", name, "-F", "#{pane_current_path}").Output()
-	if err != nil {
-		t.Fatalf("tmux list-panes: %v", err)
+	want = resolved(t, want)
+	var got string
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		out, err := exec.Command("tmux", "list-panes", "-t", name, "-F", "#{pane_current_path}").Output()
+		if err != nil {
+			t.Fatalf("tmux list-panes: %v", err)
+		}
+		got, _, _ = strings.Cut(strings.TrimSpace(string(out)), "\n")
+		if got == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s = %q, want %q", what, got, want)
+		}
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	return lines[0]
 }
 
 func TestCreateSession_GitProject_NewBranch(t *testing.T) {
@@ -165,9 +175,7 @@ func TestCreateSession_GitProject_NewBranch(t *testing.T) {
 	if got := tmuxPaneCount(t, s.TmuxSession); got != 2 {
 		t.Fatalf("pane count = %d, want 2", got)
 	}
-	if got := tmuxPaneCwd(t, s.TmuxSession); got != resolved(t, s.WorktreePath) {
-		t.Fatalf("pane cwd = %q, want %q", got, s.WorktreePath)
-	}
+	waitPaneCwd(t, s.TmuxSession, s.WorktreePath, "pane cwd")
 
 	// Persisted to disk, not just in memory.
 	reloaded := &session.Store{Path: a.Store.Path}
@@ -270,9 +278,7 @@ func TestCreateSession_PlainProject(t *testing.T) {
 	if s.WorktreePath != plainDir {
 		t.Fatalf("worktree path = %q, want project repo %q", s.WorktreePath, plainDir)
 	}
-	if got := tmuxPaneCwd(t, s.TmuxSession); got != resolved(t, plainDir) {
-		t.Fatalf("pane cwd = %q, want %q", got, plainDir)
-	}
+	waitPaneCwd(t, s.TmuxSession, plainDir, "pane cwd")
 
 	if _, err := a.DeleteSession(s.ID); err != nil {
 		t.Fatalf("DeleteSession: %v", err)
@@ -370,9 +376,7 @@ func TestOpenSession_RecreatesKilledSession(t *testing.T) {
 	if !tmuxHasSession(s.TmuxSession) {
 		t.Fatalf("OpenSession did not recreate the tmux session")
 	}
-	if got := tmuxPaneCwd(t, s.TmuxSession); got != resolved(t, s.WorktreePath) {
-		t.Fatalf("recreated pane cwd = %q, want %q", got, s.WorktreePath)
-	}
+	waitPaneCwd(t, s.TmuxSession, s.WorktreePath, "recreated pane cwd")
 }
 
 func TestOpenSession_RecreatesOnCwdMismatch(t *testing.T) {
@@ -393,16 +397,12 @@ func TestOpenSession_RecreatesOnCwdMismatch(t *testing.T) {
 	if out, err := exec.Command("tmux", "new-session", "-d", "-s", s.TmuxSession, "-c", wrongCwd).CombinedOutput(); err != nil {
 		t.Fatalf("new-session: %v (%s)", err, out)
 	}
-	if got := tmuxPaneCwd(t, s.TmuxSession); got != resolved(t, wrongCwd) {
-		t.Fatalf("setup: pane cwd = %q, want %q", got, wrongCwd)
-	}
+	waitPaneCwd(t, s.TmuxSession, wrongCwd, "setup: pane cwd")
 
 	if _, err := a.OpenSession(s.ID); err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
-	if got := tmuxPaneCwd(t, s.TmuxSession); got != resolved(t, s.WorktreePath) {
-		t.Fatalf("pane cwd after mismatch recovery = %q, want %q", got, s.WorktreePath)
-	}
+	waitPaneCwd(t, s.TmuxSession, s.WorktreePath, "pane cwd after mismatch recovery")
 }
 
 func TestKillTmux_PreservesStoreAndWorktree(t *testing.T) {
