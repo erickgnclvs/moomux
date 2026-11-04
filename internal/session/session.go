@@ -81,6 +81,9 @@ type CreateRequest struct {
 	// work, not the user choosing — so it doesn't change the remembered
 	// default agent (config.Config.LastAgent).
 	Spawned bool
+	// Folder files the new session under this folder, creating it on first
+	// use, same as SetSessionFolder. Empty leaves it top-level.
+	Folder string
 }
 
 // AgentName returns the effective agent name, defaulting to "claude" for legacy sessions.

@@ -121,6 +121,9 @@ agree on a shared contract (one per repo for a cross-repo feature, say), add
 ` + "`-peers <other session names, comma-separated> -contract <path to the shared plan>`" + `.
 moomux appends the coordination rules to the prompt itself, so don't paste
 them into ` + "`-prompt`" + `. Leave both out for independent tasks.
+
+**Folder**: if ` + "`$ARGUMENTS`" + ` asks for the session to go into a folder, add
+` + "`-folder <name>`" + ` (created if it doesn't exist yet).
 `
 
 // EnsureSpawnCommand installs the /spawn custom command — see ensureCommand.

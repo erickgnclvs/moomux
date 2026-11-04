@@ -242,10 +242,10 @@ moomux shows Claude and Codex quota in the TUI header or footer. Codex quota req
 
 ```bash
 moomux spawn -project <project> [-name <name>] [-agent claude|codex|opencode|antigravity] \
-  [-branch <existing-branch>] [-ticket <url>] [-prompt "<initial task>"]
+  [-branch <existing-branch>] [-ticket <url>] [-folder <folder>] [-prompt "<initial task>"]
 ```
 
-It's fire-and-forget: prints the new tmux session's name and exits immediately, without waiting for the agent or reporting anything back. Run `moomux spawn -h` for the full flag list, or `moomux --help` for top-level usage.
+`-folder` files the new session under that folder, creating it if it doesn't exist yet — handy for keeping a batch of delegated sessions together. It's fire-and-forget: prints the new tmux session's name and exits immediately, without waiting for the agent or reporting anything back. Run `moomux spawn -h` for the full flag list, or `moomux --help` for top-level usage.
 
 For a feature that spans several repositories — one spawned session per repo, all of them having to agree with each other — pass `-peers <other session names> -contract <path to the shared plan>` and spawn appends the coordination rules to the prompt. See [Coordinating sessions across several repositories](docs/multi-repo-sessions.md) for the rules and why.
 
