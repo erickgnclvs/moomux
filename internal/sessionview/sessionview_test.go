@@ -16,8 +16,9 @@ import (
 )
 
 type fakeCore struct {
-	folders  map[string]config.FolderMeta
-	projects []string
+	folders     map[string]config.FolderMeta
+	projects    []string
+	recentFirst bool
 
 	mu       sync.Mutex
 	sessions []session.Session
@@ -44,8 +45,9 @@ func (f *fakeCore) ConfigSnapshot() config.Config {
 		// Cloned, like the real App.ConfigSnapshot: the whole Snapshot.Cfg
 		// design rests on the Watcher being able to hold this while the
 		// core mutates, so the fake must not hand out a live map.
-		Folders: maps.Clone(f.folders),
-		Order:   append([]string(nil), f.projects...),
+		Folders:         maps.Clone(f.folders),
+		Order:           append([]string(nil), f.projects...),
+		SortRecentFirst: f.recentFirst,
 	}
 	for _, name := range f.projects {
 		cfg.Projects[name] = config.Project{}
@@ -667,6 +669,25 @@ func TestParkedSessionsKeepStoredOrder(t *testing.T) {
 	}
 	if want := []string{"a", "b", "c", "d"}; !slices.Equal(got, want) {
 		t.Fatalf("order = %v, want %v (stored order, parked b between live a and c)", got, want)
+	}
+}
+
+// TestRecentFirstListsLiveBeforeParked: sorting by recency has no manual
+// order to protect (dragging is off in that mode), so live sessions rank
+// above parked ones there. Without it, a parked session opened a minute ago
+// sat above a live one opened an hour ago.
+func TestRecentFirstListsLiveBeforeParked(t *testing.T) {
+	core := &fakeCore{
+		sessions:    []session.Session{sess("a", "/wt/a"), sess("b", "/wt/b"), sess("c", "/wt/c"), sess("d", "/wt/d")},
+		alive:       map[string]bool{"a": true, "c": true},
+		recentFirst: true,
+	}
+	var got []string
+	for _, s := range Once(core, "", nil).Sessions {
+		got = append(got, s.ID)
+	}
+	if want := []string{"a", "c", "b", "d"}; !slices.Equal(got, want) {
+		t.Fatalf("order = %v, want %v (live first, each group in recent order)", got, want)
 	}
 }
 

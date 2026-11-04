@@ -486,16 +486,27 @@ func (w *Watcher) build() (Snapshot, map[string]watcher.State) {
 	live := make(map[string]bool, len(sessions))
 	changedTitles := map[string]watcher.State{}
 
+	// One read of the config, not one per thing derived from it: the order,
+	// the rows a client renders, and the Cfg it renders them under have to
+	// agree.
+	cfg := w.Core.ConfigSnapshot()
+
 	// Pinned sessions first, each group keeping the order Sessions() gave
 	// it: the input is already in base order, so this is just a stable
-	// partition. Liveness plays no part: a parked session sat below every
-	// live one regardless of its stored order, so dragging it among live
-	// sessions persisted the move but drew it straight back to the bottom.
+	// partition. In manual order liveness plays no part: a parked session
+	// sat below every live one regardless of its stored order, so dragging
+	// it among live sessions persisted the move but drew it straight back
+	// to the bottom. Recent-first has no drag to protect, so there live
+	// sessions go above parked ones within each group.
 	rank := func(s session.Session) int {
-		if s.Pinned {
-			return 0
+		r := 0
+		if !s.Pinned {
+			r += 2
 		}
-		return 1
+		if cfg.SortRecentFirst && w.stateOf(s) == watcher.Parked {
+			r++
+		}
+		return r
 	}
 	ordered := slices.Clone(sessions)
 	slices.SortStableFunc(ordered, func(a, b session.Session) int { return rank(a) - rank(b) })
@@ -531,9 +542,6 @@ func (w *Watcher) build() (Snapshot, map[string]watcher.State) {
 
 	w.prune(sessions, live)
 
-	// One read of the config, not one per thing derived from it: the rows a
-	// client renders and the Cfg it renders them under have to agree.
-	cfg := w.Core.ConfigSnapshot()
 	folders := cfg.Folders
 	projects := cfg.OrderedProjectNames()
 	known := projectsOf(ordered, projects)
