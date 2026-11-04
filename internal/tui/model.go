@@ -711,7 +711,15 @@ type Model struct {
 	flash               string
 	flashKind           string // "info" or "error"
 	flashTime           time.Time
-	busy                bool // true while a background op (e.g. session create) is in flight; suppresses flash expiry
+	busy                bool // true while a background op (e.g. a settings save) is in flight; suppresses flash expiry
+	// creating holds the first prompt of each session create still in
+	// flight; its length is how many. Creates overlap — the form reopens
+	// while earlier ones are still running — so this is a list, not a flag.
+	creating []string
+	// failedCreates are creates that failed while another new-session form
+	// was open, oldest first. Reopening the failed one over it would lose
+	// whatever was being typed there, so n brings each back in turn.
+	failedCreates []CreateFailedMsg
 	// forceCopyLinks overrides browser.Remote()'s auto-detection, forcing
 	// ticket/PR clicks to copy instead of open. Auto-detection has no
 	// signal at all for transports like mosh that don't set SSH_TTY/

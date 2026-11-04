@@ -86,6 +86,13 @@ type App struct {
 	// check before either has written its session.
 	nameMu        sync.Mutex
 	reservedNames map[string]bool
+
+	// worktreeMu serializes createSession's fetch-and-add. Creates overlap,
+	// and `git worktree add -b` writes the new branch's upstream into the
+	// repo's .git/config: two at once and one fails on config.lock.
+	// ponytail: one lock for every repo; key it by repo if creates in
+	// different projects queue behind each other noticeably.
+	worktreeMu sync.Mutex
 }
 
 // project returns a copy of the named project's config. config.Project is
@@ -1130,6 +1137,9 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 
 	newBranch := existingBranch == ""
 	if proj.UsesWorktree() {
+		a.worktreeMu.Lock()
+		unlockWorktree := sync.OnceFunc(a.worktreeMu.Unlock)
+		defer unlockWorktree()
 		hasRemote := a.Git.HasRemote(proj.Repo, "origin")
 		if existingBranch != "" {
 			branch = existingBranch
@@ -1191,6 +1201,8 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 			return session.Session{}, "", fmt.Errorf("git worktree add: %w", err)
 		}
 		slog.Info("worktree added", "path", wt, "branch", branch)
+		// The rest works in its own worktree: no need to hold others up.
+		unlockWorktree()
 		if home, err := os.UserHomeDir(); err != nil {
 			slog.Warn("userscript run skipped", "err", err)
 		} else {
