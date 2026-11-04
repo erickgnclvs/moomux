@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/erickgnclvs/moomux/internal/app"
 	"github.com/erickgnclvs/moomux/internal/browser"
@@ -44,6 +45,11 @@ type terminalBackend struct {
 	// from, so an answer cached at startup names an emulator that has
 	// since been detached, replaced, or reattached from another machine.
 	term terminal.TerminalOpener
+	// openMu serializes terminal opens. Creates overlap, and iTerm2
+	// resolves "current window" racily while an earlier AppleScript is
+	// still launching it, so two opens at once can land both attaches in
+	// one tab (see terminal/iterm.go's createTab).
+	openMu sync.Mutex
 }
 
 func newTerminalBackend(b tui.Backend) *terminalBackend {
@@ -100,7 +106,9 @@ func (t *terminalBackend) open(s session.Session) string {
 		// the pane was created and can be hours stale.
 		return fmt.Sprintf("tmux attach -t %s", s.TmuxSession)
 	}
+	t.openMu.Lock()
 	hint, err := t.opener().OpenSession(s.TmuxSession, s.Name)
+	t.openMu.Unlock()
 	if err != nil {
 		slog.Error("open terminal failed", "id", s.ID, "err", err)
 		return fmt.Sprintf("couldn't open a terminal (%v) — attach yourself: tmux attach -t %s", err, s.TmuxSession)

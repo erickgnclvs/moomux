@@ -50,6 +50,14 @@ func (m *Model) clearNewSessionDraft() {
 	}
 }
 
+// clearNewSessionDraftOf clears the draft only if it is still prompt. Creates
+// overlap, so by the time one lands the draft may be another form's.
+func (m *Model) clearNewSessionDraftOf(prompt string) {
+	if b, err := os.ReadFile(m.draftPath); err == nil && string(b) == prompt {
+		m.clearNewSessionDraft()
+	}
+}
+
 // loadNewSessionDraft returns the saved prompt, or "" when there is none.
 //
 // A draft that a session has already consumed is dropped. The draft is saved

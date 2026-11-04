@@ -317,37 +317,101 @@ func TestNewSessionFormAppendsTicketAndPRToFirstPrompt(t *testing.T) {
 	}
 }
 
-// TestNewSessionCreateInFlightBlocksSecondForm guards against the race where
-// submitting a second "new session" form while the first CreateSession call
-// is still in flight (e.g. still creating the tmux session/terminal) lets
-// both calls run concurrently before the first is registered in the store —
-// producing two sessions that collide on the same tmux session name.
-func TestNewSessionCreateInFlightBlocksSecondForm(t *testing.T) {
+// Creates overlap: n reopens the form while an earlier create is still in
+// flight, rather than refusing with "wait for it to finish". The reopened
+// form is blank — the draft on disk is the in-flight create's prompt, not
+// one left unsent.
+func TestNewSessionCreatesOverlap(t *testing.T) {
 	be := &fakeBackend{}
+	m := newTestModel(be)
+	m.draftPath = filepath.Join(t.TempDir(), "draft.txt")
+
+	m.Update(keyRune("n"))
+	m.promptInput.SetValue("first task")
+	tabTo(t, m, newFormNameFocus)
+	typeText(m, "one")
+	_, first := press(m, tea.KeyEnter)
+	firstMsg := first() // the result isn't fed back: still in flight
+
+	m.Update(keyRune("n"))
+	if m.mode != ModeNewForm {
+		t.Fatalf("n while a create is in flight: mode = %v, want the form (flash %q)", m.mode, m.flash)
+	}
+	if got := m.promptInput.Value(); got != "" {
+		t.Fatalf("second form prefilled with the in-flight create's prompt %q", got)
+	}
+	tabTo(t, m, newFormNameFocus)
+	typeText(m, "two")
+	run(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(be.createCalls) != 2 || be.createCalls[1].Name != "two" {
+		t.Fatalf("createCalls = %+v, want a second create for two", be.createCalls)
+	}
+
+	m.Update(firstMsg)
+	if len(m.creating) != 0 {
+		t.Fatalf("creating = %q after both landed, want none", m.creating)
+	}
+}
+
+// A create that fails while the next session's form is open must not
+// clobber that form, and must not lose its own: n brings it back as it was
+// submitted, error and all.
+func TestNewSessionFailureWaitsForOpenForm(t *testing.T) {
+	be := &fakeBackend{createErr: errors.New("boom")}
 	m := newTestModel(be)
 
 	m.Update(keyRune("n"))
+	m.promptInput.SetValue("first task")
 	tabTo(t, m, newFormNameFocus)
-	typeText(m, "myfeat")
-	_, cmd := press(m, tea.KeyEnter)
-	if cmd == nil {
-		t.Fatalf("expected a create command")
-	}
-	cmd() // runs backend.CreateSession, but the result message isn't fed back — call is still "in flight"
-	if len(be.createCalls) != 1 || m.mode != ModeList || !m.busy {
-		t.Fatalf("after first submit: calls=%v mode=%v busy=%v", be.createCalls, m.mode, m.busy)
-	}
+	typeText(m, "one")
+	_, first := press(m, tea.KeyEnter)
+	failed := first()
 
 	m.Update(keyRune("n"))
-	if m.mode != ModeList {
-		t.Fatalf("second 'n' opened the form while a create was still in flight: mode=%v", m.mode)
+	tabTo(t, m, newFormNameFocus)
+	typeText(m, "two")
+	m.Update(failed)
+	if m.mode != ModeNewForm || m.nameInput.Value() != "two" {
+		t.Fatalf("failure clobbered the open form: mode=%v name=%q", m.mode, m.nameInput.Value())
 	}
-	if m.flashKind != "error" || !strings.Contains(m.flash, "still creating") {
-		t.Fatalf("flash = %q (%s)", m.flash, m.flashKind)
+	if m.flashKind != "error" || !strings.Contains(m.flash, "boom") {
+		t.Fatalf("flash = %q (%s), want the failure named", m.flash, m.flashKind)
 	}
-	press(m, tea.KeyEnter)
-	if len(be.createCalls) != 1 {
-		t.Fatalf("createCalls = %v, want still 1 (second submit must not have fired)", be.createCalls)
+
+	press(m, tea.KeyEsc)
+	m.Update(keyRune("n"))
+	if m.nameInput.Value() != "one" || m.promptInput.Value() != "first task" || !strings.Contains(m.newFormErr, "boom") {
+		t.Fatalf("reopened form: name=%q prompt=%q err=%q, want the failed one back",
+			m.nameInput.Value(), m.promptInput.Value(), m.newFormErr)
+	}
+	press(m, tea.KeyEsc)
+	m.Update(keyRune("n"))
+	if m.nameInput.Value() != "" || m.newFormErr != "" {
+		t.Fatalf("failure reopened twice: name=%q err=%q", m.nameInput.Value(), m.newFormErr)
+	}
+}
+
+// A create landing must clear only its own draft: by then the draft may be
+// another form's prompt, left there by Esc.
+func TestNewSessionCreatedKeepsAnotherFormsDraft(t *testing.T) {
+	be := &fakeBackend{}
+	m := newTestModel(be)
+	m.draftPath = filepath.Join(t.TempDir(), "draft.txt")
+
+	m.Update(keyRune("n"))
+	m.promptInput.SetValue("first task")
+	tabTo(t, m, newFormNameFocus)
+	_, first := press(m, tea.KeyEnter)
+	created := first()
+
+	m.Update(keyRune("n"))
+	m.promptInput.SetValue("half-written second")
+	press(m, tea.KeyEsc)
+	m.Update(created)
+
+	m.Update(keyRune("n"))
+	if got := m.promptInput.Value(); got != "half-written second" {
+		t.Fatalf("prompt = %q, want the cancelled form's draft kept", got)
 	}
 }
 
@@ -530,12 +594,12 @@ func TestConfirmDeleteFlow(t *testing.T) {
 }
 
 // TestBusyBlocksDeleteConfirm guards against pressing delete while a new
-// session create is still in flight (m.busy): opening ModeConfirmDelete
+// session create is still in flight (m.creating): opening ModeConfirmDelete
 // mid-create would let the delete fire concurrently with the create.
 func TestBusyBlocksDeleteConfirm(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{{ID: "demo:a", Project: "demo", Name: "a"}}}
 	m := newTestModel(be)
-	m.busy = true
+	m.creating = []string{""}
 
 	pressDelete(m)
 	if m.mode != ModeList {
@@ -547,13 +611,13 @@ func TestBusyBlocksDeleteConfirm(t *testing.T) {
 }
 
 // TestBusyBlocksKillAndArchive guards against killing or archiving a session
-// while a new session create is still in flight (m.busy) — same race as
+// while a new session create is still in flight (m.creating) — same race as
 // TestBusyBlocksDeleteConfirm, for the two other mutating keys in the same
 // switch.
 func TestBusyBlocksKillAndArchive(t *testing.T) {
 	be := &fakeBackend{sessions: []session.Session{{ID: "demo:a", Project: "demo", Name: "a"}}}
 	m := newTestModel(be)
-	m.busy = true
+	m.creating = []string{""}
 
 	_, cmd := m.Update(keyRune("x"))
 	if cmd != nil {

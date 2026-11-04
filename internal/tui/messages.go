@@ -40,6 +40,10 @@ type CreateFailedMsg struct {
 	// still persisted a new auto-submit default before failing; nil
 	// otherwise.
 	Cfg *config.Config
+	// Form is the form as it was submitted. By the time the failure lands
+	// the form may have been reopened for another session, so its fields
+	// can't be trusted to still hold this one.
+	Form newFormState
 }
 
 // UpdateCheckedMsg is delivered by recheckUpdateCmd, the on-demand check
@@ -71,6 +75,9 @@ type SessionCreatedMsg struct {
 	// Update() to apply via *m.cfg = *Cfg — set only when creating this
 	// session also persisted a new auto-submit default; nil otherwise.
 	Cfg *config.Config
+	// Prompt is the first prompt as typed into the form — Session.Prompt is
+	// the composed one — so the draft and m.creating can be matched to it.
+	Prompt string
 }
 
 // SessionDeletedMsg is the result of an async delete. NextID is whichever
