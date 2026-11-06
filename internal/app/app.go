@@ -1794,11 +1794,35 @@ func (a *App) SetSessionFolder(id, folder string) (session.Session, error) {
 			return session.Session{}, err
 		}
 	}
+	prev := s.Folder
 	s.Folder = folder
 	if err := a.Store.Put(s); err != nil {
 		return s, fmt.Errorf("store: %w", err)
 	}
+	if prev != folder {
+		if err := a.pruneFolderIfEmpty(prev); err != nil {
+			return s, err
+		}
+	}
 	return s, nil
+}
+
+// pruneFolderIfEmpty deletes the folder's definition once no session is left
+// filed under it. Callers invoke it only right after a member has left, so a
+// folder that was created and never filled (CreateFolder) is not swept.
+func (a *App) pruneFolderIfEmpty(name string) error {
+	if name == "" {
+		return nil
+	}
+	for _, s := range a.Store.All() {
+		if s.Folder == name {
+			return nil
+		}
+	}
+	return a.withFolders(func(folders map[string]config.FolderMeta) error {
+		delete(folders, name)
+		return nil
+	})
 }
 
 // RenameFolder renames a folder, updating every member session's Folder
@@ -2773,6 +2797,9 @@ func (a *App) DeleteSession(id string) (string, error) {
 		_ = os.RemoveAll(s.WorktreePath)
 	}
 	if err := a.Store.Delete(id); err != nil && cleanupErr == nil {
+		cleanupErr = err
+	}
+	if err := a.pruneFolderIfEmpty(s.Folder); err != nil && cleanupErr == nil {
 		cleanupErr = err
 	}
 	a.forgetFetch(id)
