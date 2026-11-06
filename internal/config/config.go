@@ -210,8 +210,9 @@ type Config struct {
 	// Folders is the global, flat folder namespace: display state keyed by
 	// folder name, which is also the folder's id (a rename replaces the key
 	// and updates every member's session.Session.Folder to match).
-	// Membership itself lives on each Session, not here, so a folder with no
-	// members anywhere still sits here inertly until renamed or deleted, and
+	// Membership itself lives on each Session, not here, so a folder that was
+	// created and never filled sits here inertly until renamed or deleted (one
+	// whose last member leaves is pruned by the App), and
 	// one folder's members can span several projects — which is the whole
 	// point, and what lets a client group by folder first and project
 	// second. One flat level only: a folder cannot contain another folder.
