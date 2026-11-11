@@ -15,7 +15,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/mattn/go-isatty v0.0.24
 	github.com/muesli/termenv v0.16.0
-	golang.org/x/sys v0.49.0
+	golang.org/x/sys v0.50.0
 	rsc.io/qr v0.2.0
 )
 
