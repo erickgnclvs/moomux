@@ -63,6 +63,13 @@ var (
 // inspecting well-known environment variables.
 func Detect() TerminalOpener {
 	switch {
+	// herdr runs inside another emulator, and that outer emulator's vars
+	// (KITTY_WINDOW_ID, WT_SESSION, ...) can leak through — the innermost
+	// layer is the one a new tab should open in, so it is checked first.
+	// HERDR_ENV covers moomux running in tmux inside herdr, where tmux has
+	// replaced TERM_PROGRAM with its own name.
+	case os.Getenv("TERM_PROGRAM") == "herdr" || os.Getenv("HERDR_ENV") != "":
+		return newHerdrClient(fallback())
 	case os.Getenv("TERM_PROGRAM") == "iTerm.app":
 		return newITermClient()
 	// cmux is Ghostty-based and sets the same GHOSTTY_* vars as vanilla
