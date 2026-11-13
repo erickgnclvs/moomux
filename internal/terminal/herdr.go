@@ -21,17 +21,23 @@ type herdrClient struct {
 	fallback  TerminalOpener
 }
 
-func newHerdrClient(fallback TerminalOpener) *herdrClient {
-	return &herdrClient{run: herdrRun, workspace: os.Getenv("HERDR_WORKSPACE_ID"), fallback: fallback}
-}
-
-func herdrRun(args ...string) (string, error) {
-	bin := os.Getenv("HERDR_BIN_PATH")
+// newHerdrClient reads herdr's vars through getenv, which may be a tmux
+// client's env rather than moomux's own (see Detect): the workspace and
+// socket to open in are the ones of the herdr the human is looking at.
+func newHerdrClient(getenv func(string) string, fallback TerminalOpener) *herdrClient {
+	bin, socket := getenv("HERDR_BIN_PATH"), getenv("HERDR_SOCKET_PATH")
 	if bin == "" {
 		bin = "herdr"
 	}
-	out, err := exec.Command(bin, args...).Output()
-	return string(out), err
+	run := func(args ...string) (string, error) {
+		cmd := exec.Command(bin, args...)
+		if socket != "" {
+			cmd.Env = append(os.Environ(), "HERDR_SOCKET_PATH="+socket)
+		}
+		out, err := cmd.Output()
+		return string(out), err
+	}
+	return &herdrClient{run: run, workspace: getenv("HERDR_WORKSPACE_ID"), fallback: fallback}
 }
 
 func (c *herdrClient) OpenSession(tmuxSession, title string) (string, error) {

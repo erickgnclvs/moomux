@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -42,6 +43,23 @@ func TestWindowOpenerTerminalAppReturnsManualAttachHint(t *testing.T) {
 	}
 	if hint == "" {
 		t.Fatal("expected a non-empty manual-attach hint, got none")
+	}
+}
+
+// Under WSL, wt.exe's command runs on Windows, which has no tmux: it has to
+// re-enter this distro with `wsl.exe -e` (not `--`, whose login shell eats
+// the "=" target under zsh).
+func TestWindowsTerminalArgsReenterWSL(t *testing.T) {
+	t.Setenv("WSL_DISTRO_NAME", "Arch")
+	got := strings.Join(windowsTerminalArgs("feat/bar", "=moomux-foo"), " ")
+	if want := "-- wsl.exe -d Arch -e tmux attach -t =moomux-foo"; !strings.HasSuffix(got, want) {
+		t.Fatalf("got %q, want suffix %q", got, want)
+	}
+
+	t.Setenv("WSL_DISTRO_NAME", "")
+	got = strings.Join(windowsTerminalArgs("feat/bar", "=moomux-foo"), " ")
+	if strings.Contains(got, "wsl.exe") {
+		t.Fatalf("not under WSL, want tmux run directly: %q", got)
 	}
 }
 

@@ -145,7 +145,15 @@ func windowsTerminalArgs(title, tmuxSession string) []string {
 	if title != "" {
 		args = append(args, "--title", title)
 	}
-	args = append(args, "--", "tmux", "attach", "-t", tmuxSession)
+	args = append(args, "--")
+	if distro := os.Getenv("WSL_DISTRO_NAME"); distro != "" {
+		// wt.exe runs its command on the Windows side, where there is no
+		// tmux, so it has to go back through wsl.exe. -e execs it directly:
+		// plain `wsl.exe --` goes through the login shell, and zsh's EQUALS
+		// expansion turns the "=" target into a failed path lookup.
+		args = append(args, "wsl.exe", "-d", distro, "-e")
+	}
+	args = append(args, "tmux", "attach", "-t", tmuxSession)
 	return args
 }
 
