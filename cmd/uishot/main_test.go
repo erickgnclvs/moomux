@@ -22,6 +22,10 @@ var update = flag.Bool("update", false, "rewrite the testdata golden files")
 // (e.g. a typo introduced when adding a new scenario) fails here instead of
 // only showing up as a blank or broken screenshot.
 func TestRenderScreenCoversAllScenarios(t *testing.T) {
+	// Scenarios submit forms, and a submit saves the new-session draft
+	// beside client.toml. Unpinned, that's the developer's real one, and
+	// their next real form opens prefilled with a fixture prompt.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	for name := range screens {
 		t.Run(name, func(t *testing.T) {
 			out, err := renderScreen(name, 100, 32, "", "")

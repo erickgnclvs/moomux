@@ -189,6 +189,10 @@ Consequences worth knowing:
   folder costs nothing to keep: it draws no header (`BuildRows` emits one
   only where the folder has members in that project), it shows as `(0)` in
   the Folders overlay, and `d` deletes it there on purpose.
+- **Emptying a folder prunes it.** `SetSessionFolder` (moving the last member
+  out) and `DeleteSession` (removing it) delete the folder's definition once
+  no session is left filed under it. Only that transition prunes, so a
+  folder created with `n` and never filled is kept.
 - **`main.go`'s `saveConfig`** now reloads first. It saves a snapshot loaded
   before a blocking stdin prompt, which was merely last-writer-wins before
   but could now erase a whole global folder table created meanwhile. A bare

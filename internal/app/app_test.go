@@ -867,6 +867,30 @@ func TestCreateSessionSpawnedKeepsLastAgent(t *testing.T) {
 	}
 }
 
+func TestCreateSessionFilesIntoFolder(t *testing.T) {
+	a, git, tm := newTestApp(t, gitProject("/repo"))
+	tm.out["list-panes -t ="+TmuxSessionName("demo:one", "one")+":^ -F #{pane_id}"] = "%0\n"
+	noBranch(git, "one")
+
+	s, _, err := a.CreateSession(session.CreateRequest{Project: "demo", Name: "one", Folder: " auth ", OpenTerminal: true, Dangerous: boolPtr(false)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored, _ := a.Store.Get(s.ID); stored.Folder != "auth" {
+		t.Fatalf("stored folder = %q, want auth", stored.Folder)
+	}
+	if _, ok := a.Cfg.Folders["auth"]; !ok {
+		t.Fatalf("folder auth not created: %v", a.Cfg.Folders)
+	}
+
+	if _, _, err := a.CreateSession(session.CreateRequest{Project: "demo", Name: "two", Folder: "  ", OpenTerminal: true}); err == nil {
+		t.Fatal("blank folder accepted, want an error before anything is created")
+	}
+	if _, ok := a.Store.Get("demo:two"); ok {
+		t.Fatal("session created despite an invalid folder")
+	}
+}
+
 // TestCreateSessionModelAppendsFlag guards buildAgentCmd/modelFlag: a chosen
 // model must be appended as --model, and "default" (or empty) must omit the
 // flag entirely rather than passing it through literally.
@@ -2028,6 +2052,58 @@ func TestSetSessionFolderEmptyRemovesFromFolder(t *testing.T) {
 	}
 }
 
+func folderExists(t *testing.T, a *App, name string) bool {
+	t.Helper()
+	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
+		t.Fatal(err)
+	}
+	_, ok := a.Cfg.Folders[name]
+	return ok
+}
+
+func TestSetSessionFolderPrunesFolderWhenLastMemberLeaves(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Folder: "auth"})
+	seedFolders(t, a, "auth")
+
+	if _, err := a.SetSessionFolder("demo:a", ""); err != nil {
+		t.Fatal(err)
+	}
+	if folderExists(t, a, "auth") {
+		t.Fatal("folder auth should be pruned once its last member leaves")
+	}
+}
+
+func TestSetSessionFolderKeepsFolderWithOtherMembers(t *testing.T) {
+	a, _, _ := newTestApp(t, twoProjects())
+	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Folder: "auth"})
+	_ = a.Store.Put(session.Session{ID: "other:a", Project: "other", Name: "a", Folder: "auth"})
+	seedFolders(t, a, "auth")
+
+	if _, err := a.SetSessionFolder("demo:a", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !folderExists(t, a, "auth") {
+		t.Fatal("folder auth still has a member in another project and must be kept")
+	}
+}
+
+func TestSetSessionFolderKeepsFolderCreatedButNeverFilled(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Folder: "auth"})
+	seedFolders(t, a, "auth")
+	if err := a.CreateFolder("fresh"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := a.SetSessionFolder("demo:a", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !folderExists(t, a, "fresh") {
+		t.Fatal("a folder that never had a member was not emptied by this move and must be kept")
+	}
+}
+
 func TestRenameFolderUpdatesMembersAndRejectsCollision(t *testing.T) {
 	a, _, _ := newTestApp(t, gitProject("/repo"))
 	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", Folder: "old"})
@@ -2884,6 +2960,23 @@ func TestRemoveProjectKeepsFolders(t *testing.T) {
 		if _, exists := a.Cfg.Folders[name]; !exists {
 			t.Fatalf("removing a project deleted folder %q: %v", name, a.Cfg.Folders)
 		}
+	}
+}
+
+func TestDeleteSessionPrunesFolderWhenLastMemberGoes(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	wt := filepath.Join(a.WorktreeRoot, "demo", "feat")
+	_ = a.Store.Put(session.Session{
+		ID: "demo:feat", Project: "demo", Name: "feat", Branch: "feat", NewBranch: true,
+		TmuxSession: "moomux-feat", WorktreePath: wt, Folder: "auth",
+	})
+	seedFolders(t, a, "auth")
+
+	if _, err := a.DeleteSession("demo:feat"); err != nil {
+		t.Fatal(err)
+	}
+	if folderExists(t, a, "auth") {
+		t.Fatal("folder auth should be pruned once its last member is deleted")
 	}
 }
 

@@ -152,7 +152,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case InfoMsg:
-		if m.busy {
+		if m.busy || len(m.creating) > 0 {
 			return m, tickFlash()
 		}
 		dur := infoFlashDuration
@@ -172,17 +172,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case CreateFailedMsg:
 		m.applyCfg(msg.Cfg)
-		m.busy = false
+		m.doneCreating(msg.Form.prompt)
+		m.failedCreates = append(m.failedCreates, msg)
+		if m.mode == ModeNewForm {
+			// Mid-way through the next session's form: leave it be.
+			return m.flashError(fmt.Errorf("a session create failed (n reopens it): %w", msg.Err))
+		}
 		m.flash, m.flashKind = "", ""
-		m.mode = ModeNewForm
-		m.newFormErr = msg.Err.Error()
-		m.newFormFocusInput()
+		m.openNewSessionForm()
 		return m, nil
 
 	case SessionCreatedMsg:
 		m.applyCfg(msg.Cfg)
-		m.busy = false
-		m.clearNewSessionDraft()
+		m.doneCreating(msg.Prompt)
+		m.clearNewSessionDraftOf(msg.Prompt)
 		text := "created " + msg.Session.Name
 		if msg.Hint != "" {
 			text += " — " + msg.Hint
@@ -589,35 +592,85 @@ func (m *Model) resetOverlayViewport() {
 // project it was opened from and the last agent used. With more than one
 // project, focus still starts on the project selector so it's easy to see
 // and change, it just isn't forced to an empty choice.
+// openNewSessionForm opens the new-session form: blank, or — when a create
+// failed while another form was open — as that failed one was submitted.
 func (m *Model) openNewSessionForm() {
+	if len(m.failedCreates) > 0 {
+		failed := m.failedCreates[0]
+		m.failedCreates = m.failedCreates[1:]
+		m.setNewForm(failed.Form)
+		m.newFormErr = failed.Err.Error()
+		return
+	}
+	draft := m.loadNewSessionDraft()
+	if slices.Contains(m.creating, draft) {
+		// Saved by a submit that's still being created, not left unsent.
+		draft = ""
+	}
+	f := newFormState{
+		projIdx:    m.activeProj,
+		focus:      newFormPromptFocus, // start below the project picker
+		autoSubmit: m.cfg.AutoSubmitDefault,
+		// The agent the last session was created with — global, not per
+		// project. Model and thinking start on "default": those are never
+		// remembered.
+		agentIdx: m.agentNameIndex(config.AgentName(m.cfg.LastAgent)),
+		prompt:   draft,
+	}
+	if len(m.projects) > 1 {
+		f.focus = newFormProjFocus
+	}
+	m.setNewForm(f)
+}
+
+// newFormState is everything the new-session form holds, so a submitted form
+// can be put back exactly as it was if its create fails.
+type newFormState struct {
+	projIdx, agentIdx, modelIdx, thinkingIdx, focus int
+	extraModel, model                               string
+	name, branch, baseBranch, ticket, pr, prompt    string
+	background, autoSubmit                          bool
+}
+
+func (m *Model) newFormSnapshot() newFormState {
+	return newFormState{
+		projIdx: m.newFormProjIdx, agentIdx: m.newFormAgentIdx,
+		modelIdx: m.newFormModelIdx, thinkingIdx: m.newFormThinkingIdx, focus: m.newFormFocus,
+		extraModel: m.newFormExtraModel, model: m.newFormModelInput.Value(),
+		name: m.nameInput.Value(), branch: m.branchInput.Value(), baseBranch: m.baseBranchInput.Value(),
+		ticket: m.ticketInput.Value(), pr: m.prInput.Value(), prompt: m.promptInput.Value(),
+		background: m.newFormOpenInBackground, autoSubmit: m.newFormAutoSubmit,
+	}
+}
+
+// setNewForm opens the new-session form holding f.
+func (m *Model) setNewForm(f newFormState) {
 	m.mode = ModeNewForm
 	m.sessionDialogReturn = ModeList
 	m.newFormErr = ""
-	m.newFormProjIdx = m.activeProj
-	if len(m.projects) > 1 {
-		m.newFormFocus = newFormProjFocus
-	} else {
-		m.newFormFocus = newFormPromptFocus // start below the project picker
-	}
-	m.newFormOpenInBackground = false
-	m.newFormAutoSubmit = m.cfg.AutoSubmitDefault
-	m.newFormModelIdx = 0
-	m.newFormThinkingIdx = 0
-	m.nameInput.SetValue("")
-	m.branchInput.SetValue("")
-	m.baseBranchInput.SetValue("")
-	m.ticketInput.SetValue("")
-	m.prInput.SetValue("")
-	m.promptInput.SetValue(m.loadNewSessionDraft())
-	m.newFormModelInput.SetValue("")
+	m.newFormProjIdx, m.newFormAgentIdx = f.projIdx, f.agentIdx
+	m.newFormModelIdx, m.newFormThinkingIdx = f.modelIdx, f.thinkingIdx
+	m.newFormFocus = f.focus
+	m.newFormExtraModel = f.extraModel
+	m.newFormModelInput.SetValue(f.model)
+	m.nameInput.SetValue(f.name)
+	m.branchInput.SetValue(f.branch)
+	m.baseBranchInput.SetValue(f.baseBranch)
+	m.ticketInput.SetValue(f.ticket)
+	m.prInput.SetValue(f.pr)
+	m.promptInput.SetValue(f.prompt)
+	m.newFormOpenInBackground, m.newFormAutoSubmit = f.background, f.autoSubmit
 	m.newFormBlurAll()
 	m.newFormFocusInput()
 	m.resetOverlayViewport()
 	m.resizeFormInputs()
-	// The agent the last session was created with — global, not per project.
-	// Model and thinking start on "default" above: those are never remembered.
-	m.newFormAgentIdx = m.agentNameIndex(config.AgentName(m.cfg.LastAgent))
-	m.newFormExtraModel = ""
+}
+
+// doneCreating drops one in-flight create with this first prompt.
+func (m *Model) doneCreating(prompt string) {
+	if i := slices.Index(m.creating, prompt); i >= 0 {
+		m.creating = slices.Delete(m.creating, i, i+1)
+	}
 }
 
 func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -682,8 +735,8 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setFlash("info", "ticket/PR links copy instead of open: "+state)
 		return m, nil
 	case key.Matches(msg, m.keys.Kill):
-		if m.busy {
-			return m.flashError(fmt.Errorf("still creating the previous session — wait for it to finish"))
+		if len(m.creating) > 0 {
+			return m.flashError(fmt.Errorf("still creating a session — wait for it to finish"))
 		}
 		if len(m.sessions) > 0 {
 			id := m.sessions[m.cursor].ID
@@ -703,23 +756,16 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.New):
-		if m.busy {
-			// A session create is already in flight; opening another form here
-			// would let its submit fire a second, concurrent osascript call
-			// into iTerm2 before the first tab/window has settled — iTerm2
-			// resolves "current window"/"current tab" racily while it's still
-			// launching, so the second AppleScript can land its "tmux attach"
-			// in the tab the first one just created instead of a new one (see
-			// terminal/iterm.go's createTab).
-			return m.flashError(fmt.Errorf("still creating the previous session — wait for it to finish"))
-		}
+		// No wait for a create already in flight: they overlap. The one
+		// part that can't — two terminal opens racing iTerm2's "current
+		// window" — is serialized where it happens (terminalBackend.open).
 		if len(m.projects) == 0 {
 			return m.flashError(fmt.Errorf("no projects configured — press / then n to add one"))
 		}
 		m.openNewSessionForm()
 	case key.Matches(msg, m.keys.Delete):
-		if m.busy {
-			return m.flashError(fmt.Errorf("still creating the previous session — wait for it to finish"))
+		if len(m.creating) > 0 {
+			return m.flashError(fmt.Errorf("still creating a session — wait for it to finish"))
 		}
 		if len(m.marked) > 0 {
 			return m.openBatchDelete()
@@ -758,8 +804,8 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.setFlash("info", "marks cleared")
 		}
 	case key.Matches(msg, m.keys.Archive):
-		if m.busy {
-			return m.flashError(fmt.Errorf("still creating the previous session — wait for it to finish"))
+		if len(m.creating) > 0 {
+			return m.flashError(fmt.Errorf("still creating a session — wait for it to finish"))
 		}
 		if len(m.sessions) > 0 {
 			id := m.sessions[m.cursor].ID
@@ -1431,7 +1477,8 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			label = "session"
 		}
 		m.setFlash("info", "creating "+label+"…")
-		m.busy = true
+		m.creating = append(m.creating, firstPrompt)
+		form := m.newFormSnapshot()
 		autoSubmit := m.newFormAutoSubmit
 		// Captured here, on the Update goroutine, rather than read from
 		// m.cfg inside the closure below — that closure runs concurrently
@@ -1452,10 +1499,10 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			s, hint, err := m.backend.CreateSession(req)
 			if err != nil {
-				return CreateFailedMsg{Err: err, Cfg: cfgSnap}
+				return CreateFailedMsg{Err: err, Cfg: cfgSnap, Form: form}
 			}
 			// The core remembered the agent as the next default; pick that up.
-			return SessionCreatedMsg{Session: s, Hint: hint, Cfg: m.cfgSnapshotOnSuccess(nil)}
+			return SessionCreatedMsg{Session: s, Hint: hint, Cfg: m.cfgSnapshotOnSuccess(nil), Prompt: firstPrompt}
 		}
 	}
 	// Any other focus is a selector or toggle row, with no text input to type

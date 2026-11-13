@@ -2,7 +2,7 @@ package terminal
 
 import (
 	"errors"
-	"strings"
+	"slices"
 	"testing"
 )
 
@@ -46,24 +46,8 @@ func TestWindowOpenerTerminalAppReturnsManualAttachHint(t *testing.T) {
 	}
 }
 
-// Under WSL, wt.exe's command runs on Windows, which has no tmux: it has to
-// re-enter this distro with `wsl.exe -e` (not `--`, whose login shell eats
-// the "=" target under zsh).
-func TestWindowsTerminalArgsReenterWSL(t *testing.T) {
-	t.Setenv("WSL_DISTRO_NAME", "Arch")
-	got := strings.Join(windowsTerminalArgs("feat/bar", "=moomux-foo"), " ")
-	if want := "-- wsl.exe -d Arch -e tmux attach -t =moomux-foo"; !strings.HasSuffix(got, want) {
-		t.Fatalf("got %q, want suffix %q", got, want)
-	}
-
-	t.Setenv("WSL_DISTRO_NAME", "")
-	got = strings.Join(windowsTerminalArgs("feat/bar", "=moomux-foo"), " ")
-	if strings.Contains(got, "wsl.exe") {
-		t.Fatalf("not under WSL, want tmux run directly: %q", got)
-	}
-}
-
 func TestWindowOpenerWindowsTerminalArgs(t *testing.T) {
+	t.Setenv("WSL_DISTRO_NAME", "Ubuntu")
 	fe := &fakeExec{}
 	w := &windowOpener{binary: "wt.exe", args: windowsTerminalArgs, exec: fe.Command}
 	if _, err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
@@ -72,13 +56,26 @@ func TestWindowOpenerWindowsTerminalArgs(t *testing.T) {
 	if fe.binary != "wt.exe" {
 		t.Fatalf("wrong binary: %s", fe.binary)
 	}
-	assertContains(t, fe.args, "new-tab")
-	assertContains(t, fe.args, "--title")
-	assertContains(t, fe.args, "feat/bar")
-	assertContains(t, fe.args, "tmux")
-	assertContains(t, fe.args, "attach")
-	assertContains(t, fe.args, "-t")
-	assertContains(t, fe.args, "=moomux-foo")
+	// Order matters: wt.exe executes everything after its "--" on the
+	// Windows side, so tmux must sit behind wsl.exe, not next to it.
+	want := []string{"-w", "last", "new-tab", "--title", "feat/bar", "--", "wsl.exe", "-d", "Ubuntu", "-e", "tmux", "attach", "-t", "=moomux-foo"}
+	if !slices.Equal(fe.args, want) {
+		t.Fatalf("args = %q, want %q", fe.args, want)
+	}
+}
+
+func TestWindowOpenerWindowsTerminalArgsWithoutDistroName(t *testing.T) {
+	t.Setenv("WSL_DISTRO_NAME", "")
+	fe := &fakeExec{}
+	w := &windowOpener{binary: "wt.exe", args: windowsTerminalArgs, exec: fe.Command}
+	if _, err := w.OpenSession("moomux-foo", "feat/bar"); err != nil {
+		t.Fatal(err)
+	}
+	// No -d flag: wsl.exe falls back to the default distro.
+	want := []string{"-w", "last", "new-tab", "--title", "feat/bar", "--", "wsl.exe", "-e", "tmux", "attach", "-t", "=moomux-foo"}
+	if !slices.Equal(fe.args, want) {
+		t.Fatalf("args = %q, want %q", fe.args, want)
+	}
 }
 
 func TestWindowOpenerGhosttyArgs(t *testing.T) {

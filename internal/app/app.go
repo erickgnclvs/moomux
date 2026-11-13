@@ -86,6 +86,13 @@ type App struct {
 	// check before either has written its session.
 	nameMu        sync.Mutex
 	reservedNames map[string]bool
+
+	// worktreeMu serializes createSession's fetch-and-add. Creates overlap,
+	// and `git worktree add -b` writes the new branch's upstream into the
+	// repo's .git/config: two at once and one fails on config.lock.
+	// ponytail: one lock for every repo; key it by repo if creates in
+	// different projects queue behind each other noticeably.
+	worktreeMu sync.Mutex
 }
 
 // project returns a copy of the named project's config. config.Project is
@@ -959,6 +966,11 @@ func (a *App) CreateSessionReport(req session.CreateRequest) (session.Session, C
 		}
 		name = a.uniqueName(req.Project, base)
 	}
+	if req.Folder != "" {
+		if _, err := config.CleanFolderName(req.Folder); err != nil {
+			return session.Session{}, report, err
+		}
+	}
 	s, hint, err := a.createSession(req.Project, name, req.Agent, req.Branch, req.Ticket,
 		req.OpenTerminal, req.Dangerous, req.BaseBranch, req.Model, req.Thinking)
 	if err != nil {
@@ -970,6 +982,13 @@ func (a *App) CreateSessionReport(req session.CreateRequest) (session.Session, C
 	if !req.Spawned {
 		if err := a.rememberAgent(s.AgentName()); err != nil {
 			slog.Warn("remember last agent failed", "agent", s.AgentName(), "err", err)
+		}
+	}
+	if req.Folder != "" {
+		if updated, folderErr := a.SetSessionFolder(s.ID, req.Folder); folderErr != nil {
+			hint = joinHint(hint, fmt.Sprintf("couldn't file into folder %q: %v", req.Folder, folderErr))
+		} else {
+			s = updated
 		}
 	}
 	if req.PR != "" {
@@ -1118,6 +1137,9 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 
 	newBranch := existingBranch == ""
 	if proj.UsesWorktree() {
+		a.worktreeMu.Lock()
+		unlockWorktree := sync.OnceFunc(a.worktreeMu.Unlock)
+		defer unlockWorktree()
 		hasRemote := a.Git.HasRemote(proj.Repo, "origin")
 		if existingBranch != "" {
 			branch = existingBranch
@@ -1179,6 +1201,8 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 			return session.Session{}, "", fmt.Errorf("git worktree add: %w", err)
 		}
 		slog.Info("worktree added", "path", wt, "branch", branch)
+		// The rest works in its own worktree: no need to hold others up.
+		unlockWorktree()
 		if home, err := os.UserHomeDir(); err != nil {
 			slog.Warn("userscript run skipped", "err", err)
 		} else {
@@ -1770,11 +1794,35 @@ func (a *App) SetSessionFolder(id, folder string) (session.Session, error) {
 			return session.Session{}, err
 		}
 	}
+	prev := s.Folder
 	s.Folder = folder
 	if err := a.Store.Put(s); err != nil {
 		return s, fmt.Errorf("store: %w", err)
 	}
+	if prev != folder {
+		if err := a.pruneFolderIfEmpty(prev); err != nil {
+			return s, err
+		}
+	}
 	return s, nil
+}
+
+// pruneFolderIfEmpty deletes the folder's definition once no session is left
+// filed under it. Callers invoke it only right after a member has left, so a
+// folder that was created and never filled (CreateFolder) is not swept.
+func (a *App) pruneFolderIfEmpty(name string) error {
+	if name == "" {
+		return nil
+	}
+	for _, s := range a.Store.All() {
+		if s.Folder == name {
+			return nil
+		}
+	}
+	return a.withFolders(func(folders map[string]config.FolderMeta) error {
+		delete(folders, name)
+		return nil
+	})
 }
 
 // RenameFolder renames a folder, updating every member session's Folder
@@ -2749,6 +2797,9 @@ func (a *App) DeleteSession(id string) (string, error) {
 		_ = os.RemoveAll(s.WorktreePath)
 	}
 	if err := a.Store.Delete(id); err != nil && cleanupErr == nil {
+		cleanupErr = err
+	}
+	if err := a.pruneFolderIfEmpty(s.Folder); err != nil && cleanupErr == nil {
 		cleanupErr = err
 	}
 	a.forgetFetch(id)

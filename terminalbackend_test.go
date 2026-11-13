@@ -1,11 +1,15 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/tui"
@@ -367,5 +371,37 @@ func TestTerminalBackendCreateSessionInBackgroundIsUntouched(t *testing.T) {
 	}
 	if len(term.opened) != 0 {
 		t.Fatalf("want no terminal opened, got %v", term.opened)
+	}
+}
+
+// overlapOpener records the most OpenSession calls it saw running at once.
+type overlapOpener struct{ in, most atomic.Int32 }
+
+func (o *overlapOpener) OpenSession(tmuxSession, title string) (string, error) {
+	n := o.in.Add(1)
+	defer o.in.Add(-1)
+	for m := o.most.Load(); n > m && !o.most.CompareAndSwap(m, n); m = o.most.Load() {
+	}
+	time.Sleep(20 * time.Millisecond)
+	return "", nil
+}
+
+// Creates overlap, but their terminal opens must not: iTerm2 resolves
+// "current window" racily while an earlier AppleScript is still launching
+// it, and two opens at once land both attaches in one tab.
+func TestTerminalOpensDoNotOverlap(t *testing.T) {
+	term := &overlapOpener{}
+	l := &terminalBackend{term: term}
+	var wg sync.WaitGroup
+	for i := range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			l.open(session.Session{TmuxSession: fmt.Sprintf("moomux-%d", i)})
+		}()
+	}
+	wg.Wait()
+	if got := term.most.Load(); got != 1 {
+		t.Fatalf("%d terminal opens ran at once, want 1", got)
 	}
 }

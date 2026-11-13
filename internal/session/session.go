@@ -8,7 +8,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -79,6 +81,9 @@ type CreateRequest struct {
 	// work, not the user choosing — so it doesn't change the remembered
 	// default agent (config.Config.LastAgent).
 	Spawned bool
+	// Folder files the new session under this folder, creating it on first
+	// use, same as SetSessionFolder. Empty leaves it top-level.
+	Folder string
 }
 
 // AgentName returns the effective agent name, defaulting to "claude" for legacy sessions.
@@ -102,7 +107,27 @@ type Store struct {
 
 	mu       sync.Mutex
 	sessions map[string]Session
+	// extraTop and extraSessions hold the keys of the file that this build
+	// has no field for, top level and per session, so save writes them back.
+	// Without them a binary older than some field (say Protected) erased it
+	// from every session on its first save. Reloaded with sessions on every
+	// mutation; a session dropped from sessions drops its extras with it.
+	extraTop      map[string]json.RawMessage
+	extraSessions map[string]map[string]json.RawMessage
 }
+
+// sessionKeys is every JSON key Session itself encodes. These are never kept
+// as extras, so a field this build clears (omitempty leaves it out) stays
+// cleared instead of coming back from the copy read at load.
+var sessionKeys = func() map[string]bool {
+	keys := map[string]bool{}
+	t := reflect.TypeFor[Session]()
+	for i := range t.NumField() {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		keys[name] = true
+	}
+	return keys
+}()
 
 func (s *Store) Load() error {
 	s.mu.Lock()
@@ -131,6 +156,30 @@ func (s *Store) reloadLocked() error {
 	if err := json.Unmarshal(data, &f); err != nil {
 		return err
 	}
+	var top map[string]json.RawMessage
+	var raw struct {
+		Sessions map[string]map[string]json.RawMessage `json:"sessions"`
+	}
+	if err := json.Unmarshal(data, &top); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	delete(top, "version")
+	delete(top, "sessions")
+	s.extraTop = top
+	s.extraSessions = map[string]map[string]json.RawMessage{}
+	for id, rec := range raw.Sessions {
+		for k := range rec {
+			if sessionKeys[k] {
+				delete(rec, k)
+			}
+		}
+		if len(rec) > 0 {
+			s.extraSessions[id] = rec
+		}
+	}
 	if f.Sessions != nil {
 		s.sessions = f.Sessions
 	}
@@ -138,7 +187,38 @@ func (s *Store) reloadLocked() error {
 }
 
 func (s *Store) save() error {
-	data, err := json.MarshalIndent(fileShape{Version: 1, Sessions: s.sessions}, "", "  ")
+	out := map[string]json.RawMessage{}
+	for k, v := range s.extraTop {
+		out[k] = v
+	}
+	sessions := make(map[string]json.RawMessage, len(s.sessions))
+	for id, sess := range s.sessions {
+		rec, err := json.Marshal(sess)
+		if err != nil {
+			return err
+		}
+		if extra := s.extraSessions[id]; len(extra) > 0 {
+			merged := map[string]json.RawMessage{}
+			if err := json.Unmarshal(rec, &merged); err != nil {
+				return err
+			}
+			for k, v := range extra {
+				merged[k] = v
+			}
+			if rec, err = json.Marshal(merged); err != nil {
+				return err
+			}
+		}
+		sessions[id] = rec
+	}
+	var err error
+	if out["version"], err = json.Marshal(1); err != nil {
+		return err
+	}
+	if out["sessions"], err = json.Marshal(sessions); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return err
 	}

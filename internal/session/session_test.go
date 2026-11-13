@@ -1,7 +1,9 @@
 package session
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -467,5 +469,62 @@ func TestSortByRecentIsDeterministicWhenEveryFieldTies(t *testing.T) {
 				t.Fatalf("order depends on input permutation:\n want %v\n got  %v", want, got)
 			}
 		}
+	}
+}
+
+// A newer binary's fields must survive a save by this one: a build that
+// predated Protected once wiped every session's lock on its first write.
+func TestStoreKeepsUnknownFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.json")
+	if err := os.WriteFile(path, []byte(`{
+		"version": 1,
+		"future_top": {"x": 1},
+		"sessions": {
+			"a": {"id": "a", "project": "p", "name": "a", "protected": true, "future_flag": true},
+			"b": {"id": "b", "project": "p", "name": "b", "future_flag": "gone"}
+		}
+	}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &Store{Path: path}
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetPinned("a", true); err != nil {
+		t.Fatal(err)
+	}
+	// A known field this build clears must stay cleared, not come back
+	// from the copy read at load.
+	if _, err := s.SetProtected("a", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete("b"); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		Version   int                                   `json:"version"`
+		FutureTop map[string]int                        `json:"future_top"`
+		Sessions  map[string]map[string]json.RawMessage `json:"sessions"`
+	}
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatal(err)
+	}
+	if f.Version != 1 || f.FutureTop["x"] != 1 {
+		t.Errorf("top level lost: %s", data)
+	}
+	a := f.Sessions["a"]
+	if string(a["future_flag"]) != "true" || string(a["pinned"]) != "true" {
+		t.Errorf("session a = %s", data)
+	}
+	if _, ok := a["protected"]; ok {
+		t.Errorf("cleared protected came back: %s", data)
+	}
+	if _, ok := f.Sessions["b"]; ok {
+		t.Errorf("deleted session b came back: %s", data)
 	}
 }

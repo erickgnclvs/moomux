@@ -968,6 +968,12 @@ name that isn't in `Config.Folders` renders as if the metadata were
 zero-valued rather than disappearing, which is what keeps those two writes
 not needing to be one transaction.
 
+A folder is also deleted automatically when its last member leaves it:
+`SetSessionFolder` moving the last member out, or `DeleteSession` removing
+it, prunes the folder's `Config.Folders` entry. Only that transition
+prunes, so a folder created with `CreateFolder` and never filled stays until
+renamed or deleted. Archived members still count as members.
+
 A folder now *does* carry a position: `FolderMeta.Order`, set by
 `ReorderFolders(names)`, which takes the complete order and numbers it
 `1..N` — the same "the client sends the order it is displaying, the core
@@ -1102,6 +1108,7 @@ It takes one `session.CreateRequest` and the core runs the whole sequence:
 
 ```
 worktree + branch  →  tmux pane + agent
+                   →  file into folder
                    →  attach PR tag
                    →  compose the first prompt
                    →  store it on the session
