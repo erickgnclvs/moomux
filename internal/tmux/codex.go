@@ -18,7 +18,9 @@ const codexStateOption = "@moomux_codex_state"
 // Every pane contributes liveness. Only a pane with a running output pipe
 // can contribute a status, and a session's other panes must not overwrite it.
 func (c *Client) SessionStates() map[string]string {
-	out, err := c.Runner.Run("list-panes", "-a", "-F", "#{session_name}\t#{pane_pipe_pid}\t#{?pane_pipe,#{"+codexStateOption+"},}")
+	// A core started by launchd has no UTF-8 locale. Without -u, tmux
+	// replaces the tab delimiters with underscores and every session is lost.
+	out, err := c.Runner.Run("-u", "list-panes", "-a", "-F", "#{session_name}\t#{pane_pipe_pid}\t#{?pane_pipe,#{"+codexStateOption+"},}")
 	if err != nil {
 		if noServer(out) {
 			return map[string]string{}

@@ -1692,7 +1692,7 @@ func TestTmuxAliveAll(t *testing.T) {
 	a, _, tm := newTestApp(t, gitProject("/repo"))
 	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", TmuxSession: "moomux-a"})
 	_ = a.Store.Put(session.Session{ID: "demo:b", Project: "demo", Name: "b", TmuxSession: "moomux-b"})
-	tm.out["list-panes -a -F #{session_name}\t#{pane_pipe_pid}\t#{?pane_pipe,#{@moomux_codex_state},}"] = "moomux-a\t\nunrelated\t\n"
+	tm.out["-u list-panes -a -F #{session_name}\t#{pane_pipe_pid}\t#{?pane_pipe,#{@moomux_codex_state},}"] = "moomux-a\t\nunrelated\t\n"
 
 	got := a.TmuxStates()
 	if _, ok := got["demo:a"]; !ok || len(got) != 1 {
@@ -4339,7 +4339,7 @@ func TestCodexDisplayedStateOverridesNeedsInputMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, state := range []watcher.State{watcher.Working, watcher.NeedsInput, watcher.Done} {
-		tm.out["list-panes -a -F #{session_name}\t#{pane_pipe_pid}\t#{?pane_pipe,#{@moomux_codex_state},}"] = "moomux-a\t99\t99:" + state.String() + "\nmoomux-a\t\n"
+		tm.out["-u list-panes -a -F #{session_name}\t#{pane_pipe_pid}\t#{?pane_pipe,#{@moomux_codex_state},}"] = "moomux-a\t99\t99:" + state.String() + "\nmoomux-a\t\n"
 		snap := sessionview.Once(a, "", map[string]watcher.State{s.WorktreePath: watcher.NeedsInput})
 		if got := snap.Views[s.ID].State; got != state {
 			t.Fatalf("Codex screen reports %v with a pending approval hook: got %v", state, got)
