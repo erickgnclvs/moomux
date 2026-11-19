@@ -32,7 +32,7 @@ func TestTerminalReportsDisplayedPrompts(t *testing.T) {
 }
 
 func TestSessionStatesDistinguishesFailedReadFromNoServer(t *testing.T) {
-	const cmd = "list-panes -a -F #{session_name}\t#{pane_pipe_pid}\t#{?pane_pipe,#{@moomux_codex_state},}"
+	const cmd = "-u list-panes -a -F #{session_name}\t#{pane_pipe_pid}\t#{?pane_pipe,#{@moomux_codex_state},}"
 	// When the server has gone away, callers must drop parked sessions.
 	// Losing a single poll of a live server should preserve their state.
 	c := &Client{Runner: &fakeRunner{out: map[string]string{cmd: "no server running on /tmp/test"}, failOn: map[string]bool{cmd: true}}}

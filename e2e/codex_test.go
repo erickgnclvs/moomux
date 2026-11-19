@@ -22,6 +22,30 @@ func (s codexTestServer) Run(args ...string) (string, error) {
 	return string(out), err
 }
 
+func TestSessionStatesWithoutUTF8Locale(t *testing.T) {
+	// launchd supplies no UTF-8 locale. tmux then replaces literal tabs
+	// in format output with underscores unless the client requests UTF-8.
+	t.Setenv("LC_ALL", "C")
+	t.Setenv("LC_CTYPE", "C")
+	t.Setenv("LANG", "C")
+	t.Setenv("TMUX", "")
+	// Even an empty TMUX makes tmux assume a UTF-8 client. Unset it,
+	// keeping Setenv's cleanup to restore the test process's environment.
+	if err := os.Unsetenv("TMUX"); err != nil {
+		t.Fatal(err)
+	}
+	server := codexTestServer(fmt.Sprintf("moomux-test-status-%d", os.Getpid()))
+	if out, err := server.Run("new-session", "-d", "-s", "test", "sleep 120"); err != nil {
+		t.Fatalf("start tmux: %v %s", err, out)
+	}
+	t.Cleanup(func() { _, _ = server.Run("kill-server") })
+	c := &tmux.Client{Runner: server}
+	got := c.SessionStates()
+	if state, live := got["test"]; !live || state != "" || len(got) != 1 {
+		t.Fatalf("session states = %v, want live test session without a native status", got)
+	}
+}
+
 // Drive the real binary through a tmux output pipe on a private server.
 // The helper path contains a space, and the agent pane isn't the active one.
 func TestCodexPaneReportsOnlyDisplayedState(t *testing.T) {
