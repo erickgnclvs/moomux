@@ -1,11 +1,13 @@
 package tmux
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -358,8 +360,8 @@ type loadBufferContentRunner struct {
 }
 
 func (r *loadBufferContentRunner) Run(args ...string) (string, error) {
-	if len(args) == 2 && args[0] == "load-buffer" {
-		if data, err := os.ReadFile(args[1]); err == nil {
+	if args[0] == "load-buffer" {
+		if data, err := os.ReadFile(args[len(args)-1]); err == nil {
 			r.staged = string(data)
 		}
 	}
@@ -387,12 +389,13 @@ func TestPasteTextLoadsThenPastesExactBuffer(t *testing.T) {
 	// "=moomux-foo:^" pins paste-buffer to an exact session match; a bare name
 	// falls back to prefix matching and could paste into moomux-foo-2 once
 	// moomux-foo is gone.
-	want2 := []string{"paste-buffer", "-p", "-d", "-t", "=moomux-foo:^"}
+	buffer := fr.calls[0][2]
+	want2 := []string{"paste-buffer", "-p", "-d", "-t", "=moomux-foo:^", "-b", buffer}
 	if calls := withoutAgentLookup(fr.calls); !reflect.DeepEqual(calls[1], want2) {
 		t.Fatalf("second call = %v, want %v", calls[1], want2)
 	}
-	if _, err := os.ReadFile(fr.calls[0][1]); err == nil {
-		t.Fatalf("temp file %q was not cleaned up", fr.calls[0][1])
+	if _, err := os.ReadFile(fr.calls[0][3]); err == nil {
+		t.Fatalf("temp file %q was not cleaned up", fr.calls[0][3])
 	}
 }
 
@@ -507,8 +510,136 @@ func TestPromptTargetsMarkedAgentPane(t *testing.T) {
 		if err := check.call(); err != nil {
 			t.Fatal(err)
 		}
-		if got := fr.calls[len(fr.calls)-1]; !reflect.DeepEqual(got, check.want) {
+		got := fr.calls[len(fr.calls)-1]
+		if got[0] == "paste-buffer" {
+			got = got[:len(got)-2]
+		}
+		if !reflect.DeepEqual(got, check.want) {
 			t.Errorf("command = %v, want %v", got, check.want)
 		}
+	}
+}
+
+// interleavedPasteRunner models tmux's shared buffer stack. A second client
+// loads its buffer before the first client pastes. Both clients then paste.
+type interleavedPasteRunner struct {
+	mu           sync.Mutex
+	buffers      map[string]string
+	stack        []string
+	received     map[string]string
+	firstLoaded  chan struct{}
+	secondLoaded chan struct{}
+	firstPasted  chan struct{}
+	failPaste    bool
+}
+
+func (r *interleavedPasteRunner) Run(args ...string) (string, error) {
+	option := func(flag string) string {
+		for i := 1; i+1 < len(args); i++ {
+			if args[i] == flag {
+				return args[i+1]
+			}
+		}
+		return ""
+	}
+	switch args[0] {
+	case "load-buffer":
+		data, err := os.ReadFile(args[len(args)-1])
+		if err != nil {
+			return "", err
+		}
+		if r.firstLoaded != nil && string(data) == "second prompt" {
+			select {
+			case <-r.firstLoaded:
+			case <-time.After(5 * time.Second):
+				return "", fmt.Errorf("first load timed out")
+			}
+		}
+		r.mu.Lock()
+		name := option("-b")
+		if name == "" {
+			name = fmt.Sprintf("buffer%d", len(r.stack))
+		}
+		r.buffers[name] = string(data)
+		r.stack = append(r.stack, name)
+		r.mu.Unlock()
+		if r.secondLoaded != nil {
+			if string(data) == "first prompt" {
+				close(r.firstLoaded)
+				select {
+				case <-r.secondLoaded:
+				case <-time.After(5 * time.Second):
+					return "", fmt.Errorf("second load timed out")
+				}
+			} else {
+				close(r.secondLoaded)
+				select {
+				case <-r.firstPasted:
+				case <-time.After(5 * time.Second):
+					return "", fmt.Errorf("first paste timed out")
+				}
+			}
+		}
+	case "paste-buffer":
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if option("-t") == "=first:^" && r.firstPasted != nil {
+			defer close(r.firstPasted)
+		}
+		if r.failPaste {
+			return "", exitErr{code: 1}
+		}
+		name := option("-b")
+		if name == "" {
+			name = r.stack[len(r.stack)-1]
+		}
+		content, ok := r.buffers[name]
+		if !ok {
+			return "", exitErr{code: 1}
+		}
+		r.received[option("-t")] = content
+		delete(r.buffers, name)
+		for i, entry := range r.stack {
+			if entry == name {
+				r.stack = append(r.stack[:i], r.stack[i+1:]...)
+				break
+			}
+		}
+	case "delete-buffer":
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		delete(r.buffers, option("-b"))
+	}
+	return "", nil
+}
+
+func TestPasteTextKeepsInterleavedPromptsSeparate(t *testing.T) {
+	r := &interleavedPasteRunner{buffers: map[string]string{}, received: map[string]string{}, firstLoaded: make(chan struct{}), secondLoaded: make(chan struct{}), firstPasted: make(chan struct{})}
+	first, second := &Client{Runner: r}, &Client{Runner: r}
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- first.PasteText("first", "first prompt") }()
+	secondErr := second.PasteText("second", "second prompt")
+	firstErr := <-firstDone
+	if firstErr != nil || secondErr != nil {
+		t.Fatalf("paste errors: first=%v, second=%v", firstErr, secondErr)
+	}
+	for target, want := range map[string]string{"=first:^": "first prompt", "=second:^": "second prompt"} {
+		if got := r.received[target]; got != want {
+			t.Errorf("%s received %q, want %q", target, got, want)
+		}
+	}
+	if len(r.buffers) != 0 {
+		t.Fatalf("prompt buffers left behind: %v", r.buffers)
+	}
+}
+
+func TestPasteTextCleansBufferAfterPasteFailure(t *testing.T) {
+	r := &interleavedPasteRunner{buffers: map[string]string{}, failPaste: true}
+	c := &Client{Runner: r}
+	if err := c.PasteText("first", "private prompt"); err == nil {
+		t.Fatal("expected paste error")
+	}
+	if len(r.buffers) != 0 {
+		t.Fatalf("prompt buffers left behind: %v", r.buffers)
 	}
 }
