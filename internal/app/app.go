@@ -2225,6 +2225,9 @@ func (a *App) EnsureTmux(id string) (string, error) {
 			return "", err
 		}
 	}
+	if has && s.AgentName() == "codex" {
+		a.Tmux.ObserveCodex(s.TmuxSession)
+	}
 	a.Tmux.ConfigureTitleTracking(s.TmuxSession, a.titleName(s))
 	s.LastOpened = time.Now()
 	if err := a.Store.Put(s); err != nil {
@@ -2261,16 +2264,33 @@ func (a *App) SuggestedProject() (name, repo string) {
 	return filepath.Base(cwd), cwd
 }
 
-// TmuxAliveAll returns id→alive for every stored session using a single
-// tmux list-sessions call instead of one has-session subprocess per session.
-func (a *App) TmuxAliveAll() map[string]bool {
-	live := a.Tmux.LiveSessions()
-	all := a.Store.All()
-	result := make(map[string]bool, len(all))
-	for _, s := range all {
-		result[s.ID] = live[s.TmuxSession]
+// TmuxStates returns each live session's native state, or Unknown when its
+// agent has not reported one. A missing session is parked.
+func (a *App) TmuxStates() map[string]watcher.State {
+	live := a.Tmux.SessionStates()
+	if live == nil {
+		return nil
 	}
-	return result
+	states := make(map[string]watcher.State, len(live))
+	for _, s := range a.Store.All() {
+		status, ok := live[s.TmuxSession]
+		if !ok {
+			continue
+		}
+		state := watcher.Unknown
+		if s.AgentName() == "codex" {
+			switch status {
+			case "working":
+				state = watcher.Working
+			case "done":
+				state = watcher.Done
+			case "needs-input":
+				state = watcher.NeedsInput
+			}
+		}
+		states[s.ID] = state
+	}
+	return states
 }
 
 // KillTmux kills the tmux session but keeps the moomux session entry (and

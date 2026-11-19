@@ -54,6 +54,8 @@ func ExecRunner() Runner { return execRunner{} }
 
 type Client struct {
 	Runner Runner
+	// CodexObserver is the moomux executable to run as a pane output pipe.
+	CodexObserver string
 
 	mu        sync.Mutex
 	agentWins map[string]string // tmux session name -> target for the agent's window
@@ -241,10 +243,15 @@ func (c *Client) HasSession(name string) (bool, error) {
 	// "No such file or directory" is tmux's no-server message when the
 	// socket file itself is gone (a reboot clears /tmp), as opposed to a
 	// stale socket left by a dead server ("no server running").
-	if diagnostic == "" || strings.Contains(lower, "can't find session") || strings.Contains(lower, "no server running") || strings.Contains(lower, "no such file or directory") {
+	if diagnostic == "" || strings.Contains(lower, "can't find session") || noServer(lower) {
 		return false, nil
 	}
 	return false, fmt.Errorf("%s: %w", diagnostic, err)
+}
+
+func noServer(diagnostic string) bool {
+	msg := strings.ToLower(diagnostic)
+	return strings.Contains(msg, "no server running") || strings.Contains(msg, "no such file or directory")
 }
 
 // LiveSessions returns the set of currently running tmux session names via a
@@ -373,12 +380,7 @@ func (c *Client) NewSession(name, cwd, cmd, windowName string) error {
 	if err := c.markAgentPane(leftPane); err != nil {
 		return err
 	}
-	if cmd != "" {
-		if _, err := c.Runner.Run("send-keys", "-t", leftPane, cmd, "Enter"); err != nil {
-			return err
-		}
-	}
-	return nil
+	return c.launchAgent(leftPane, cmd)
 }
 
 // PressEnter sends a bare Enter keypress to session's active pane, with no

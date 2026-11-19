@@ -326,6 +326,10 @@ func newApp() (*app.App, error) {
 	setupLogging()
 
 	tmuxClient := tmux.New()
+	tmuxClient.CodexObserver, err = os.Executable()
+	if err != nil {
+		slog.Warn("could not locate Codex status observer", "err", err)
+	}
 	// moomux itself commonly runs inside a long-lived "moomux" tmux session
 	// (see relaunchInTmux); without this, that session's copy of
 	// MOSHI_CLIENT can get stuck at whatever it was on first attach and

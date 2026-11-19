@@ -407,13 +407,13 @@ func (f *fakeBackend) SetSessionProtected(id string, protected bool) (session.Se
 	return session.Session{}, nil
 }
 
-// TmuxAliveAll reports every sample session as alive so the core's
+// TmuxStates reports every sample session as alive so the core's
 // state join doesn't force them all to "parked" — that would hide whatever
 // State a scenario sets via screenStates (see the "needs-input" scenario).
-func (f *fakeBackend) TmuxAliveAll() map[string]bool {
-	alive := make(map[string]bool, len(f.sessions))
+func (f *fakeBackend) TmuxStates() map[string]watcher.State {
+	alive := make(map[string]watcher.State, len(f.sessions))
 	for _, s := range f.sessions {
-		alive[s.ID] = true
+		alive[s.ID] = watcher.Unknown
 	}
 	return alive
 }

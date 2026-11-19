@@ -61,13 +61,15 @@ func (f *fakeCore) Sessions() []session.Session {
 	return append([]session.Session(nil), f.sessions...)
 }
 
-func (f *fakeCore) TmuxAliveAll() map[string]bool {
+func (f *fakeCore) TmuxStates() map[string]watcher.State {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.aliveCalls++
-	out := map[string]bool{}
+	out := map[string]watcher.State{}
 	for k, v := range f.alive {
-		out[k] = v
+		if v {
+			out[k] = watcher.Unknown
+		}
 	}
 	return out
 }
@@ -116,7 +118,7 @@ func sess(id, path string) session.Session {
 func newWatcher(core Core) *Watcher {
 	w := &Watcher{Core: core}
 	w.states = map[string]watcher.State{}
-	w.alive = map[string]bool{}
+	w.live = map[string]watcher.State{}
 	w.git = map[string]gitEntry{}
 	w.pr = map[string]prEntry{}
 	w.prompts = map[string]promptEntry{}
@@ -238,7 +240,7 @@ func TestParkedGitStatusSkipsRoutineRefetch(t *testing.T) {
 		t.Error("a parked session with a cached status must not be re-checked, however stale")
 	}
 
-	w.alive["demo:a"] = true
+	w.live["demo:a"] = watcher.Unknown
 	if !w.gitDue(s) {
 		t.Error("must come due again as soon as the session stops being parked")
 	}

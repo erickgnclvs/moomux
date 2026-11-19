@@ -206,6 +206,8 @@ Keys: `?` help (full command list) · `n` new · `enter` open · `x` park · `d`
 
 Press `?` at any time on the list screen to open a command palette with every keybinding grouped by category, so you don't have to memorize the footer.
 
+For Codex versions that report terminal status, moomux shows `needs-input` when the agent pane displays a blocking prompt. Automatic approval reviews and ordinary completed replies stay quiet. Open an existing session through moomux once after upgrading to attach the status reader. If the pane already has a tmux output pipe, moomux leaves it in place and uses the existing Codex approval hooks as a fallback.
+
 ### Running moomux commands from inside Claude or Codex
 
 Moomux installs commands for parking the current session, tagging it, spawning delegated work, and re-running its worktree setup. It backfills commands for the agent you last created a session with, and every agent an existing session uses, whenever moomux starts, and checks again whenever a session is created or opened. In Claude Code, invoke `/kill`, `/tag`, `/spawn`, or `/reseed`. In current Codex versions, invoke `$kill`, `$tag`, `$spawn`, or `$reseed` (or use `/skills` to select one). Codex skills are installed under `~/.agents/skills/`; restart an already-running Codex session once if a newly installed skill does not appear. In Antigravity, invoke `/kill`, `/tag`, `/spawn`, or `/reseed` too — these are installed as skills under `~/.gemini/config/skills/`, which is what Antigravity exposes as slash commands (its `workflows/` are deprecated).

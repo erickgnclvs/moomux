@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/erickgnclvs/moomux/internal/codexhook"
+	"github.com/erickgnclvs/moomux/internal/tmux"
 )
 
 type hookPayload struct {
@@ -19,6 +20,9 @@ type hookPayload struct {
 // marker mechanism without the others — or main.go's dispatch — needing to
 // change.
 func runHook(args []string) error {
+	if len(args) == 4 && args[0] == "codex" && args[1] == "terminal" {
+		return tmux.ReportCodexTerminal(os.Stdin, args[2], args[3])
+	}
 	if len(args) != 2 || (args[1] != "set" && args[1] != "clear") {
 		return fmt.Errorf("usage: moomux hook <agent> set|clear")
 	}
