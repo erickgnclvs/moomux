@@ -82,11 +82,14 @@ func (exitErr) ExitCode() int { return 1 }
 
 func (f *fakeTmuxRunner) Run(args ...string) (string, error) {
 	recorded := append([]string(nil), args...)
-	if len(args) == 2 && args[0] == "load-buffer" {
+	if args[0] == "paste-buffer" && len(args) >= 3 && args[len(args)-2] == "-b" {
+		recorded = append([]string(nil), args[:len(args)-2]...)
+	}
+	if args[0] == "load-buffer" {
 		// PasteText hands load-buffer a temp file path (unpredictable across
 		// runs) rather than the text itself; record what it actually staged
 		// so assertions can check on content instead of a throwaway path.
-		if data, err := os.ReadFile(args[1]); err == nil {
+		if data, err := os.ReadFile(args[len(args)-1]); err == nil {
 			recorded = []string{"load-buffer", string(data)}
 		}
 	}
@@ -3565,6 +3568,75 @@ func TestStartFirstPromptRefusesWhenPromptAppearsAfterTyping(t *testing.T) {
 	}
 }
 
+// Codex enables bracketed paste during terminal setup, before its composer
+// exists. A stable startup screen with that flag set must not receive text.
+func TestStartFirstPromptCodexWaitsForComposer(t *testing.T) {
+	for _, autoSubmit := range []bool{false, true} {
+		t.Run(fmt.Sprint(autoSubmit), func(t *testing.T) {
+			a, _, tm := newTestApp(t, map[string]config.Project{})
+			if err := a.Store.Put(session.Session{ID: "demo:x", Agent: "codex", TmuxSession: "demo:x"}); err != nil {
+				t.Fatal(err)
+			}
+			startup := []string{"$ codex", "Starting Codex", "Starting Codex", "Starting Codex", "Starting Codex", "Starting Codex"}
+			tm.seq = map[string][]string{"capture-pane -p -t =demo:x:^": append(startup, "› Ask Codex to do anything", "› Ask Codex to do anything", "› Ask Codex to do anything")}
+			if err := a.StartFirstPrompt("demo:x", "do the thing", autoSubmit); err != nil {
+				t.Fatal(err)
+			}
+			captures := 0
+			for _, call := range tm.calls {
+				if call[0] == "capture-pane" {
+					captures++
+				}
+				if call[0] == "load-buffer" && captures <= len(startup) {
+					t.Fatalf("pasted into startup screen after %d captures", captures)
+				}
+			}
+			if !tm.called("load-buffer do the thing") {
+				t.Fatal("never pasted prompt")
+			}
+		})
+	}
+}
+
+func TestStartFirstPromptCodexRefusesUnreadyPane(t *testing.T) {
+	for _, screen := range []string{"Starting Codex", "", "Do you trust the files in this folder?"} {
+		t.Run(screen, func(t *testing.T) {
+			a, _, tm := newTestApp(t, map[string]config.Project{})
+			if err := a.Store.Put(session.Session{ID: "demo:x", Agent: "codex", TmuxSession: "demo:x"}); err != nil {
+				t.Fatal(err)
+			}
+			tm.out["capture-pane -p -t =demo:x:^"] = screen
+			if err := a.StartFirstPrompt("demo:x", "do the thing", true); err == nil {
+				t.Fatal("expected readiness error")
+			}
+			if tm.called("load-buffer") || tm.called("send-keys") {
+				t.Fatalf("sent input to unready Codex: %v", tm.calls)
+			}
+		})
+	}
+}
+
+func TestStartFirstPromptCodexRequiresPasteMode(t *testing.T) {
+	for _, flagError := range []bool{false, true} {
+		t.Run(fmt.Sprint(flagError), func(t *testing.T) {
+			a, _, tm := newTestApp(t, map[string]config.Project{})
+			if err := a.Store.Put(session.Session{ID: "demo:x", Agent: "codex", TmuxSession: "demo:x"}); err != nil {
+				t.Fatal(err)
+			}
+			tm.out["capture-pane -p -t =demo:x:^"] = "  › Ask Codex to do anything"
+			flag := "display-message -p -t =demo:x:^ #{bracket_paste_flag}"
+			tm.out[flag] = "0"
+			tm.failOn[flag] = flagError
+			if err := a.StartFirstPrompt("demo:x", "do the thing", false); err == nil {
+				t.Fatal("expected readiness error")
+			}
+			if tm.called("load-buffer") {
+				t.Fatal("pasted without bracketed paste enabled")
+			}
+		})
+	}
+}
+
 func TestStartFirstPromptNoopOnEmptyPrompt(t *testing.T) {
 	a, _, tm := newTestApp(t, map[string]config.Project{})
 	if err := a.StartFirstPrompt("demo:x", "", true); err != nil {
@@ -3829,7 +3901,7 @@ func TestFirstPromptUsesResolvedAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	tmuxName := TmuxSessionName(session.MakeID("demo", "feat"), "feat")
-	tm.out["capture-pane -p -t ="+tmuxName+":^"] = "agent-idle"
+	tm.out["capture-pane -p -t ="+tmuxName+":^"] = "› Ask Codex to do anything"
 
 	s, _, err := a.CreateSession(session.CreateRequest{
 		Project: "demo", Name: "feat", // no Agent: use the last one

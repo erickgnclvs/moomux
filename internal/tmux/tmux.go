@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -426,7 +427,11 @@ func (c *Client) PasteText(session, text string) error {
 	if closeErr != nil {
 		return fmt.Errorf("paste text: %w", closeErr)
 	}
-	if _, err := c.Runner.Run("load-buffer", tmpPath); err != nil {
+	// Buffers are shared across the tmux server, including other moomux
+	// processes. Name this paste's buffer so concurrent launches cannot
+	// replace or consume each other's prompts.
+	buffer := filepath.Base(tmpPath)
+	if _, err := c.Runner.Run("load-buffer", "-b", buffer, tmpPath); err != nil {
 		return err
 	}
 	// -p wraps the text in bracketed-paste control codes (ESC[200~ / ESC[201~)
@@ -439,17 +444,16 @@ func (c *Client) PasteText(session, text string) error {
 	// -d deletes the buffer immediately after pasting, so it doesn't linger
 	// in tmux's paste-buffer stack (visible to, and reusable by, anything
 	// else in the session via prefix-]).
-	_, err = c.runAgentPane(session, "paste-buffer", "-p", "-d", "-t", agentTarget)
+	_, err = c.runAgentPane(session, "paste-buffer", "-p", "-d", "-t", agentTarget, "-b", buffer)
+	if err != nil {
+		_, _ = c.Runner.Run("delete-buffer", "-b", buffer)
+	}
 	return err
 }
 
-// BracketedPaste reports whether session's active pane currently has
-// bracketed-paste mode enabled, i.e. whether the program on the other end
-// has told the terminal it wants pastes delimited. It's the closest thing
-// tmux exposes to "a TUI is up and reading input": an agent CLI's startup
-// (before its input layer is installed) has it off, and the shell turns it
-// off for the duration of a command it runs, so it flips back on only once
-// the agent itself is taking keystrokes. See App.StartFirstPrompt.
+// BracketedPaste reports whether session's agent pane has requested
+// bracketed-paste delimiters. This describes the input protocol, not full
+// readiness: Codex enables it before its startup probes finish.
 func (c *Client) BracketedPaste(session string) (bool, error) {
 	out, err := c.runAgentPane(session, "display-message", "-p", "-t", agentTarget, "#{bracket_paste_flag}")
 	if err != nil {

@@ -1448,6 +1448,46 @@ func (a *App) waitForPaneAcceptingPaste(tmuxSession string) {
 	}
 }
 
+// waitForCodexComposer waits for Codex's input row, not just a stable
+// screen. Codex enables bracketed paste before terminal probing and startup
+// finish, so the flag alone can still send text into startup input handling.
+func (a *App) waitForCodexComposer(tmuxSession string) error {
+	deadline := time.Now().Add(paneReadyTimeout)
+	last, stable := "", 0
+	for {
+		cur, err := a.Tmux.CapturePane(tmuxSession)
+		ready := false
+		if err == nil {
+			if marker := stuckPromptMarker(cur); marker != "" {
+				return fmt.Errorf("pane is showing an interactive prompt (%q), not the agent — refusing to type the prompt into it", marker)
+			}
+			for _, line := range strings.Split(cur, "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), "›") {
+					ready = true
+					break
+				}
+			}
+		}
+		if ready {
+			on, flagErr := a.Tmux.BracketedPaste(tmuxSession)
+			ready = flagErr == nil && on
+		}
+		if ready && cur == last {
+			stable++
+		} else {
+			stable = 0
+		}
+		if stable >= paneStableChecks {
+			return nil
+		}
+		last = cur
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for Codex's chat input; first prompt was not sent")
+		}
+		time.Sleep(paneStablePoll)
+	}
+}
+
 // StartFirstPrompt waits for a freshly created session's agent pane to
 // finish starting up and types prompt into it. If autoSubmit is true, it
 // waits for the pane to finish re-rendering the typed prompt (a fixed delay
@@ -1459,10 +1499,23 @@ func (a *App) StartFirstPrompt(tmuxSession, prompt string, autoSubmit bool) erro
 	if prompt == "" {
 		return nil
 	}
-	if err := a.waitForPaneReady(tmuxSession); err != nil {
-		return err
+	needsCodexComposer := false
+	for _, s := range a.Store.All() {
+		if s.TmuxSession == tmuxSession {
+			needsCodexComposer = s.AgentName() == "codex"
+			break
+		}
 	}
-	a.waitForPaneAcceptingPaste(tmuxSession)
+	if needsCodexComposer {
+		if err := a.waitForCodexComposer(tmuxSession); err != nil {
+			return err
+		}
+	} else {
+		if err := a.waitForPaneReady(tmuxSession); err != nil {
+			return err
+		}
+		a.waitForPaneAcceptingPaste(tmuxSession)
+	}
 	if err := a.Tmux.PasteText(tmuxSession, prompt); err != nil {
 		return err
 	}
