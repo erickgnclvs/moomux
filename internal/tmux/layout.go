@@ -96,12 +96,7 @@ func (c *Client) NewSessionWithLayout(name, cwd, windowName string, windows []la
 	if err := c.markAgentPane(agentPane); err != nil {
 		return err
 	}
-	if agentCmd != "" {
-		if _, err := c.Runner.Run("send-keys", "-t", agentPane, agentCmd, "Enter"); err != nil {
-			return err
-		}
-	}
-	return nil
+	return c.launchAgent(agentPane, agentCmd)
 }
 
 // realizeLayout carves paneID's screen space according to spec and returns

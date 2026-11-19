@@ -411,8 +411,10 @@ own timer, which catches three things no event can announce:
 
 Where an event *does* exist, it's already used: the agent watchers are
 fsevents-driven on darwin with a debounce, Claude Code reports an open
-dialog in its own session file, and Codex's needs-input markers are written
-by installed hooks (`internal/codexhook`). The timer is a floor, not the
+dialog in its own session file, and Codex reports its displayed lifecycle state
+through OSC 7501 in the agent pane. The core reads that pane's status with
+tmux liveness. It uses the SQLite and hook signals when the pane has no
+native status. The timer is a floor, not the
 primary signal.
 
 ## The pull channel

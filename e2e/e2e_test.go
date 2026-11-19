@@ -33,6 +33,8 @@ func boolPtr(b bool) *bool { return &b }
 func newTestApp(t *testing.T) *app.App {
 	t.Helper()
 	dir := t.TempDir()
+	// Agent creation installs hooks and skills under the caller's home.
+	t.Setenv("HOME", dir)
 	a := &app.App{
 		Cfg:          &config.Config{Projects: map[string]config.Project{}},
 		CfgPath:      filepath.Join(dir, "config.toml"),
@@ -187,7 +189,7 @@ func TestCreateSession_GitProject_NewBranch(t *testing.T) {
 		t.Fatalf("session not persisted correctly: %+v ok=%v", got, ok)
 	}
 
-	if !a.TmuxAliveAll()[s.ID] {
+	if _, live := a.TmuxStates()[s.ID]; !live {
 		t.Fatalf("TmuxAliveAll reports session dead")
 	}
 }
@@ -455,11 +457,11 @@ func TestTmuxAliveAll(t *testing.T) {
 		t.Fatalf("kill-session: %v (%s)", err, out)
 	}
 
-	alive := a.TmuxAliveAll()
-	if !alive[s1.ID] {
+	alive := a.TmuxStates()
+	if _, ok := alive[s1.ID]; !ok {
 		t.Fatalf("s1 should be alive")
 	}
-	if alive[s2.ID] {
+	if _, ok := alive[s2.ID]; ok {
 		t.Fatalf("s2 should be dead")
 	}
 }

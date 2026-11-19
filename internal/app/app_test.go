@@ -19,6 +19,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/gitwt"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 	"github.com/erickgnclvs/moomux/internal/tmux"
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
@@ -1691,10 +1692,10 @@ func TestTmuxAliveAll(t *testing.T) {
 	a, _, tm := newTestApp(t, gitProject("/repo"))
 	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", TmuxSession: "moomux-a"})
 	_ = a.Store.Put(session.Session{ID: "demo:b", Project: "demo", Name: "b", TmuxSession: "moomux-b"})
-	tm.out["list-sessions -F #{session_name}"] = "moomux-a\nunrelated\n"
+	tm.out["list-panes -a -F #{session_name}\t#{pane_pipe_pid}\t#{?pane_pipe,#{@moomux_codex_state},}"] = "moomux-a\t\nunrelated\t\n"
 
-	got := a.TmuxAliveAll()
-	if !got["demo:a"] || got["demo:b"] {
+	got := a.TmuxStates()
+	if _, ok := got["demo:a"]; !ok || len(got) != 1 {
 		t.Fatalf("got %v", got)
 	}
 }
@@ -4328,5 +4329,20 @@ func TestSetModelExcludedPersists(t *testing.T) {
 	}
 	if loaded, err := config.Load(a.CfgPath); err != nil || len(loaded.ExcludedModels) != 0 {
 		t.Fatalf("ExcludedModels = %v after showing it again (err %v)", loaded.ExcludedModels, err)
+	}
+}
+
+func TestCodexDisplayedStateOverridesNeedsInputMarker(t *testing.T) {
+	a, _, tm := newTestApp(t, gitProject("/repo"))
+	s := session.Session{ID: "demo:a", Project: "demo", Name: "a", Agent: "codex", WorktreePath: "/wt/a", TmuxSession: "moomux-a"}
+	if err := a.Store.Put(s); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []watcher.State{watcher.Working, watcher.NeedsInput, watcher.Done} {
+		tm.out["list-panes -a -F #{session_name}\t#{pane_pipe_pid}\t#{?pane_pipe,#{@moomux_codex_state},}"] = "moomux-a\t99\t99:" + state.String() + "\nmoomux-a\t\n"
+		snap := sessionview.Once(a, "", map[string]watcher.State{s.WorktreePath: watcher.NeedsInput})
+		if got := snap.Views[s.ID].State; got != state {
+			t.Fatalf("Codex screen reports %v with a pending approval hook: got %v", state, got)
+		}
 	}
 }

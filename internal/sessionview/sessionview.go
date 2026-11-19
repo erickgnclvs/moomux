@@ -163,7 +163,7 @@ type Core interface {
 	// the global folder table, and everything else a client renders from
 	// config — see Snapshot.Cfg.
 	ConfigSnapshot() config.Config
-	TmuxAliveAll() map[string]bool
+	TmuxStates() map[string]watcher.State
 	WorktreeStatus(id string) (dirty, unpushed, ok bool)
 	PRStatus(id string) (prstatus.Info, bool)
 	SetSessionStatusTitle(id string, st watcher.State) error
@@ -220,7 +220,7 @@ type Watcher struct {
 
 	// Everything below is owned by the run loop.
 	states  map[string]watcher.State // by worktree path, cumulative; see Run
-	alive   map[string]bool          // by session id
+	live    map[string]watcher.State // by session id
 	git     map[string]gitEntry      // by session id
 	pr      map[string]prEntry       // by session id
 	prompts map[string]promptEntry   // by session id
@@ -297,7 +297,7 @@ func (w *Watcher) Nudge() {
 // agent's entries on every tick.
 func (w *Watcher) Run(ctx context.Context, out chan<- Snapshot) {
 	w.states = map[string]watcher.State{}
-	w.alive = map[string]bool{}
+	w.live = nil
 	w.git = map[string]gitEntry{}
 	w.pr = map[string]prEntry{}
 	w.prompts = map[string]promptEntry{}
@@ -446,15 +446,23 @@ func (w *Watcher) refreshAlive() {
 	if w.Core == nil {
 		return
 	}
-	w.alive = w.Core.TmuxAliveAll()
+	// A failed poll must not park every session and then re-announce
+	// every pending question as a new request on recovery.
+	if live := w.Core.TmuxStates(); live != nil {
+		w.live = live
+	}
 }
 
 // stateOf is the join this package exists for: with tmux gone, whatever the
 // agent last wrote to its own session log is stale, so the session is
 // parked no matter what that log says.
 func (w *Watcher) stateOf(s session.Session) watcher.State {
-	if !w.alive[s.ID] {
+	st, live := w.live[s.ID]
+	if !live {
 		return watcher.Parked
+	}
+	if st != watcher.Unknown {
+		return st
 	}
 	return w.states[s.WorktreePath]
 }

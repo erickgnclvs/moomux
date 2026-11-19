@@ -45,7 +45,7 @@ type fakeBackend struct {
 	sessions []session.Session
 
 	// Call counters for the CPU-cost tests in cpu_test.go. Atomic because
-	// TmuxAliveAll is reached from a tea.Cmd goroutine.
+	// TmuxStates is reached from a tea.Cmd goroutine.
 	sessionsCalls  atomic.Int64
 	tmuxAliveCalls atomic.Int64
 
@@ -153,7 +153,7 @@ type fakeBackend struct {
 	// prStatusDelay mirrors worktreeStatusDelay, for PRStatus.
 	prStatusDelay time.Duration
 
-	// tmuxAlive backs TmuxAliveAll; nil (the zero value) reads as "nothing
+	// tmuxAlive backs TmuxStates; nil (the zero value) reads as "nothing
 	// alive", same as the map[string]bool{} every other test relies on.
 	tmuxAlive map[string]bool
 
@@ -425,9 +425,15 @@ func (f *fakeBackend) MoveProject(name string, delta int) error {
 	f.cfg.Order = order
 	return nil
 }
-func (f *fakeBackend) TmuxAliveAll() map[string]bool {
+func (f *fakeBackend) TmuxStates() map[string]watcher.State {
 	f.tmuxAliveCalls.Add(1)
-	return f.tmuxAlive
+	states := make(map[string]watcher.State)
+	for id, alive := range f.tmuxAlive {
+		if alive {
+			states[id] = watcher.Unknown
+		}
+	}
+	return states
 }
 
 func (f *fakeBackend) Sessions() []session.Session {
