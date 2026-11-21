@@ -3,6 +3,7 @@
  _/(--)  chewing the cud, nothing to …  
   \(__)                                 
 ┌──────────────────────────────────────┐
+│ demo · SESSIONS                      │
 │  ⬤  session-00                       │
 │  ⬤  session-01                       │
 │  ⬤  session-02                       │
@@ -14,7 +15,6 @@
 │  ⬤  session-08                       │
 │  ⬤  session-09                       │
 │  ⬤  session-10                       │
-│  ⬤  session-11                       │
 │                  ⌄                   │
 └──────────────────────────────────────┘
                                         
