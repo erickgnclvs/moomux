@@ -157,3 +157,22 @@ func TestEnsureSpawnCommandIsIdempotent(t *testing.T) {
 		t.Fatal("second install should be a no-op")
 	}
 }
+
+func TestEnsureCommandLeavesAUsersOwnCommandAlone(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "commands", "kill.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const mine = "my own /kill: stop the dev server\n"
+	if err := os.WriteFile(path, []byte(mine), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := EnsureKillCommand(home)
+	if err != nil || changed {
+		t.Fatalf("changed=%v err=%v, want untouched", changed, err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != mine {
+		t.Fatalf("user's command overwritten: %s", got)
+	}
+}

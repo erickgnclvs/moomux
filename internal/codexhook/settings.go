@@ -85,9 +85,15 @@ func EnsureHooks(home string) (changed bool, err error) {
 
 // writeFileAtomic writes data to path atomically, so a concurrent reader
 // (Codex reloading its own hook config) never observes a partially-written
-// file.
+// file. It keeps an existing file's permission bits, so a user who locked
+// hooks.json down to 0600 is not loosened; a new file is 0644. Prompts and
+// skills share it, and those are meant to be readable.
 func writeFileAtomic(path string, data []byte) error {
-	return atomicfile.Write(path, data, 0o644)
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+	return atomicfile.Write(path, data, mode)
 }
 
 // addHook appends a {hooks:[{type:command,command}]} entry for event,

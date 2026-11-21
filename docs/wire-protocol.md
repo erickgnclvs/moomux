@@ -75,6 +75,13 @@ handler. Two listeners, one `Server`; `Serve` has always taken a
   subprocess. It runs per connection off the accept path, never inside
   `Accept`: inline, one wedged `tailscaled` would stall every other
   connection behind it.
+  A peer equal to this node's own tailnet address is refused before whois
+  is asked: whois reports the owner for it, so a local process dialing the
+  tailnet port would otherwise pass as the owner's phone.
+- **Timeouts.** A request must arrive within 30 seconds of the connection
+  opening (the deadline is cleared once it decodes, so `Watch` and `Attach`
+  are not cut off), and one `Watch` snapshot write that blocks for 30
+  seconds drops that subscriber.
 - **Failing to bind is never fatal.** No tailscale on the machine, a stopped
   daemon, a logged-out node: serve logs it and carries on with the unix
   socket, which is what local clients use either way. `Pair` is the one

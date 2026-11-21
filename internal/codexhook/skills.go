@@ -1,6 +1,7 @@
 package codexhook
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -66,6 +67,11 @@ func ensureSkill(home, name, description, instructions string) (changed bool, er
 	}
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
+	}
+	if err == nil && !bytes.Contains(existing, []byte("moomux")) {
+		// The user's own command of the same name: every file moomux
+		// installs runs or mentions `moomux`, so one that doesn't isn't ours.
+		return false, nil
 	}
 	if err := writeFileAtomic(path, []byte(body)); err != nil {
 		return false, err

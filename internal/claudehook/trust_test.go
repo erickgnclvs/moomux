@@ -55,8 +55,8 @@ func TestTrustDirectoryCreatesEntry(t *testing.T) {
 	// that imports files from outside the project (e.g. a global CLAUDE.md
 	// importing from $HOME/.claude), and blocks first input exactly the same
 	// way if left unset.
-	if entry["hasClaudeMdExternalIncludesApproved"] != true {
-		t.Fatalf("hasClaudeMdExternalIncludesApproved = %v, want true", entry["hasClaudeMdExternalIncludesApproved"])
+	if _, set := entry["hasClaudeMdExternalIncludesApproved"]; set {
+		t.Fatalf("hasClaudeMdExternalIncludesApproved was set: %v", entry)
 	}
 }
 
@@ -107,7 +107,7 @@ func TestTrustDirectoryNoRewriteWhenAlreadyTrusted(t *testing.T) {
 	}
 
 	// Something else (Claude itself) writes the file between opens.
-	const live = `{"projects":{"/repo/worktrees/feature-x":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true,"hasClaudeMdExternalIncludesApproved":true,"history":["a live edit"]}}}`
+	const live = `{"projects":{"/repo/worktrees/feature-x":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true,"history":["a live edit"]}}}`
 	if err := os.WriteFile(path, []byte(live), before.Mode().Perm()); err != nil {
 		t.Fatal(err)
 	}

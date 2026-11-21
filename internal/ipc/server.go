@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unicode"
 
 	"github.com/erickgnclvs/moomux/internal/config"
@@ -71,6 +72,36 @@ type Server struct {
 	// shrink it: a full-size request takes minutes to encode and decode
 	// under -race.
 	maxRequest int64
+
+	// ioTimeout overrides requestTimeout when non-zero; tests shrink it.
+	ioTimeout time.Duration
+}
+
+// requestTimeout bounds how long an admitted peer may take to send its
+// request, and how long one Watch write may block on a peer that stopped
+// reading. Without it each costs a goroutine and a descriptor forever.
+const requestTimeout = 30 * time.Second
+
+// idleReader arms a read deadline before each Read while d is non-zero: the
+// limit is on silence, not on the whole request, so a big SaveFile arriving
+// over a slow link is not cut off while bytes keep coming.
+type idleReader struct {
+	c net.Conn
+	d time.Duration
+}
+
+func (r *idleReader) Read(p []byte) (int, error) {
+	if r.d != 0 {
+		_ = r.c.SetReadDeadline(time.Now().Add(r.d))
+	}
+	return r.c.Read(p)
+}
+
+func (s *Server) timeout() time.Duration {
+	if s.ioTimeout != 0 {
+		return s.ioTimeout
+	}
+	return requestTimeout
 }
 
 // subscribe registers a channel for snapshots, starting the source on the
@@ -182,7 +213,8 @@ func (s *Server) handle(c net.Conn) {
 	// second bufio.Reader would drop whatever the first buffered past the
 	// request line, so a nudge arriving in the same read as the Watch
 	// request would vanish and the client would wait out a whole tick.
-	r := bufio.NewReader(c)
+	idle := &idleReader{c: c, d: s.timeout()}
+	r := bufio.NewReader(idle)
 	// A json.Decoder, deliberately, and not a line read: it returns as soon
 	// as the JSON value is complete, needing neither a trailing newline nor
 	// EOF. A client that writes its request and then waits for the answer
@@ -212,6 +244,9 @@ func (s *Server) handle(c net.Conn) {
 		}
 		return
 	}
+	// Decoded: a Watch or Attach reads on for as long as it lives.
+	idle.d = 0
+	_ = c.SetReadDeadline(time.Time{})
 	if req.Method == "Watch" {
 		// dec.Buffered() and not r alone: the decoder owns whatever it read
 		// past the request, so a nudge that arrived in the same packet is
@@ -297,6 +332,9 @@ func saveFile(tmp, name string, data []byte) (string, error) {
 	}
 	dir := filepath.Join(tmp, "moomux-images")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	if err := ownPrivateDir(dir); err != nil {
 		return "", err
 	}
 	// CreateTemp: a random prefix it will not reuse (O_EXCL), mode 0600.
@@ -589,6 +627,7 @@ func (s *Server) stream(c net.Conn, r io.Reader) {
 	for {
 		select {
 		case snap := <-ch:
+			_ = c.SetWriteDeadline(time.Now().Add(s.timeout()))
 			if err := enc.Encode(snap); err != nil {
 				return
 			}
@@ -873,4 +912,22 @@ func cfgResult(cfg config.Config) Result {
 		emoji[name] = cfg.ProjectEmoji(name)
 	}
 	return Result{Cfg: &cfg, ProjectEmoji: emoji}
+}
+
+// ownPrivateDir refuses a directory somebody else could have planted: on a
+// shared /tmp another user can create moomux-images first, or swap an upload
+// inside it before the agent reads it. Lstat, so a symlink is not followed.
+func ownPrivateDir(dir string) error {
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !fi.IsDir() || !ok || int(st.Uid) != os.Getuid() {
+		return fmt.Errorf("SaveFile: %s is not a directory owned by this user", dir)
+	}
+	if fi.Mode().Perm() != 0o700 {
+		return os.Chmod(dir, 0o700)
+	}
+	return nil
 }

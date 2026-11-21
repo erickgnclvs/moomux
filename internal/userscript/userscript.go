@@ -104,6 +104,9 @@ func runDir(dir string, env Env) []string {
 		cmd := exec.CommandContext(ctx, path)
 		cmd.Dir = env.Worktree
 		cmd.Env = append(os.Environ(), extraEnv...)
+		// A script that leaves a background child holding stdout would
+		// otherwise block CombinedOutput until the child exits.
+		cmd.WaitDelay = 2 * time.Second
 		out, err := cmd.CombinedOutput()
 		cancel()
 		switch {

@@ -190,3 +190,20 @@ func TestEnsureHooksReportsChangedWhenANewEventIsAdded(t *testing.T) {
 		t.Fatalf("UserPromptSubmit hooks = %v", got)
 	}
 }
+
+func TestEnsureHooksKeepsAnExistingFilesMode(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"hooks":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureHooks(home); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %v, want 0600 kept", fi.Mode().Perm())
+	}
+}
