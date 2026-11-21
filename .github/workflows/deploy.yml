@@ -31,7 +31,14 @@ concurrency:
 
 jobs:
   tag:
-    if: github.event.workflow_run.conclusion == 'success'
+    # `branches: [main]` above matches the head branch *name*, so a fork PR
+    # from a branch called main would pass it. Require a push to this repo:
+    # that also excludes the daily lint-only schedule run, whose skipped
+    # test jobs still conclude `success`.
+    if: >-
+      github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -40,20 +47,45 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      # Not `echo "next=$(...)"`: that hides a script failure, so an error
+      # looked like "nothing to release".
+      #
+      # A tag already on HEAD with no GitHub release is a release that failed
+      # after the tag push; next_version.sh prints nothing for it, so it would
+      # never retry. Re-run this workflow run ("Re-run all jobs") to dispatch
+      # it again, or: gh workflow run release.yml --ref main -f tag=vX.Y.Z
       - name: Compute next version
         id: version
-        run: echo "next=$(./scripts/next_version.sh)" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          next=$(./scripts/next_version.sh)
+          retry=false
+          if [ -z "$next" ]; then
+            for t in $(git tag --points-at HEAD); do
+              [[ $t =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+              if ! gh release view "$t" >/dev/null 2>&1; then
+                next=$t
+                retry=true
+              fi
+            done
+          fi
+          echo "next=$next" >> "$GITHUB_OUTPUT"
+          echo "retry=$retry" >> "$GITHUB_OUTPUT"
 
       - name: Tag and push
-        if: steps.version.outputs.next != ''
+        if: steps.version.outputs.next != '' && steps.version.outputs.retry != 'true'
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ steps.version.outputs.next }}" -m "${{ steps.version.outputs.next }}"
-          git push origin "${{ steps.version.outputs.next }}"
+          git tag -a "$NEXT" -m "$NEXT"
+          git push origin "$NEXT"
 
       - name: Trigger release
         if: steps.version.outputs.next != ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run release.yml --ref main -f tag="${{ steps.version.outputs.next }}"
+          NEXT: ${{ steps.version.outputs.next }}
+        run: gh workflow run release.yml --ref main -f tag="$NEXT"
