@@ -19,6 +19,56 @@
                                         
                                         
                                         
+=== 60x24 ===
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+╭──────────────────────────────────────────────────────────╮
+│                                                          │
+│  THEMES                                                  │
+│                                                          │
+│  appearance: auto  (a to cycle)                          │
+│                                                          │
+│   ▸ default                                              │
+│     terminal                                             │
+│     gruvbox                                              │
+│     catppuccin                                           │
+│                                                          │
+│  ↑↓ theme  a appearance  enter save  esc cancel          │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+=== 72x24 ===
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│  THEMES                                                              │
+│                                                                      │
+│  appearance: auto  (a to cycle)                                      │
+│                                                                      │
+│   ▸ default                                                          │
+│     terminal                                                         │
+│     gruvbox                                                          │
+│     catppuccin                                                       │
+│                                                                      │
+│  ↑↓ theme  a appearance  enter save  esc cancel                      │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+                                                                        
 === 100x32 ===
                                                                                                     
                                                                                                     

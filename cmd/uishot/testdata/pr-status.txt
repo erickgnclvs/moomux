@@ -19,6 +19,56 @@
 └──────────────────────────────────────┘
                                         
  ? help                            vdev 
+=== 60x24 ===
+   ^__^                                                     
+ _/(--)  on a moo-ratorium                                  
+  \(__)                                                     
+┌──────────────────────────────────────────────────────────┐
+│ demo · SESSIONS¹                                         │
+│  ⬤  feature-auth                                  📌 🎫  │
+│  ⬤  bugfix-timeout                                   ⚠️  │
+│                                                          │
+│ ──────────────────────────────────────────────────────── │
+│ project:   demo                                          │
+│ status:    ⬤  in the barn                                │
+│ name:      bugfix-timeout                                │
+│ agent:     codex                                         │
+│ pr:        https://github.com/example/repo/pull/42       │
+│ pr status: open, conflicts, CI failing                   │
+│ tmux:      moomux-bugfix-timeout                         │
+│                                                          │
+│  ________________________________________                │
+│ < on a moo-ratorium                      >               │
+│  ----------------------------------------                │
+│         \   ^__^                                         │
+└──────────────────────────────────────────────────────────┘
+                                                            
+ ? help                                                vdev 
+=== 72x24 ===
+   ^__^                                                                 
+   (--)\_                                                               
+   (__)\ )                                                              
+┌──────────────────────────────────────────┐┌──────────────────────────┐
+│ SESSIONS¹                                ││                          │
+│                                          ││                          │
+│  ⬤  feature-auth                  📌 🎫  ││ project:   demo          │
+│  ⬤  bugfix-timeout                   ⚠️  ││ status:    ⬤  in the     │
+│                                          ││ barn                     │
+│                                          ││ name:      bugfix-ti…    │
+│                                          ││ agent:     codex         │
+│                                          ││ pr:        …o/pull/42    │
+│                                          ││ pr status: open,         │
+│                                          ││ conflicts, CI failing    │
+│                                          ││ tmux:      moomux-bu…    │
+│                                          ││ worktree:  …x-timeout    │
+│                                          ││ created:   just now      │
+│                                          ││                          │
+│                                          ││  ______________________  │
+│                                          ││ < on a moo-ratorium    > │
+│                                          ││  ----------------------  │
+└──────────────────────────────────────────┘└──────────────────────────┘
+                                                                        
+ ? help                                                            vdev 
 === 100x32 ===
    ^__^                                                                                             
    (--)\_                                                                                           

@@ -19,6 +19,56 @@
 └──────────────────────────────────────┘
                                         
  ? help                            vdev 
+=== 60x24 ===
+   ^__^                                                     
+ _/(--)  out to pasture                                     
+  \(__)                                                     
+┌──────────────────────────────────────────────────────────┐
+│ demo · SESSIONS¹                                         │
+│  ⬤  feature-auth                               📌 🎫 🔀  │
+│  ⬤  bugfix-timeout                                   🔀  │
+│                                                          │
+│                                                          │
+│                                                          │
+│ ──────────────────────────────────────────────────────── │
+│ status:    ⬤  in the barn                                │
+│ name:      feature-auth                                  │
+│ pr:        #5478                                         │
+│ pr status: open, CI passing                              │
+│ tmux:      moomux-feature-auth                           │
+│ prompt:    add JWT-based auth to the login flow,         │
+│            including refresh token rotation, session     │
+│            revocation on logout, and rate limiting…      │
+│                                                          │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+                                                            
+ ? help                                                vdev 
+=== 72x24 ===
+   ^__^                                                                 
+   (--)\_                                                               
+   (__)\ )                                                              
+┌──────────────────────────────────────────┐┌──────────────────────────┐
+│ SESSIONS¹                                ││                          │
+│                                          ││                          │
+│  ⬤  feature-auth               📌 🎫 🔀  ││ status:    ⬤  in the     │
+│  ⬤  bugfix-timeout                   🔀  ││ barn                     │
+│                                          ││ name:      feature-a…    │
+│                                          ││ pr:        #5478         │
+│                                          ││ pr status: open, CI      │
+│                                          ││ passing                  │
+│                                          ││ tmux:      moomux-fe…    │
+│                                          ││ prompt:    add           │
+│                                          ││            JWT-based     │
+│                                          ││            auth to…      │
+│                                          ││                          │
+│                                          ││   ^__^                   │
+│                                          ││ _/(--)  out to past…     │
+│                                          ││                          │
+│                                          ││  \(__)                   │
+└──────────────────────────────────────────┘└──────────────────────────┘
+                                                                        
+ ? help                                                            vdev 
 === 100x32 ===
    ^__^                                                                                             
    (--)\_                                                                                           

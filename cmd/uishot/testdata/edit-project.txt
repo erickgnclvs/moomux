@@ -19,6 +19,56 @@
 ╰──────────────────────────────────────╯
                                         
                                         
+=== 60x24 ===
+                                                            
+                                                            
+                                                            
+╭──────────────────────────────────────────────────────────╮
+│                                                          │
+│  Edit project                                            │
+│                                                          │
+│  name:          demo (fixed)                             │
+│  repo:          > /tmp/demo                              │
+│  base branch:   > main                                   │
+│  dangerous:     [off]                                    │
+│  branch prefix: > feature                                │
+│  worktrees:     [on]                                     │
+│  emoji:         ‹ [auto] ›                               │
+│                                                          │
+│  repo path used by new sessions — existing worktrees     │
+│  stay put                                                │
+│  tab/↑↓  ←→ change  enter save  esc cancel               │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+                                                            
+                                                            
+                                                            
+                                                            
+=== 72x24 ===
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│  Edit project                                                        │
+│                                                                      │
+│  name:          demo (fixed)                                         │
+│  repo:          > /tmp/demo                                          │
+│  base branch:   > main                                               │
+│  dangerous:     [off]                                                │
+│  branch prefix: > feature                                            │
+│  worktrees:     [on]                                                 │
+│  emoji:         [auto]  🐙  🦊  🚀  🔥  🌊  🍀  ⚡  🎯  🐝  🦉  🐄   │
+│                                                                      │
+│  repo path used by new sessions — existing worktrees stay put        │
+│  tab/↑↓  ←→ change  enter save  esc cancel                           │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
+                                                                        
+                                                                        
+                                                                        
+                                                                        
 === 100x32 ===
                                                                                                     
                                                                                                     

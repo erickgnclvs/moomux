@@ -19,6 +19,56 @@
 └──────────────────────────────────────┘
                                         
  ? help                            vdev 
+=== 60x24 ===
+   ^__^                                                     
+ _/(--)  out to pasture                                     
+  \(__)                                                     
+┌──────────────────────────────────────────────────────────┐
+│ demo · SESSIONS¹                                         │
+│  ⬤  feature-auth                               📌 🎫 🔀  │
+│  ⬤  bugfix-timeout                                   🔀  │
+│                                                          │
+│ ──────────────────────────────────────────────────────── │
+│ project:   demo                                          │
+│ status:    ⬤  in the barn                                │
+│ name:      feature-auth                                  │
+│ agent:     claude                                        │
+│ ticket:    https://tracker.example/TICK-123              │
+│ pr:        https://github.com/example/repo/pull/5478     │
+│ pr status: open, CI passing                              │
+│ tmux:      moomux-feature-auth                           │
+│ prompt:    add JWT-based auth to the login flow,         │
+│            including refresh token rotation, session     │
+│            revocation on logout, and rate limiting…      │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+                                                            
+ ? help                                                vdev 
+=== 72x24 ===
+   ^__^                                                                 
+   (--)\_                                                               
+   (__)\ )                                                              
+┌──────────────────────────────────────────┐┌──────────────────────────┐
+│ SESSIONS¹                                ││                          │
+│                                          ││                          │
+│  ⬤  feature-auth               📌 🎫 🔀  ││ project:   demo          │
+│  ⬤  bugfix-timeout                   🔀  ││ status:    ⬤  in the     │
+│                                          ││ barn                     │
+│                                          ││ name:      feature-a…    │
+│                                          ││ agent:     claude        │
+│                                          ││ ticket:    …/TICK-123    │
+│                                          ││ pr:        …pull/5478    │
+│                                          ││ pr status: open, CI      │
+│                                          ││ passing                  │
+│                                          ││ tmux:      moomux-fe…    │
+│                                          ││ worktree:  …ture-auth    │
+│                                          ││ created:   just now      │
+│                                          ││ prompt:    add           │
+│                                          ││            JWT-based     │
+│                                          ││            auth to…      │
+└──────────────────────────────────────────┘└──────────────────────────┘
+                                                                        
+ ? help                                                            vdev 
 === 100x32 ===
    ^__^                                                                                             
    (--)\_                                                                                           

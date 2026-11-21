@@ -673,3 +673,34 @@ func TestPasteTextCleansBufferAfterPasteFailure(t *testing.T) {
 		t.Fatalf("prompt buffers left behind: %v", r.buffers)
 	}
 }
+
+// TestExecRunnerPassesDashU puts a fake tmux on PATH that records its argv.
+// Every read goes through execRunner, and a core with no UTF-8 locale
+// (launchd, brew services) gets sanitised output, such as non-ASCII pane
+// paths as "_", from any call that omits -u.
+func TestExecRunnerPassesDashU(t *testing.T) {
+	fakeDir := t.TempDir()
+	argvFile := filepath.Join(fakeDir, "argv")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argvFile + "\n"
+	if err := os.WriteFile(filepath.Join(fakeDir, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, args := range [][]string{
+		{"list-panes", "-a"},
+		{"display-message", "-p", "#{pane_current_path}"},
+		{"capture-pane", "-p", "-t", "%1"},
+	} {
+		if _, err := (execRunner{}).Run(args...); err != nil {
+			t.Fatal(err)
+		}
+		b, err := os.ReadFile(argvFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := strings.Join(append([]string{"-u"}, args...), "\n") + "\n"
+		if string(b) != want {
+			t.Errorf("tmux argv = %q, want %q", b, want)
+		}
+	}
+}

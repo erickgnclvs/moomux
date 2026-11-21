@@ -19,6 +19,56 @@
 └──────────────────────────────────────┘
                                         
  ? help                            vdev 
+=== 60x24 ===
+   ^__^                                                     
+ _/(--)  chewing the cud, nothing to see                    
+  \(__)                                                     
+┌──────────────────────────────────────────────────────────┐
+│ demo · SESSIONS                                          │
+│  ⬤  session-00                                           │
+│  ⬤  session-01                                           │
+│                            ⌄                             │
+│ ──────────────────────────────────────────────────────── │
+│ project:   demo                                          │
+│ status:    ⬤  in the barn                                │
+│ name:      session-00                                    │
+│ agent:     claude                                        │
+│ tmux:      moomux-session-00                             │
+│                                                          │
+│  ________________________________________                │
+│ < chewing the cud, nothing to see        >               │
+│  ----------------------------------------                │
+│         \   ^__^                                         │
+│          \  (--)\_______                                 │
+│             (__)\       )\/\                             │
+└──────────────────────────────────────────────────────────┘
+                                                            
+ ? help                                                vdev 
+=== 72x24 ===
+   ^__^                                                                 
+   (--)\_                                                               
+   (__)\ )                                                              
+┌──────────────────────────────────────────┐┌──────────────────────────┐
+│ SESSIONS                                 ││                          │
+│                                          ││                          │
+│  ⬤  session-00                           ││ project:   demo          │
+│  ⬤  session-01                           ││ status:    ⬤  in the     │
+│  ⬤  session-02                           ││ barn                     │
+│  ⬤  session-03                           ││ name:      session-00    │
+│  ⬤  session-04                           ││ agent:     claude        │
+│  ⬤  session-05                           ││ tmux:      moomux-se…    │
+│  ⬤  session-06                           ││ worktree:  …ession-00    │
+│  ⬤  session-07                           ││ created:   just now      │
+│  ⬤  session-08                           ││                          │
+│  ⬤  session-09                           ││  ______________________  │
+│  ⬤  session-10                           ││ / chewing the cud,     \ │
+│  ⬤  session-11                           ││ \ nothing to see       / │
+│  ⬤  session-12                           ││  ----------------------  │
+│  ⬤  session-13                           ││         \   ^__^         │
+│                    ⌄                     ││          \  (--)\_______ │
+└──────────────────────────────────────────┘└──────────────────────────┘
+                                                                        
+ ? help                                                            vdev 
 === 100x32 ===
    ^__^                                                                                             
    (--)\_                                                                                           

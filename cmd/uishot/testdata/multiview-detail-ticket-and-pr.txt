@@ -19,6 +19,56 @@
 └──────────────────────────────────────┘
                                         
  ? help                            vdev 
+=== 60x24 ===
+   ^__^                                                     
+ _/(--)  mootering off for now                              
+  \(__)                                                     
+┌──────────────────────────────────────────────────────────┐
+│ moomux · SESSIONS                                        │
+│  ⬤  compact-detail-section                        🎫 🔀  │
+│                                                          │
+│                                                          │
+│ ──────────────────────────────────────────────────────── │
+│ project:   moomux                                        │
+│ status:    ⬤  in the barn                                │
+│ name:      compact-detail-section                        │
+│ agent:     claude                                        │
+│ ticket:    https://tracker.example/TICK-42               │
+│ pr:        https://github.com/example/repo/pull/5478     │
+│ pr status: open, CI passing                              │
+│ tmux:      moomux-moomux-one                             │
+│                                                          │
+│  ________________________________________                │
+│ < mootering off for now                  >               │
+│  ----------------------------------------                │
+└──────────────────────────────────────────────────────────┘
+                                                            
+ ? help                                                vdev 
+=== 72x24 ===
+   ^__^                                                                 
+   (--)\_                                                               
+   (__)\ )                                                              
+┌──────────────────────────────────┐┌──────────────────────────────────┐
+│ 🦊 dev_setup                     ││ 🐄 moomux                        │
+│                                  ││                                  │
+│  ⬤  show-ports                   ││  ⬤  compact-detail-secti… 🎫 🔀  │
+│                                  ││                                  │
+│ ──────────────────────────────── ││ ──────────────────────────────── │
+│ project:   dev_setup             ││ project:   moomux                │
+│ status:    ⬤  in the barn        ││ status:    ⬤  in the barn        │
+│ name:      show-ports            ││ name:      compact-detail-se…    │
+│ agent:     claude                ││ agent:     claude                │
+│ tmux:      moomux-dev-one        ││ ticket:    …r.example/TICK-42    │
+│ worktree:  /tmp/dev_setup/one    ││ pr:        …le/repo/pull/5478    │
+│ created:   just now              ││ pr status: open, CI passing      │
+│                                  ││ tmux:      moomux-moomux-one     │
+│  ______________________________  ││ worktree:  /tmp/moomux/one       │
+│ < out to pasture               > ││ created:   just now              │
+│  ------------------------------  ││                                  │
+│         \   ^__^                 ││  ______________________________  │
+└──────────────────────────────────┘└──────────────────────────────────┘
+                                                                        
+ ? help                                                            vdev 
 === 100x32 ===
    ^__^                                                                                             
    (--)\_                                                                                           

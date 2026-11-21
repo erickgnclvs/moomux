@@ -19,6 +19,56 @@
 │  enter/esc close                     │
 │                                      │
 ╰──────────────────────────────────────╯
+=== 60x24 ===
+╭──────────────────────────────────────────────────────────╮
+│                                                          │
+│  what's new                                              │
+│                                                          │
+│  v0.6.66                                                 │
+│  New                                                     │
+│    • Show what's new after an upgrade, in the TUI and    │
+│      the Mac app                                         │
+│                                                          │
+│  Fixed                                                   │
+│    • Keep a parked session's cow from reading as         │
+│      working                                             │
+│    • Stop the footer clipping mid-word on narrow         │
+│      terminals                                           │
+│                                                          │
+│                                                          │
+│  v0.6.65                                                 │
+│  Other changes                                           │
+│    • Serve update_available on the Watch snapshot        │
+│                                                          │
+│  ↑↓/jk/pg scroll  enter/esc close                        │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+                                                            
+=== 72x24 ===
+                                                                        
+                                                                        
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│  what's new                                                          │
+│                                                                      │
+│  v0.6.66                                                             │
+│  New                                                                 │
+│    • Show what's new after an upgrade, in the TUI and the Mac app    │
+│                                                                      │
+│  Fixed                                                               │
+│    • Keep a parked session's cow from reading as working             │
+│    • Stop the footer clipping mid-word on narrow terminals           │
+│                                                                      │
+│                                                                      │
+│  v0.6.65                                                             │
+│  Other changes                                                       │
+│    • Serve update_available on the Watch snapshot                    │
+│                                                                      │
+│  ↑↓/jk/pg scroll  enter/esc close                                    │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
+                                                                        
+                                                                        
 === 100x32 ===
                                                                                                     
                                                                                                     
