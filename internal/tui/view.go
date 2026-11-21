@@ -147,11 +147,15 @@ func (m *Model) projectPickerFooter() string {
 	// documented exhaustively in the ? help overlay.
 	full := "n add  e edit  d delete  shift+↑↓ reorder  enter open  esc cancel"
 	medium := "esc cancel  enter open  n add  e edit  d delete"
-	short := "esc cancel  enter open"
+	tight := "esc cancel  enter open  n e d"
+	short := "esc  enter  n e d"
 	avail := m.overlayWidth(formHintWidth)
 	controls := full
 	if lipgloss.Width(controls) > avail {
 		controls = medium
+	}
+	if lipgloss.Width(controls) > avail {
+		controls = tight
 	}
 	if lipgloss.Width(controls) > avail {
 		controls = short
@@ -287,6 +291,16 @@ func (m *Model) themePickerFooter() string {
 func (m *Model) renderOverlay(content, footer string, focusedLine int) string {
 	content = m.compactOverlayContent(content)
 
+	// Every overlay shows flash feedback: a flash set while one is open (a
+	// create that failed under a second form, say) would otherwise never
+	// reach the screen.
+	if line := m.flashLine(m.overlayWidth(formHintWidth)); line != "" {
+		if footer != "" {
+			line += "\n" + footer
+		}
+		footer = line
+	}
+
 	maxWidth := m.overlayWidth(formHintWidth)
 	contentWidth := lipgloss.Width(content)
 	if fw := lipgloss.Width(footer); fw > contentWidth {
@@ -421,9 +435,6 @@ func (m *Model) View() string {
 	case ModeProjectPicker:
 		content := m.compactOverlayContent(m.renderProjectPicker())
 		footer := m.projectPickerFooter()
-		if line := m.flashLine(m.overlayWidth(formHintWidth)); line != "" {
-			footer = line + "\n" + footer
-		}
 		return m.renderOverlay(content, footer, m.focusedOverlayLine(content))
 	case ModeThemePicker:
 		content := m.compactOverlayContent(m.renderThemePicker())
@@ -431,16 +442,10 @@ func (m *Model) View() string {
 	case ModeModelFilter:
 		content := m.compactOverlayContent(m.renderModelFilter())
 		footer := m.modelFilterFooter()
-		if line := m.flashLine(m.overlayWidth(formHintWidth)); line != "" {
-			footer = line + "\n" + footer
-		}
 		return m.renderOverlay(content, footer, m.focusedOverlayLine(content))
 	case ModeSettings:
 		content := m.compactOverlayContent(m.renderSettings())
 		footer := m.settingsFooter()
-		if line := m.flashLine(m.overlayWidth(formHintWidth)); line != "" {
-			footer = line + "\n" + footer
-		}
 		return m.renderOverlay(content, footer, m.focusedOverlayLine(content))
 	case ModeSearch:
 		content := m.compactOverlayContent(m.renderSearch())

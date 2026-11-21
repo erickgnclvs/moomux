@@ -1,6 +1,5 @@
 === 40x20 ===
                                         
-                                        
 ╭──────────────────────────────────────╮
 │                                      │
 │  Delete session?                     │
@@ -11,10 +10,11 @@
 │                                      │
 │  ⚠ 3 files changed, 2 commits unpu…  │
 │                                      │
-│  This kills the tmux session and re  │
+│  This kills the tmux session and     │
+│  removes the worktree.               │
 │  The branch is kept.                 │
 │                                      │
-│  y to confirm   n/esc to cancel      │
+│  y I understand   n/esc cancel       │
 │                                      │
 ╰──────────────────────────────────────╯
                                         

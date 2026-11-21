@@ -37,7 +37,13 @@ func (m *Model) currentFolders() []string {
 func (m *Model) updateFolderForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Cancel):
-		m.mode = m.sessionDialogReturn
+		// Rename and create open from the Folders overlay: back out to it,
+		// not past it to the list.
+		if m.folderFormKind == "assign" {
+			m.mode = m.sessionDialogReturn
+		} else {
+			m.mode = ModeFolders
+		}
 		return m, nil
 	case key.Matches(msg, m.keys.Enter):
 		name := strings.TrimSpace(m.folderForm.input.Value())
@@ -235,7 +241,7 @@ func (m *Model) renderFolders() string {
 		if avail < 4 {
 			avail = 4
 		}
-		row := prefix + fmt.Sprintf("%-*s", avail, truncate(name, avail)) + " " + detail
+		row := prefix + padTrunc(name, avail) + " " + detail
 		if selected {
 			row = listRowSelected.Render(row)
 		} else {
@@ -250,10 +256,14 @@ func (m *Model) renderFolders() string {
 // foldersFooter mirrors projectPickerFooter's width-tiered approach.
 func (m *Model) foldersFooter() string {
 	full := "↑↓ select  enter collapse/expand  n new  e rename  d delete  esc close"
-	short := "esc close  enter toggle"
+	medium := "esc close  enter toggle  n new  e rename  d del"
+	short := "esc  enter  n e d"
 	controls := full
-	if lipgloss.Width(controls) > m.overlayWidth(formHintWidth) {
-		controls = short
+	for _, c := range []string{medium, short} {
+		if lipgloss.Width(controls) <= m.overlayWidth(formHintWidth) {
+			break
+		}
+		controls = c
 	}
 	return muteStyle.Render(controls)
 }

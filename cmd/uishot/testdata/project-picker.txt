@@ -11,7 +11,7 @@
 │   ▸ demo                       2/1   │
 │     spare                            │
 │                                      │
-│  esc cancel  enter open              │
+│  esc cancel  enter open  n e d       │
 │                                      │
 ╰──────────────────────────────────────╯
                                         

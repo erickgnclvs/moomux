@@ -12,7 +12,7 @@
                 ||     ||
 ```
 
-A TUI for managing [Claude Code](https://claude.com/claude-code) agent sessions across git worktrees. Creates a worktree + branch, starts a tmux session, launches the session's agent (`claude`, `codex`, `opencode`, or `antigravity`), and opens a terminal tab — all in one keypress. Single Go binary, no daemon.
+A TUI for managing [Claude Code](https://claude.com/claude-code) agent sessions across git worktrees. Creates a worktree + branch, starts a tmux session, launches the session's agent (`claude`, `codex`, `opencode`, or `antigravity`), and opens a terminal tab — all in one keypress. Single Go binary. No daemon is needed: the TUI runs the core in-process, or attaches to a `moomux serve` core if one is running (see [Background core](#background-core)).
 
 ## Install
 
@@ -28,7 +28,7 @@ go install github.com/erickgnclvs/moomux@latest
 git clone https://github.com/erickgnclvs/moomux && cd moomux && make install
 ```
 
-Requires `tmux`, `git`, and `claude` on `$PATH`.
+Requires `tmux` and `git` on `$PATH`. Each session's agent CLI (`claude`, `codex`, `opencode`, or `antigravity`) must also be on `$PATH`, but only for the agents you use.
 
 **Agent usage (macOS)**: Homebrew installs [agent-usage](https://github.com/afitzgerald/agent-usage) with moomux, and moomux starts its service on first run. It supplies Claude and Codex usage and the Claude and Codex models and thinking levels in the new-session form; without it, the only choice for either is `default`. See [Agent usage](#agent-usage). With any other install method, install it yourself:
 
@@ -204,7 +204,21 @@ moomux
 
 Keys: `?` help (full command list) · `n` new · `enter` open · `x` park · `d` delete · `a` archive/restore · `A` toggle archived view · `t` tag · `e` edit session · `D` diff tool · `shift+↑`/`shift+↓` reorder · `tab` switch project · `q` quit
 
-Press `?` at any time on the list screen to open a command palette with every keybinding grouped by category, so you don't have to memorize the footer.
+Press `?` at any time on the list screen to open a help overlay with every keybinding grouped by category, so you don't have to memorize the footer.
+
+More keys, all listed in `?`:
+
+| Key | What it does |
+|---|---|
+| `f` | search sessions by name, across all projects |
+| `p` | pin a session to the top, or unpin it |
+| `space` | mark a session for deletion; `d` then deletes every marked session. `M` marks all sessions whose PR is merged or closed; `esc` clears the marks |
+| `g` / `z` / `G` | file a session into a folder / collapse its folder / manage folders (see [Global folders](docs/global-folders.md)) |
+| `/` | open the project picker. In it, `n` adds a project, `e` edits one, `d` removes one |
+| `s` | settings |
+| `u` | upgrade moomux, when the header says an update is available (Homebrew installs only) |
+
+A session can be **protected** in the edit form (`e`). A protected session cannot be deleted, or marked for deletion, until you turn that off again.
 
 For Codex versions that report terminal status, moomux shows `needs-input` when the agent pane displays a blocking prompt. Automatic approval reviews and ordinary completed replies stay quiet. Open an existing session through moomux once after upgrading to attach the status reader. If the pane already has a tmux output pipe, moomux leaves it in place and uses the existing Codex approval hooks as a fallback.
 
@@ -244,12 +258,77 @@ moomux shows Claude and Codex quota in the TUI header or footer. Codex quota req
 
 ```bash
 moomux spawn -project <project> [-name <name>] [-agent claude|codex|opencode|antigravity] \
+  [-model <model>] [-thinking <level>] [-dangerous] \
   [-branch <existing-branch>] [-ticket <url>] [-folder <folder>] [-prompt "<initial task>"]
+
+moomux spawn -list    # print the configured project names
 ```
+
+`-dangerous` starts the agent with its permission-skipping flag (`--dangerously-skip-permissions` for Claude and Antigravity, `--yolo` for Codex). Use it only in a repository you trust.
 
 `-folder` files the new session under that folder, creating it if it doesn't exist yet — handy for keeping a batch of delegated sessions together. It's fire-and-forget: prints the new tmux session's name and exits immediately, without waiting for the agent or reporting anything back. Run `moomux spawn -h` for the full flag list, or `moomux --help` for top-level usage.
 
 For a feature that spans several repositories — one spawned session per repo, all of them having to agree with each other — pass `-peers <other session names> -contract <path to the shared plan>` and spawn appends the coordination rules to the prompt. See [Coordinating sessions across several repositories](docs/multi-repo-sessions.md) for the rules and why.
+
+## Other commands
+
+| Command | What it does |
+|---|---|
+| `moomux tag [-ticket <url>] [-pr <url>]` | Tag the session whose worktree you are in. With no flags it prints the current ticket and PR. Backs `/tag`. |
+| `moomux park` | Stop tmux and close the terminal tab for the current session, keeping its worktree and branch. Same as `x`. Backs `/kill`. |
+| `moomux reseed` | Re-run the worktree-create [userscripts](#userscripts) for the current session with `MOOMUX_FORCE=1`. Backs `/reseed`. |
+| `moomux serve` | Run the core headless on a unix socket. See [Background core](#background-core). |
+| `moomux ui -socket <path>` | Run the TUI against a `moomux serve` on a specific socket. |
+| `moomux pair` | Pair the iPhone app. See [Pairing an iPhone](#pairing-an-iphone). |
+
+Run `moomux --help` for the same list, and `moomux <command> -h` for a command's flags.
+
+## Background core
+
+`moomux serve` runs the orchestration core without a UI, on a unix socket (`~/.local/share/moomux/moomux.sock`). While one is running, a plain `moomux` attaches to it instead of starting a second core, so the TUI and the Mac or iPhone apps all show the same sessions. The Homebrew formula declares it as a service:
+
+```bash
+brew services start moomux     # start now, and at login
+brew services restart moomux   # after an upgrade
+brew services stop moomux
+```
+
+The socket is mode 0600, so only your user can use it. See [SECURITY.md](SECURITY.md) for the trust model, and [the wire protocol](docs/wire-protocol.md) for what crosses the socket.
+
+## Upgrade
+
+```bash
+brew update && brew upgrade moomux                 # Homebrew
+go install github.com/erickgnclvs/moomux@latest    # Go
+```
+
+On a Homebrew install, press `u` in the TUI when the header shows an update. It runs the two brew commands above and restarts the `brew services` core if one is running. Agent sessions keep running. If you run `moomux serve` yourself, restart it after an upgrade.
+
+## Uninstall
+
+```bash
+brew services stop moomux              # if you started the service
+brew uninstall moomux                  # or delete the binary: rm "$(command -v moomux)"
+```
+
+moomux leaves its data in place. To remove it too, delete these after you have deleted or parked every session you care about:
+
+- `~/.config/moomux/`: settings, session list, userscripts
+- `~/.local/share/moomux/`: log, socket, and the default worktree root. **Worktrees live here**, so check for unmerged work first.
+
+moomux also added things to other tools. Remove them by hand if you want them gone: the `moomux hook ...` entries in `~/.claude/settings.json` (and `~/.codex/hooks.json`), the `kill`, `tag`, `spawn` and `reseed` commands under `~/.claude/commands/`, `~/.agents/skills/`, `~/.gemini/config/skills/` and `~/.codex/prompts/`, and the moomux block in `~/.tmux.conf`.
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| `missing required dependencies: tmux, git` | Install them, as the message says. |
+| A session opens in a new window, not a tab, or only prints `tmux attach -t …` | moomux could not detect a supported terminal. See the terminal notes under [Install](#install). Attach by hand with the command it prints. |
+| No Claude or Codex usage, or only a `default` model | agent-usage is not running. Open settings (`s`), read the "Agent usage" row, and see [Agent usage](#agent-usage). |
+| The status icons never change | Restart moomux and reopen the session so it can reinstall the agent hooks. For Codex, see the note under [Run](#run). |
+| Clicking a link copies it instead of opening it | You are on SSH, or you pressed `R`. See [Clicking ticket/PR links](#clicking-ticketpr-links). |
+| `moomux pair` says no core is running | `brew services start moomux`, or run `moomux serve`. |
+| Something else | Read `~/.local/share/moomux/moomux.log`. Remove secrets and prompts before you paste any of it into an issue. |
 
 ## Userscripts
 

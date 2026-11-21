@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -35,7 +34,7 @@ func (m *Model) renderThemePicker() string {
 		if nameWidth < 4 {
 			nameWidth = 4
 		}
-		row := prefix + fmt.Sprintf("%-*s", nameWidth, truncate(name, nameWidth))
+		row := prefix + padTrunc(name, nameWidth)
 		if selected {
 			row = listRowSelected.Render(row)
 		} else {

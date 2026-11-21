@@ -3,9 +3,9 @@
  _/(--)  on a moo-ratorium              
   \(__)                                 
 ┌──────────────────────────────────────┐
+│ demo · SESSIONS¹                     │
 │  ✗  feature-auth              📌 🎫  │
 │  ✗  bugfix-timeout               🔀  │
-│                                      │
 │                                      │
 │                                      │
 │                                      │

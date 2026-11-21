@@ -3,13 +3,13 @@
  _/(--)  out to pasture                 
   \(__)                                 
 ┌──────────────────────────────────────┐
+│ demo · SESSIONS¹                     │
 │  ⬤  feature-auth              📌 🎫  │
 │ ▸ legacy (1)                         │
 │  ⬤  bugfix-timeout               🔀  │
 │ ▾ auth (2)                           │
 │    ⬤  auth-refresh                   │
 │    ⬤  auth-logout                    │
-│                                      │
 │                                      │
 │                                      │
 │                                      │

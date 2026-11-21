@@ -3,11 +3,11 @@
  _/(**)  no time to graze               
   \(__)                                 
 ┌──────────────────────────────────────┐
+│ demo · SESSIONS                      │
 │  ⬤  feature-auth              📌 🎫  │
 │  ⬤  bugfix-timeout           🔀 ± ↑  │
 │  ⬤  review-copy                      │
 │  ⬤  stale-idea                       │
-│                                      │
 │                                      │
 │                                      │
 │                                      │
