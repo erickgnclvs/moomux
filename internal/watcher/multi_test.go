@@ -109,3 +109,35 @@ func TestMultiWatcherEmpty(t *testing.T) {
 	go m.Run(ctx, ch)
 	<-ctx.Done()
 }
+
+// A permanently unparsable file sets Err on every tick. That must not pin a
+// path the watcher stopped reporting; only an Incomplete snapshot carries
+// the previous answer forward.
+func TestMultiWatcherCarriesOverOnlyWhenIncomplete(t *testing.T) {
+	feed := make(chanWatcher)
+	m := &MultiWatcher{Watchers: []Watcher{feed}}
+	out := make(chan Snapshot)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go m.Run(ctx, out)
+
+	next := func(s Snapshot) Snapshot {
+		t.Helper()
+		feed <- s
+		select {
+		case got := <-out:
+			return got
+		case <-ctx.Done():
+			t.Fatal("timed out")
+			return Snapshot{}
+		}
+	}
+	next(Snapshot{States: map[string]State{"/wt": Working}})
+	if got := next(Snapshot{States: map[string]State{}, Err: context.Canceled}); len(got.States) != 0 {
+		t.Fatalf("a parse-style error pinned %v", got.States)
+	}
+	next(Snapshot{States: map[string]State{"/wt": Working}})
+	if got := next(Snapshot{States: map[string]State{}, Err: context.Canceled, Incomplete: true}); got.States["/wt"] != Working {
+		t.Fatalf("an incomplete snapshot dropped %v", got.States)
+	}
+}

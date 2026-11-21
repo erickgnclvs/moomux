@@ -157,3 +157,22 @@ func TestScanCachesParseErrors(t *testing.T) {
 		t.Error("second scan dropped the parse error for an unchanged bad file")
 	}
 }
+
+// A half-written file keeps its session's last good state, so the error
+// doesn't blind the scan to that worktree.
+func TestScanKeepsLastGoodStateAcrossParseError(t *testing.T) {
+	dir := t.TempDir()
+	t0 := time.Now()
+	write(t, dir, "a.json", busy("/wt/a"), t0)
+
+	var d dirScanner
+	d.scan(dir, "")
+	write(t, dir, "a.json", "{half", t0.Add(time.Second))
+	states, _, parseErr := d.scan(dir, "")
+	if parseErr == nil {
+		t.Fatal("want the parse error reported")
+	}
+	if states["/wt/a"] != Working {
+		t.Fatalf("state = %v, want Working kept from the last good parse", states["/wt/a"])
+	}
+}

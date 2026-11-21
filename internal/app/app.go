@@ -2255,6 +2255,13 @@ func (a *App) EnsureTmux(id string) (string, error) {
 			has = false
 		}
 	}
+	// A session that was already live keeps its window name: the watcher
+	// owns the status glyph, and renaming here wiped it until the next state
+	// change.
+	titleName := a.titleName(s)
+	if has {
+		titleName = ""
+	}
 	if !has {
 		if want := TmuxSessionName(s.ID, s.Name); s.TmuxSession != want {
 			// Lazy migration to the collision-free naming scheme: rename
@@ -2289,7 +2296,7 @@ func (a *App) EnsureTmux(id string) (string, error) {
 	if has && s.AgentName() == "codex" {
 		a.Tmux.ObserveCodex(s.TmuxSession)
 	}
-	a.Tmux.ConfigureTitleTracking(s.TmuxSession, a.titleName(s))
+	a.Tmux.ConfigureTitleTracking(s.TmuxSession, titleName)
 	now := time.Now()
 	if _, err := a.Store.Update(id, func(r *session.Session) { r.LastOpened = now }); err != nil {
 		slog.Error("store last-opened failed", "id", id, "err", err)
@@ -2876,6 +2883,7 @@ func (a *App) PRStatus(id string) (prstatus.Info, bool) {
 	if s.PR == "" {
 		dir = s.WorktreePath
 	}
+	tagged := s.PR
 	pr, err := a.PR.Fetch(dir, s.PR)
 	if err != nil {
 		return prstatus.Info{}, false
@@ -2885,6 +2893,14 @@ func (a *App) PRStatus(id string) (prstatus.Info, bool) {
 	// an OPEN PR is worth adopting; a tagged PR (s.PR != "") still reports
 	// MERGED/CLOSED, which is the point of tagging it.
 	if s.PR == "" && pr.State != "OPEN" {
+		return prstatus.Info{}, false
+	}
+	// The gh call above can take seconds. Decide from the session as it is
+	// now, not as it was before: a `moomux tag` landed meanwhile must not be
+	// overwritten with the stale copy, and a PR tagged meanwhile means this
+	// answer is for the wrong one.
+	s, exists = a.Store.Get(id)
+	if !exists || s.PR != tagged {
 		return prstatus.Info{}, false
 	}
 	// Only ever fill a blank field: a value someone set by hand (or a

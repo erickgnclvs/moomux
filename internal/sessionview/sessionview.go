@@ -19,7 +19,9 @@ package sessionview
 import (
 	"context"
 	"hash/fnv"
+	"maps"
 	"math"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -226,7 +228,12 @@ type Watcher struct {
 	prompts map[string]promptEntry   // by session id
 	titles  map[string]watcher.State // last state pushed as each session's tmux window title
 	pending map[fetchKey]bool        // fetches in flight, so a slow one isn't re-issued every tick
-	lastErr string
+	// resolved caches each worktree path's symlink-resolved form: agents
+	// record the physical cwd, so a worktree reached through a symlink would
+	// otherwise never match its agent's path.
+	resolved     map[string]string
+	aliveRunning bool // a liveness poll is in flight; owned by the run loop
+	lastErr      string
 	// sessions is the list the last build() read, reused by schedule() so
 	// one pass costs one Sessions() call rather than two.
 	sessions []session.Session
@@ -243,6 +250,15 @@ type prEntry struct {
 	info      prstatus.Info
 	ok        bool
 	checkedAt time.Time
+	// url is the PR the entry was fetched for, so a session re-pointed at a
+	// new PR is not treated as finished because the old one merged.
+	url string
+}
+
+// done reports whether the PR is merged or closed: its status can no longer
+// change, so polling it only costs two gh calls every few minutes.
+func (p prEntry) done(url string) bool {
+	return p.ok && p.url == url && (p.info.State == "MERGED" || p.info.State == "CLOSED")
 }
 
 type promptEntry struct {
@@ -291,10 +307,10 @@ func (w *Watcher) Nudge() {
 
 // Run streams snapshots until ctx is cancelled.
 //
-// Raw snapshots are merged into a cumulative map rather than replacing it:
-// watcher.MultiWatcher emits one Snapshot per sub-watcher, each covering
-// only its own agent's paths, so replacing wholesale would wipe every other
-// agent's entries on every tick.
+// A complete raw snapshot replaces the state map: watcher.MultiWatcher
+// emits the full merge of every sub-watcher, so a path that vanished (an
+// agent that exited mid-turn) must vanish here too. An Incomplete snapshot (a
+// source that could not be read) is merged into the previous map instead.
 func (w *Watcher) Run(ctx context.Context, out chan<- Snapshot) {
 	w.states = map[string]watcher.State{}
 	w.live = nil
@@ -314,6 +330,7 @@ func (w *Watcher) Run(ctx context.Context, out chan<- Snapshot) {
 		go w.Raw.Run(ctx, raw)
 	}
 	results := make(chan result, 32)
+	alive := make(chan map[string]watcher.State, 1)
 	w.titleCh = make(chan map[string]watcher.State, 8)
 	go w.pushTitles(ctx)
 	latest := make(chan string, 1)
@@ -342,6 +359,12 @@ func (w *Watcher) Run(ctx context.Context, out chan<- Snapshot) {
 		case <-ctx.Done():
 			return
 		case snap := <-raw:
+			prevStates, prevErr := w.states, w.lastErr
+			if snap.Incomplete {
+				w.states = maps.Clone(prevStates)
+			} else {
+				w.states = map[string]watcher.State{}
+			}
 			for path, st := range snap.States {
 				w.states[path] = st
 			}
@@ -349,12 +372,22 @@ func (w *Watcher) Run(ctx context.Context, out chan<- Snapshot) {
 			if snap.Err != nil {
 				w.lastErr = snap.Err.Error()
 			}
+			// The fsevents watcher re-sends identical snapshots about twice
+			// a second; each emit is a store reload, a config clone and a
+			// JSON snapshot per client, so skip the ones that say nothing new.
+			if w.lastErr == prevErr && maps.Equal(w.states, prevStates) {
+				continue
+			}
 			w.emit(ctx, out)
 		case <-tick.C:
-			w.refreshAlive()
-			w.emit(ctx, out)
+			w.pollAlive(ctx, alive)
 		case <-nudge:
-			w.refreshAlive()
+			w.pollAlive(ctx, alive)
+		case live := <-alive:
+			w.aliveRunning = false
+			if live != nil {
+				w.live = live
+			}
 			w.emit(ctx, out)
 		case w.latest = <-latest:
 			w.emit(ctx, out)
@@ -433,13 +466,37 @@ func (w *Watcher) apply(r result) {
 		}
 		w.git[r.key.id] = r.git
 	case fetchPR:
-		if cur, ok := w.pr[r.key.id]; ok && !r.pr.checkedAt.After(cur.checkedAt) {
+		cur, ok := w.pr[r.key.id]
+		if ok && !r.pr.checkedAt.After(cur.checkedAt) {
 			return
+		}
+		// A transient gh failure must not blank a badge that was showing:
+		// keep the last good answer for the same PR and retry on schedule.
+		if ok && cur.ok && !r.pr.ok && cur.url == r.pr.url {
+			cur.checkedAt = r.pr.checkedAt
+			r.pr = cur
 		}
 		w.pr[r.key.id] = r.pr
 	case fetchPrompt:
 		w.prompts[r.key.id] = r.prompt
 	}
+}
+
+// pollAlive asks tmux for liveness off the run loop: a hung tmux server
+// takes up to its 10s timeout per call, and the loop must keep serving raw
+// snapshots and fetch results meanwhile. One poll runs at a time; a request
+// made while one is in flight is covered by it.
+func (w *Watcher) pollAlive(ctx context.Context, out chan<- map[string]watcher.State) {
+	if w.Core == nil || w.aliveRunning {
+		return
+	}
+	w.aliveRunning = true
+	go func() {
+		select {
+		case out <- w.Core.TmuxStates():
+		case <-ctx.Done():
+		}
+	}()
 }
 
 func (w *Watcher) refreshAlive() {
@@ -464,7 +521,27 @@ func (w *Watcher) stateOf(s session.Session) watcher.State {
 	if st != watcher.Unknown {
 		return st
 	}
-	return w.states[s.WorktreePath]
+	if st, ok := w.states[s.WorktreePath]; ok {
+		return st
+	}
+	return w.states[w.resolve(s.WorktreePath)]
+}
+
+// resolve returns path with symlinks evaluated, cached per path. A failure
+// (worktree not on disk yet) is not cached, so it is retried next time.
+func (w *Watcher) resolve(path string) string {
+	if r, ok := w.resolved[path]; ok {
+		return r
+	}
+	r, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return path
+	}
+	if w.resolved == nil {
+		w.resolved = map[string]string{}
+	}
+	w.resolved[path] = r
+	return r
 }
 
 // emit sends a snapshot and pushes any tmux window titles that went stale
@@ -601,6 +678,12 @@ func (w *Watcher) prune(sessions []session.Session, live map[string]bool) {
 	livePaths := make(map[string]bool, len(sessions))
 	for _, s := range sessions {
 		livePaths[s.WorktreePath] = true
+		livePaths[w.resolve(s.WorktreePath)] = true
+	}
+	for p := range w.resolved {
+		if !livePaths[p] {
+			delete(w.resolved, p)
+		}
 	}
 	for path := range w.states {
 		if !livePaths[path] {
@@ -657,11 +740,12 @@ func (w *Watcher) schedule(ctx context.Context, results chan<- result) {
 			})
 		}
 		if w.prDue(s) {
+			url := s.PR
 			w.start(ctx, results, fetchKey{fetchPR, s.ID}, func() result {
 				info, ok := w.Core.PRStatus(s.ID)
 				return result{
 					key: fetchKey{fetchPR, s.ID},
-					pr:  prEntry{info: info, ok: ok, checkedAt: time.Now()},
+					pr:  prEntry{info: info, ok: ok, checkedAt: time.Now(), url: url},
 				}
 			})
 		}
@@ -737,6 +821,9 @@ func (w *Watcher) prDue(s session.Session) bool {
 		stale = prDiscoverAfter
 	}
 	cur, ok := w.pr[s.ID]
+	if cur.done(s.PR) {
+		return false
+	}
 	return !ok || time.Since(cur.checkedAt) > staleAfter(s.ID, stale)
 }
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -75,10 +76,17 @@ func (s State) String() string {
 // unparsable file). When Err is set, States may be incomplete for affected
 // paths — callers should treat this as "unknown, not necessarily unchanged"
 // rather than silently trusting the last-known state forever.
+//
+// Incomplete is the narrower claim: States is missing paths it would
+// normally hold (a directory or database that could not be read), so a
+// consumer should carry its previous answer forward. An unparsable file is
+// not Incomplete: the scanner keeps that file's last good state itself, and
+// a permanent parse error must not pin every vanished path forever.
 type Snapshot struct {
-	States   map[string]State
-	PollTime time.Time
-	Err      error
+	States     map[string]State
+	PollTime   time.Time
+	Err        error
+	Incomplete bool
 }
 
 // Watcher is implemented by every agent-specific watcher.
@@ -100,14 +108,20 @@ type DirWatcher struct {
 	Transcripts string
 
 	scanner dirScanner
+	// tickMu keeps scan-then-send atomic: the fsevents path ticks from timer
+	// goroutines too, and an older scan could otherwise land after a newer one.
+	tickMu sync.Mutex
 }
 
 func (w *DirWatcher) tick(ctx context.Context, out chan<- Snapshot) {
+	w.tickMu.Lock()
+	defer w.tickMu.Unlock()
 	snap := Snapshot{PollTime: time.Now()}
 	states, readErr, parseErr := w.scanner.scan(w.Dir, w.Transcripts)
 	if readErr != nil {
 		snap.States = map[string]State{}
 		snap.Err = fmt.Errorf("read %s: %w", w.Dir, readErr)
+		snap.Incomplete = true
 		send(ctx, out, snap)
 		return
 	}

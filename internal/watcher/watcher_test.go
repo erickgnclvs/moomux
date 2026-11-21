@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -229,4 +230,28 @@ func TestStateJSONRoundTrip(t *testing.T) {
 	if err := json.Unmarshal([]byte(`"bogus"`), &got); err == nil {
 		t.Error("unmarshaling an unknown state name succeeded; want an error")
 	}
+}
+
+// Concurrent ticks (the fsevents path fires them from timer goroutines) must
+// reach the channel in scan order, or an older scan lands last and wins.
+func TestDirWatcherTicksAreOrdered(t *testing.T) {
+	dir := t.TempDir()
+	w := &DirWatcher{Dir: dir}
+	out := make(chan Snapshot)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var wg sync.WaitGroup
+	for range 200 {
+		wg.Add(1)
+		go func() { defer wg.Done(); w.tick(ctx, out) }()
+	}
+	var last time.Time
+	for range 200 {
+		snap := <-out
+		if snap.PollTime.Before(last) {
+			t.Fatalf("snapshot from %v delivered after one from %v", snap.PollTime, last)
+		}
+		last = snap.PollTime
+	}
+	wg.Wait()
 }

@@ -115,6 +115,24 @@ func TestExecRunnerDirIsStable(t *testing.T) {
 	}
 }
 
+// TestExecRunnerPassesUTF8Flag: every tmux read needs -u, or a core without a
+// UTF-8 locale gets sanitised output.
+func TestExecRunnerPassesUTF8Flag(t *testing.T) {
+	fakeDir := t.TempDir()
+	fake := filepath.Join(fakeDir, "tmux")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, err := (execRunner{}).Run("list-sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out); got != "-u list-sessions" {
+		t.Fatalf("tmux args = %q, want -u first", got)
+	}
+}
+
 func TestNewSession(t *testing.T) {
 	fr := &fakeRunner{out: map[string]string{"list-panes -t =moomux-foo:^ -F #{pane_id}": "%3\n"}}
 	c := &Client{Runner: fr}

@@ -20,7 +20,7 @@ const StaleAfter = 15 * time.Minute
 
 // Usage is Snapshot.Usage on the wire.
 type Usage struct {
-	Status    string   `json:"status"` // ok | failed | signed_out | stale
+	Status    string   `json:"status"` // ok | failed | signed_out | stale | idle
 	UpdatedAt string   `json:"updated_at,omitempty"`
 	Windows   []Window `json:"windows"` // never null
 	Tokens    *Tokens  `json:"tokens,omitempty"`

@@ -2,8 +2,10 @@ package antigravity
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -87,5 +89,43 @@ func TestTrustWorkspaceRefusesUnexpectedShape(t *testing.T) {
 	}
 	if string(got) != existing {
 		t.Fatalf("file rewritten despite the error:\n got %s\nwant %s", got, existing)
+	}
+}
+
+// A settings file holding the literal null decodes to a nil map; writing the
+// trusted list into it used to panic.
+func TestTrustWorkspaceHandlesNullFile(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".gemini", "antigravity-cli")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte("null"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := TrustWorkspace(home, "/wt/one"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := read(t, home)["trustedWorkspaces"].([]any); len(got) != 1 {
+		t.Fatalf("trustedWorkspaces = %v", got)
+	}
+}
+
+// Parallel trusts of different workspaces must all land.
+func TestTrustWorkspaceConcurrentCallsKeepEveryEntry(t *testing.T) {
+	home := t.TempDir()
+	var wg sync.WaitGroup
+	for i := range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := TrustWorkspace(home, fmt.Sprintf("/wt/%d", i)); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got, _ := read(t, home)["trustedWorkspaces"].([]any); len(got) != 20 {
+		t.Fatalf("got %d entries, want 20", len(got))
 	}
 }

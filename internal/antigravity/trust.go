@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/erickgnclvs/moomux/internal/atomicfile"
 )
+
+var trustMu sync.Mutex
 
 // TrustWorkspace adds dir to ~/.gemini/antigravity-cli/settings.json's
 // trustedWorkspaces list, so `agy` boots straight into the session instead of
@@ -23,6 +26,10 @@ import (
 // Unknown keys round-trip through map[string]any: the file is Antigravity's,
 // and it holds the user's model choice, permissions and MCP config.
 func TrustWorkspace(home, dir string) error {
+	// Sessions are created in parallel; without this two read-modify-writes
+	// of the one settings file lose an approval.
+	trustMu.Lock()
+	defer trustMu.Unlock()
 	path := filepath.Join(home, ".gemini", "antigravity-cli", "settings.json")
 
 	root := map[string]any{}
@@ -30,6 +37,10 @@ func TrustWorkspace(home, dir string) error {
 	if err == nil {
 		if err := json.Unmarshal(existing, &root); err != nil {
 			return err
+		}
+		// A file holding the JSON literal null decodes to a nil map.
+		if root == nil {
+			root = map[string]any{}
 		}
 	} else if !os.IsNotExist(err) {
 		return err

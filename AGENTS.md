@@ -105,6 +105,24 @@ checked answer before a destructive action, but a local one: `WorktreeStatus` al
 remote, and that 2-4s was most of the dialog's wait), and `Diff` (a patch can be megabytes, and is
 wanted only when someone opens it). Everything routine rides the stream.
 
+## Never touch the tmux server you are running in
+
+Agents here run inside a moomux-managed tmux session, so `$TMUX` points at the
+user's real server. `tmux kill-server`, `kill-session` on a name you did not
+create, and `TMUX_TMPDIR=... tmux ...` all act on **that** server: tmux prefers
+`$TMUX` over `TMUX_TMPDIR`, so a "private" server set up that way is not private.
+One such `kill-server` once took down every live session and its agent.
+
+- Never run `tmux kill-server`. Stop a server you started by pid, after checking
+  the pid is yours.
+- To isolate a test server, use `tmux -S <short-socket-path>` (or `-L <unique
+  name>`) on every call, and `unset TMUX` first. Socket paths over ~100 bytes
+  fail, so use a relative path from a short directory.
+- Before any tmux command that kills or renames, run `tmux -S <socket> ls` or
+  `echo $TMUX` and confirm the target is the server you meant.
+- The e2e suite shares the default server and fixed session names, so run it
+  once, alone. Concurrent runs from other worktrees collide on `new-session`.
+
 ## Releases and commit messages
 
 Every merge to `main` auto-tags and deploys a new version (`.github/workflows/deploy.yml` computes the next tag via `scripts/next_version.sh`, then `release.yml` builds and publishes it) — there's no manual release step, and no way to land a commit on `main` without it shipping.

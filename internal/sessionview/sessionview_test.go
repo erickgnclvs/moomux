@@ -2,7 +2,10 @@ package sessionview
 
 import (
 	"context"
+	"errors"
 	"maps"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"sync"
@@ -32,6 +35,9 @@ type fakeCore struct {
 	titles     map[string]watcher.State
 
 	gitDelay time.Duration
+	// tmuxBlock, when set, holds TmuxStates until it is closed, like a hung
+	// tmux server.
+	tmuxBlock chan struct{}
 }
 
 // ConfigSnapshot rebuilds the fake's folder table and project order into
@@ -62,6 +68,12 @@ func (f *fakeCore) Sessions() []session.Session {
 }
 
 func (f *fakeCore) TmuxStates() map[string]watcher.State {
+	f.mu.Lock()
+	block := f.tmuxBlock
+	f.mu.Unlock()
+	if block != nil {
+		<-block
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.aliveCalls++
@@ -560,7 +572,8 @@ func TestRawSnapshotsDoNotRepollTmux(t *testing.T) {
 	core.mu.Unlock()
 
 	for i := 0; i < 5; i++ {
-		raw <- watcher.Snapshot{States: map[string]watcher.State{"/wt/a": watcher.Working}}
+		// Each snapshot must differ from the last, or it is (rightly) skipped.
+		raw <- watcher.Snapshot{States: map[string]watcher.State{"/wt/a": watcher.Working, "/wt/x": watcher.State(i)}}
 		<-out
 	}
 	core.mu.Lock()
@@ -568,6 +581,174 @@ func TestRawSnapshotsDoNotRepollTmux(t *testing.T) {
 	core.mu.Unlock()
 	if n != 0 {
 		t.Errorf("5 raw snapshots spawned %d tmux-alive polls, want 0", n)
+	}
+}
+
+// TestVanishedRawPathDropsState: a path the raw watcher stops reporting (the
+// agent exited mid-turn) must stop showing its old state. An Incomplete
+// snapshot lacks paths it normally has, so that one still merges.
+func TestVanishedRawPathDropsState(t *testing.T) {
+	core := &fakeCore{
+		sessions: []session.Session{sess("demo:a", "/wt/a")},
+		alive:    map[string]bool{"demo:a": true},
+	}
+	raw := make(chan watcher.Snapshot, 8)
+	w := &Watcher{Core: core, Raw: chanWatcher{raw}, Interval: time.Hour}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan Snapshot, 64)
+	go w.Run(ctx, out)
+	<-out
+
+	next := func(want watcher.State) {
+		t.Helper()
+		deadline := time.After(5 * time.Second)
+		for {
+			select {
+			case s := <-out:
+				if s.Views["demo:a"].State == want {
+					return
+				}
+			case <-deadline:
+				t.Fatalf("never saw state %v", want)
+			}
+		}
+	}
+	raw <- watcher.Snapshot{States: map[string]watcher.State{"/wt/a": watcher.Working}}
+	next(watcher.Working)
+	raw <- watcher.Snapshot{States: map[string]watcher.State{}}
+	next(watcher.Unknown)
+	raw <- watcher.Snapshot{States: map[string]watcher.State{"/wt/a": watcher.Working}}
+	next(watcher.Working)
+	raw <- watcher.Snapshot{States: map[string]watcher.State{}, Err: errors.New("scan failed"), Incomplete: true}
+	// Errored: keeps Working. Prove the snapshot was processed via Err.
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case s := <-out:
+			if s.Err != "" {
+				if got := s.Views["demo:a"].State; got != watcher.Working {
+					t.Fatalf("errored snapshot dropped state: %v", got)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("no errored snapshot")
+		}
+	}
+}
+
+// TestIdenticalRawSnapshotIsNotReemitted: the fsevents watcher repeats itself,
+// and every emit costs a store reload and a JSON snapshot per client.
+func TestIdenticalRawSnapshotIsNotReemitted(t *testing.T) {
+	core := &fakeCore{
+		sessions: []session.Session{sess("demo:a", "/wt/a")},
+		alive:    map[string]bool{"demo:a": true},
+	}
+	raw := make(chan watcher.Snapshot, 8)
+	w := &Watcher{Core: core, Raw: chanWatcher{raw}, Interval: time.Hour}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan Snapshot, 64)
+	go w.Run(ctx, out)
+	same := watcher.Snapshot{States: map[string]watcher.State{"/wt/a": watcher.Working}}
+	raw <- same
+	// Settle: let the startup sweep's fetch results and the first raw emit pass.
+	for quiet := false; !quiet; {
+		select {
+		case <-out:
+		case <-time.After(300 * time.Millisecond):
+			quiet = true
+		}
+	}
+	raw <- same
+	select {
+	case <-out:
+		t.Fatal("identical raw snapshot produced another emit")
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// TestSymlinkedWorktreeMatchesPhysicalAgentPath: agents record the physical
+// cwd, so a worktree reached through a symlink must still find its state.
+func TestSymlinkedWorktreeMatchesPhysicalAgentPath(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+	physical, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core := &fakeCore{
+		sessions: []session.Session{sess("demo:a", link)},
+		alive:    map[string]bool{"demo:a": true},
+	}
+	snap := Once(core, "", map[string]watcher.State{physical: watcher.Working})
+	if got := snap.Views["demo:a"].State; got != watcher.Working {
+		t.Fatalf("state = %v, want working via the resolved path", got)
+	}
+}
+
+// TestPRFailureKeepsLastGoodAndMergedStopsPolling covers both halves of W4.
+func TestPRFailureKeepsLastGoodAndMergedStopsPolling(t *testing.T) {
+	s := sess("demo:a", "/wt/a")
+	s.PR = "https://example.test/pr/1"
+	w := newWatcher(&fakeCore{sessions: []session.Session{s}})
+	k := fetchKey{fetchPR, s.ID}
+	t0 := time.Now()
+	w.apply(result{key: k, pr: prEntry{info: prstatus.Info{State: "OPEN"}, ok: true, checkedAt: t0, url: s.PR}})
+	w.apply(result{key: k, pr: prEntry{ok: false, checkedAt: t0.Add(time.Second), url: s.PR}})
+	if e := w.pr[s.ID]; !e.ok || e.info.State != "OPEN" {
+		t.Fatalf("a failed fetch blanked the cached PR: %+v", e)
+	}
+	if w.prDue(s) {
+		t.Fatal("PR re-polled right after a failed fetch refreshed checkedAt")
+	}
+
+	w.apply(result{key: k, pr: prEntry{info: prstatus.Info{State: "MERGED"}, ok: true, checkedAt: t0.Add(time.Hour), url: s.PR}})
+	w.pr[s.ID] = prEntry{info: prstatus.Info{State: "MERGED"}, ok: true, checkedAt: t0.Add(-24 * time.Hour), url: s.PR}
+	if w.prDue(s) {
+		t.Fatal("merged PR is still polled")
+	}
+	s.PR = "https://example.test/pr/2"
+	if !w.prDue(s) {
+		t.Fatal("a session re-pointed at a new PR must be polled again")
+	}
+}
+
+// TestHungTmuxDoesNotStallRawSnapshots: liveness polls run off the loop.
+func TestHungTmuxDoesNotStallRawSnapshots(t *testing.T) {
+	core := &fakeCore{
+		sessions: []session.Session{sess("demo:a", "/wt/a")},
+		alive:    map[string]bool{"demo:a": true},
+	}
+	raw := make(chan watcher.Snapshot, 8)
+	w := &Watcher{Core: core, Raw: chanWatcher{raw}, Interval: time.Hour}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan Snapshot, 64)
+	go w.Run(ctx, out)
+	<-out
+
+	block := make(chan struct{})
+	core.mu.Lock()
+	core.tmuxBlock = block
+	core.mu.Unlock()
+	defer close(block)
+	w.Nudge()
+	raw <- watcher.Snapshot{States: map[string]watcher.State{"/wt/a": watcher.NeedsInput}}
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case s := <-out:
+			if s.Views["demo:a"].State == watcher.NeedsInput {
+				return
+			}
+		case <-deadline:
+			t.Fatal("run loop stalled behind a hung tmux poll")
+		}
 	}
 }
 
