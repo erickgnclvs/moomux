@@ -49,6 +49,9 @@ type cachedParse struct {
 	// when asks was computed, and whether its last message asked a question.
 	tModNano, tSize int64
 	asks            bool
+	// good is the file's last successful parse, kept across a failed one so
+	// a half-written file doesn't drop its session out of the scan.
+	good rawSession
 }
 
 // scan reads dir for *.json session/marker files, classifies each, and
@@ -89,6 +92,12 @@ func (d *dirScanner) scan(dir, transcripts string) (states map[string]State, rea
 		if got.err != nil {
 			next[name] = got
 			parseErrs = append(parseErrs, fmt.Errorf("parse %s: %w", name, got.err))
+			// Report the error, but keep the state this file last gave.
+			if cwd := got.good.CWD; cwd != "" {
+				if st := classify(got.good); st > states[cwd] {
+					states[cwd] = st
+				}
+			}
 			continue
 		}
 		if got.rs.CWD == "" {
@@ -126,11 +135,19 @@ func (d *dirScanner) parse(dir, name string, e fs.DirEntry) cachedParse {
 		return cachedParse{rs: rs, err: perr}
 	}
 	mod, size := info.ModTime().UnixNano(), info.Size()
-	if prev, ok := d.cache[name]; ok && prev.modNano == mod && prev.size == size {
+	prev, hadPrev := d.cache[name]
+	if hadPrev && prev.modNano == mod && prev.size == size {
 		return prev
 	}
 	rs, perr := parseFile(filepath.Join(dir, name))
-	return cachedParse{modNano: mod, size: size, rs: rs, err: perr}
+	got := cachedParse{modNano: mod, size: size, rs: rs, err: perr}
+	if perr != nil && hadPrev {
+		got.good = prev.good
+		if prev.err == nil {
+			got.good = prev.rs
+		}
+	}
+	return got
 }
 
 // question refreshes got.asks when the session's transcript has changed

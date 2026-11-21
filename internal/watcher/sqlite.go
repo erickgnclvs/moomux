@@ -135,6 +135,7 @@ func (w *SQLiteWatcher) tick(ctx context.Context, out chan<- Snapshot, activeAge
 	dbPaths, err := filepath.Glob(w.DB)
 	if err != nil {
 		snap.Err = fmt.Errorf("glob %s: %w", w.DB, err)
+		snap.Incomplete = true
 		send(ctx, out, snap)
 		return
 	}
@@ -143,6 +144,7 @@ func (w *SQLiteWatcher) tick(ctx context.Context, out chan<- Snapshot, activeAge
 	// (and a marker can exist) before Codex's own state db does.
 
 	var queryErrs []error
+	incomplete := false
 	now := time.Now()
 	for _, dbPath := range dbPaths {
 		if fi, err := os.Stat(dbPath); err == nil && fi.Size() == 0 {
@@ -154,6 +156,7 @@ func (w *SQLiteWatcher) tick(ctx context.Context, out chan<- Snapshot, activeAge
 		rows, err := w.queryCached(ctx, dbPath)
 		if err != nil {
 			queryErrs = append(queryErrs, fmt.Errorf("query %s: %w", dbPath, err))
+			incomplete = true
 			continue
 		}
 		for path, updatedMs := range rows {
@@ -175,6 +178,7 @@ func (w *SQLiteWatcher) tick(ctx context.Context, out chan<- Snapshot, activeAge
 			// A missing MarkerDir just means no hook has ever fired yet —
 			// not an error.
 			queryErrs = append(queryErrs, fmt.Errorf("scan %s: %w", w.MarkerDir, readErr))
+			incomplete = true
 		}
 		if parseErr != nil {
 			queryErrs = append(queryErrs, parseErr)
@@ -187,6 +191,7 @@ func (w *SQLiteWatcher) tick(ctx context.Context, out chan<- Snapshot, activeAge
 	}
 	if len(queryErrs) > 0 {
 		snap.Err = errors.Join(queryErrs...)
+		snap.Incomplete = incomplete
 	}
 	send(ctx, out, snap)
 }

@@ -51,9 +51,9 @@ func (m *MultiWatcher) Run(ctx context.Context, out chan<- Snapshot) {
 		case <-ctx.Done():
 			return
 		case in := <-merged:
-			if in.snap.Err != nil {
-				// States may be incomplete on an error; keep what this
-				// watcher last knew for the paths it couldn't read.
+			if in.snap.Incomplete {
+				// This watcher couldn't read part of its source; keep what
+				// it last knew for the paths it couldn't read.
 				states := make(map[string]State, len(latest[in.i].States)+len(in.snap.States))
 				for p, st := range latest[in.i].States {
 					states[p] = st
@@ -75,6 +75,7 @@ func mergeLatest(latest []Snapshot, trigger Snapshot) Snapshot {
 	snap := Snapshot{States: map[string]State{}, PollTime: trigger.PollTime}
 	var errs []error
 	for _, l := range latest {
+		snap.Incomplete = snap.Incomplete || l.Incomplete
 		for p, st := range l.States {
 			if prev, ok := snap.States[p]; !ok || st > prev {
 				snap.States[p] = st

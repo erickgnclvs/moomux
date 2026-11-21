@@ -30,7 +30,9 @@ type execRunner struct{}
 func (execRunner) Run(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "tmux", args...)
+	// -u on every call: a core with no UTF-8 locale (launchd, brew services)
+	// otherwise gets sanitised output, e.g. non-ASCII pane paths as "_".
+	cmd := exec.CommandContext(ctx, "tmux", append([]string{"-u"}, args...)...)
 	// A bare `tmux` command with no live server spawns one, and that server
 	// inherits this process's cwd as its permanent launch directory — used
 	// as tmux's silent fallback whenever a session's own -c doesn't stick
@@ -484,9 +486,13 @@ func (c *Client) WindowName(session string) (string, error) {
 
 // ConfigureTitleTracking ensures the tmux session keeps its window name stable
 // and continuously emits it as the terminal title. Safe to call on existing
-// sessions — idempotent tmux set-option calls never break anything.
+// sessions — idempotent tmux set-option calls never break anything. An empty
+// windowName leaves the current name alone, so a live session keeps its
+// status glyph and any manual rename.
 func (c *Client) ConfigureTitleTracking(session, windowName string) {
-	_, _ = c.runAgent(session, "rename-window", "-t", agentTarget, windowName)
+	if windowName != "" {
+		_, _ = c.runAgent(session, "rename-window", "-t", agentTarget, windowName)
+	}
 	_, _ = c.runAgent(session, "set-window-option", "-t", agentTarget, "automatic-rename", "off")
 	_, _ = c.runAgent(session, "set-option", "-t", agentTarget, "set-titles", "on")
 	_, _ = c.runAgent(session, "set-option", "-t", agentTarget, "set-titles-string", "#{window_name}")
@@ -590,9 +596,10 @@ func (c *Client) CapturePanes(names []string) map[string]string {
 	// Two passes, so a third dead session still reaches the per-session
 	// path below; looping until no progress would fix that too, at N forks
 	// when everything is dead. Not worth it.
+	panes := c.agentPanes()
 	pending := names
 	for range 2 {
-		c.captureBatch(pending, out)
+		c.captureBatch(pending, out, panes)
 		pending = nil
 		for _, name := range names {
 			if _, ok := out[name]; !ok {
@@ -628,13 +635,40 @@ func (c *Client) CapturePanes(names []string) map[string]string {
 	return out
 }
 
+// agentPanes maps each session name to its marked agent pane id, in one tmux
+// call. Sessions without a marker (older ones) are absent; callers fall back
+// to the window target.
+func (c *Client) agentPanes() map[string]string {
+	out, err := c.Runner.Run("list-panes", "-a", "-F", "#{session_name}\t#{pane_id}\t#{@moomux_agent_pane}")
+	panes := map[string]string{}
+	if err != nil {
+		return panes
+	}
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) == 3 && f[2] == "1" {
+			if _, dup := panes[f[0]]; !dup {
+				panes[f[0]] = f[1]
+			}
+		}
+	}
+	return panes
+}
+
 // captureBatch captures names in one tmux invocation, adding whatever came
 // back whole to out.
-func (c *Client) captureBatch(names []string, out map[string]string) {
+//
+// panes maps a session to its marked agent pane, so the batch captures the
+// same pane CapturePane does rather than whichever pane has focus.
+func (c *Client) captureBatch(names []string, out map[string]string, panes map[string]string) {
 	var args []string
 	for i, name := range names {
+		target := panes[name]
+		if target == "" {
+			target = c.agentWindow(name)
+		}
 		args = append(args, "display-message", "-p", fmt.Sprintf("%s%d", captureMarker, i), ";",
-			"capture-pane", "-p", "-t", c.agentWindow(name), ";")
+			"capture-pane", "-p", "-t", target, ";")
 	}
 	// A closing marker, so every section is delimited on both sides: an
 	// unterminated last section is how a capture that failed midway is told

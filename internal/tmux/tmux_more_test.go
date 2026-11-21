@@ -44,6 +44,17 @@ func TestConfigureTitleTracking(t *testing.T) {
 	}
 }
 
+func TestConfigureTitleTrackingEmptyNameKeepsWindowName(t *testing.T) {
+	fr := &fakeRunner{}
+	c := &Client{Runner: fr}
+	c.ConfigureTitleTracking("moomux-a", "")
+	for _, call := range fr.calls {
+		if call[0] == "rename-window" {
+			t.Fatalf("renamed with an empty name: %v", call)
+		}
+	}
+}
+
 func TestNewSessionErrors(t *testing.T) {
 	// new-session itself fails
 	fr := &fakeRunner{failOn: map[string]bool{"new-session -d -s s -c /wt -n w": true}}

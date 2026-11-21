@@ -1403,6 +1403,26 @@ func TestOpenSessionIsEnsureTmux(t *testing.T) {
 	}
 }
 
+// TestEnsureTmuxKeepsLiveWindowName: opening a session whose tmux is already
+// live must not rename its window, or the watcher's status glyph (and any
+// manual rename) is wiped until the next state change.
+func TestEnsureTmuxKeepsLiveWindowName(t *testing.T) {
+	a, _, tm := newTestApp(t, gitProject("/repo"))
+	_ = a.Store.Put(session.Session{
+		ID: "demo:feat", Project: "demo", Name: "feat", TmuxSession: "moomux-feat",
+		WorktreePath: "/wt/feat",
+	})
+	tm.out["list-panes -t =moomux-feat:^ -F #{pane_current_path}"] = "/wt/feat\n"
+	if _, err := a.EnsureTmux("demo:feat"); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range tm.calls {
+		if len(c) > 0 && c[0] == "rename-window" {
+			t.Fatalf("live session's window was renamed: %v", c)
+		}
+	}
+}
+
 func TestOpenSessionStampsLastOpened(t *testing.T) {
 	a, _, tm := newTestApp(t, gitProject("/repo"))
 	home, _ := os.UserHomeDir()
@@ -1692,7 +1712,7 @@ func TestTmuxAliveAll(t *testing.T) {
 	a, _, tm := newTestApp(t, gitProject("/repo"))
 	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", TmuxSession: "moomux-a"})
 	_ = a.Store.Put(session.Session{ID: "demo:b", Project: "demo", Name: "b", TmuxSession: "moomux-b"})
-	tm.out["-u list-panes -a -F #{session_name}\t#{pane_pipe_pid}\t#{?pane_pipe,#{@moomux_codex_state},}"] = "moomux-a\t\nunrelated\t\n"
+	tm.out["list-panes -a -F #{session_name}\t#{pane_pipe_pid}\t#{?pane_pipe,#{@moomux_codex_state},}"] = "moomux-a\t\nunrelated\t\n"
 
 	got := a.TmuxStates()
 	if _, ok := got["demo:a"]; !ok || len(got) != 1 {
@@ -3971,15 +3991,21 @@ func TestCreateSessionReportNamesTheFailedStep(t *testing.T) {
 // each call — a branch-scoped `gh pr view` only resolves the right PR when it
 // runs inside the session's worktree.
 type fakeGHRunner struct {
-	out  string
-	err  error
-	dirs []string
-	args [][]string
+	out string
+	err error
+	// during, when set, runs inside each call: a change another process
+	// makes while gh is still answering.
+	during func()
+	dirs   []string
+	args   [][]string
 }
 
 func (f *fakeGHRunner) Run(dir string, args ...string) (string, error) {
 	f.dirs = append(f.dirs, dir)
 	f.args = append(f.args, args)
+	if f.during != nil {
+		f.during()
+	}
 	if f.err != nil {
 		return "", f.err
 	}
@@ -4108,6 +4134,31 @@ func TestPRStatusKeepsExistingTicket(t *testing.T) {
 	}
 	if got, _ := a.Store.Get(s.ID); got.Ticket != s.Ticket {
 		t.Errorf("session ticket = %q, want it left at the hand-set %q", got.Ticket, s.Ticket)
+	}
+}
+
+// TestPRStatusDoesNotClobberTagsSetDuringLookup: a ticket attached while gh
+// is still answering must survive; PRStatus used to write back the copy it
+// read before the call.
+func TestPRStatusDoesNotClobberTagsSetDuringLookup(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	const prURL = "https://github.com/example/repo/pull/7"
+	gh := &fakeGHRunner{out: ghJSON(prURL, "closes https://linear.app/acme/issue/ENG-412")}
+	a.PR = &prstatus.Client{Runner: gh}
+	s := session.Session{ID: "demo:a", Name: "a", Project: "demo", WorktreePath: "/wt/a", PR: prURL}
+	if err := a.Store.Put(s); err != nil {
+		t.Fatal(err)
+	}
+	gh.during = func() {
+		if _, err := a.SetSessionTags(s.ID, "https://app.asana.com/0/1/2", prURL); err != nil {
+			t.Error(err)
+		}
+	}
+	if _, ok := a.PRStatus(s.ID); !ok {
+		t.Fatal("PRStatus() = not ok")
+	}
+	if got, _ := a.Store.Get(s.ID); got.Ticket != "https://app.asana.com/0/1/2" {
+		t.Errorf("ticket = %q, want the one set during the lookup", got.Ticket)
 	}
 }
 
@@ -4358,7 +4409,7 @@ func TestCodexDisplayedStateOverridesNeedsInputMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, state := range []watcher.State{watcher.Working, watcher.NeedsInput, watcher.Done} {
-		tm.out["-u list-panes -a -F #{session_name}\t#{pane_pipe_pid}\t#{?pane_pipe,#{@moomux_codex_state},}"] = "moomux-a\t99\t99:" + state.String() + "\nmoomux-a\t\n"
+		tm.out["list-panes -a -F #{session_name}\t#{pane_pipe_pid}\t#{?pane_pipe,#{@moomux_codex_state},}"] = "moomux-a\t99\t99:" + state.String() + "\nmoomux-a\t\n"
 		snap := sessionview.Once(a, "", map[string]watcher.State{s.WorktreePath: watcher.NeedsInput})
 		if got := snap.Views[s.ID].State; got != state {
 			t.Fatalf("Codex screen reports %v with a pending approval hook: got %v", state, got)

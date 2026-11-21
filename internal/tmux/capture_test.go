@@ -312,3 +312,22 @@ func TestAgentWindowCacheIsBounded(t *testing.T) {
 		t.Fatalf("cache grew to %d entries, want at most %d", n, agentWinsMax)
 	}
 }
+
+// The batch must aim at the marked agent pane, like CapturePane does, not at
+// whichever pane has focus in the window.
+func TestCapturePanesTargetsTheMarkedAgentPane(t *testing.T) {
+	list := "list-panes -a -F #{session_name}\t#{pane_id}\t#{@moomux_agent_pane}"
+	batch := strings.Join([]string{
+		"display-message", "-p", captureMarker + "0", ";",
+		"capture-pane", "-p", "-t", "%7", ";",
+		"display-message", "-p", captureMarker + "end",
+	}, " ")
+	fr := &fakeRunner{out: map[string]string{
+		list:  "a\t%6\t\na\t%7\t1\nb\t%9\t\n",
+		batch: captureMarker + "0\nagent screen\n" + captureMarker + "end\n",
+	}}
+	got := (&Client{Runner: fr}).CapturePanes([]string{"a"})
+	if got["a"] != "agent screen" {
+		t.Fatalf("got %#v; calls %v", got, fr.calls)
+	}
+}

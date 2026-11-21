@@ -17,7 +17,8 @@ import (
 type codexTestServer string
 
 func (s codexTestServer) Run(args ...string) (string, error) {
-	args = append([]string{"-L", string(s), "-f", "/dev/null"}, args...)
+	// -u first, like tmux's execRunner: the Runner owns it, not the callers.
+	args = append([]string{"-u", "-L", string(s), "-f", "/dev/null"}, args...)
 	out, err := exec.Command("tmux", args...).CombinedOutput()
 	return string(out), err
 }
