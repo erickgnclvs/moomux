@@ -416,9 +416,9 @@ func setupLogging() {
 	loggingOnce.Do(func() {
 		home, _ := os.UserHomeDir()
 		logDir := filepath.Join(home, ".local", "share", "moomux")
-		_ = os.MkdirAll(logDir, 0o755)
+		_ = os.MkdirAll(logDir, 0o700)
 		logPath := filepath.Join(logDir, "moomux.log")
-		if lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+		if lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
 			slog.SetDefault(slog.New(slog.NewTextHandler(lf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 		} else {
 			slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))

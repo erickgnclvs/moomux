@@ -13,6 +13,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/erickgnclvs/moomux/internal/antigravity"
+	"github.com/erickgnclvs/moomux/internal/atomicfile"
 	"github.com/erickgnclvs/moomux/internal/claudehook"
 	"github.com/erickgnclvs/moomux/internal/codexhook"
 	"github.com/erickgnclvs/moomux/internal/config"
@@ -1138,7 +1140,10 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 	newBranch := existingBranch == ""
 	if proj.UsesWorktree() {
 		a.worktreeMu.Lock()
-		unlockWorktree := sync.OnceFunc(a.worktreeMu.Unlock)
+		// worktreeMu is per process; the file lock covers a second moomux
+		// process (parallel `moomux spawn`) creating in the same repo.
+		unlockRepo := a.lockRepo(proj.Repo)
+		unlockWorktree := sync.OnceFunc(func() { unlockRepo(); a.worktreeMu.Unlock() })
 		defer unlockWorktree()
 		hasRemote := a.Git.HasRemote(proj.Repo, "origin")
 		if existingBranch != "" {
@@ -1708,9 +1713,8 @@ func (a *App) SetSessionTags(id, ticket, pr string) (session.Session, error) {
 	if !ok {
 		return session.Session{}, fmt.Errorf("unknown session %q", id)
 	}
-	s.Ticket = ticket
-	s.PR = pr
-	if err := a.Store.Put(s); err != nil {
+	s, err := a.Store.Update(id, func(s *session.Session) { s.Ticket, s.PR = ticket, pr })
+	if err != nil {
 		return s, fmt.Errorf("store: %w", err)
 	}
 	return s, nil
@@ -1786,8 +1790,11 @@ func (a *App) refileSessions(from, to string) error {
 		if s.Folder != from {
 			continue
 		}
-		s.Folder = to
-		if err := a.Store.Put(s); err != nil {
+		if _, err := a.Store.Update(s.ID, func(s *session.Session) {
+			if s.Folder == from {
+				s.Folder = to
+			}
+		}); err != nil {
 			errs = append(errs, fmt.Errorf("store %s: %w", s.ID, err))
 		}
 	}
@@ -1848,8 +1855,8 @@ func (a *App) SetSessionFolder(id, folder string) (session.Session, error) {
 		}
 	}
 	prev := s.Folder
-	s.Folder = folder
-	if err := a.Store.Put(s); err != nil {
+	s, err := a.Store.Update(id, func(s *session.Session) { s.Folder = folder })
+	if err != nil {
 		return s, fmt.Errorf("store: %w", err)
 	}
 	if prev != folder {
@@ -2024,8 +2031,8 @@ func (a *App) SetSessionPrompt(id, prompt string) (session.Session, error) {
 	if !ok {
 		return session.Session{}, fmt.Errorf("unknown session %q", id)
 	}
-	s.Prompt = prompt
-	if err := a.Store.Put(s); err != nil {
+	s, err := a.Store.Update(id, func(s *session.Session) { s.Prompt = prompt })
+	if err != nil {
 		return s, fmt.Errorf("store: %w", err)
 	}
 	return s, nil
@@ -2063,9 +2070,11 @@ func (a *App) RenameSession(id, newName string) (session.Session, error) {
 			return session.Session{}, fmt.Errorf("tmux rename: %w", err)
 		}
 	}
-	s.Name = newName
-	s.TmuxSession = newTmux
-	if err := a.Store.Put(s); err != nil {
+	s, err := a.Store.Update(id, func(s *session.Session) {
+		s.Name = newName
+		s.TmuxSession = newTmux
+	})
+	if err != nil {
 		return s, fmt.Errorf("store: %w", err)
 	}
 	return s, nil
@@ -2081,11 +2090,11 @@ func (a *App) SetSessionAgent(id, agent string, dangerous bool) (session.Session
 	if !ok {
 		return session.Session{}, fmt.Errorf("unknown session %q", id)
 	}
-	previous := s
-	s.Agent = agent
-	s.Dangerous = dangerous
-	if err := a.Store.Put(s); err != nil {
-		_ = a.Store.Put(previous)
+	s, err := a.Store.Update(id, func(s *session.Session) {
+		s.Agent = agent
+		s.Dangerous = dangerous
+	})
+	if err != nil {
 		return session.Session{}, fmt.Errorf("store: %w", err)
 	}
 	return s, nil
@@ -2212,7 +2221,7 @@ func (a *App) EnsureTmux(id string) (string, error) {
 			// anyway, so a live session never loses its identifier.
 			slog.Info("migrating tmux session name", "from", s.TmuxSession, "to", want)
 			s.TmuxSession = want
-			if err := a.Store.Put(s); err != nil {
+			if _, err := a.Store.Update(id, func(r *session.Session) { r.TmuxSession = want }); err != nil {
 				return "", fmt.Errorf("store tmux name: %w", err)
 			}
 		}
@@ -2224,7 +2233,8 @@ func (a *App) EnsureTmux(id string) (string, error) {
 		if s.AgentName() == "opencode" {
 			if s.AgentPort == 0 {
 				s.AgentPort = a.nextOpenCodePort()
-				if err := a.Store.Put(s); err != nil {
+				port := s.AgentPort
+				if _, err := a.Store.Update(id, func(r *session.Session) { r.AgentPort = port }); err != nil {
 					return "", fmt.Errorf("store opencode port: %w", err)
 				}
 			}
@@ -2239,8 +2249,8 @@ func (a *App) EnsureTmux(id string) (string, error) {
 		a.Tmux.ObserveCodex(s.TmuxSession)
 	}
 	a.Tmux.ConfigureTitleTracking(s.TmuxSession, a.titleName(s))
-	s.LastOpened = time.Now()
-	if err := a.Store.Put(s); err != nil {
+	now := time.Now()
+	if _, err := a.Store.Update(id, func(r *session.Session) { r.LastOpened = now }); err != nil {
 		slog.Error("store last-opened failed", "id", id, "err", err)
 	}
 	return hooksHint, nil
@@ -2325,14 +2335,41 @@ func (a *App) KillTmux(id string) error {
 	return a.Tmux.KillSession(s.TmuxSession)
 }
 
+// lockRepo takes a cross-process lock in repo's git common dir, serialising
+// the fetch-and-worktree-add that writes .git/config. Best-effort: if the dir
+// can't be found or locked it returns a no-op and the per-process lock alone
+// applies, as before.
+func (a *App) lockRepo(repo string) func() {
+	dir, err := a.Git.Runner.Run(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	dir = strings.TrimSpace(dir)
+	if err != nil || !filepath.IsAbs(dir) {
+		return func() {}
+	}
+	unlock, err := atomicfile.Lock(filepath.Join(dir, "moomux-create"))
+	if err != nil {
+		return func() {}
+	}
+	return unlock
+}
+
+// projectNameRE keeps a project name usable as a directory name: no "..",
+// no leading dot (".trash" is moomux's own folder, which EmptyTrash empties),
+// no separators or spaces.
+var projectNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
 // validateProjectLocked requires a.cfgMu held for writing: its duplicate-name
 // check is only meaningful if it can't be overtaken before saveProjectLocked.
 func (a *App) validateProjectLocked(name string, p *config.Project) error {
 	if name == "" {
 		return fmt.Errorf("project name required")
 	}
-	if strings.ContainsAny(name, " \t/\\") {
-		return fmt.Errorf("project name cannot contain spaces or slashes")
+	if !projectNameRE.MatchString(name) {
+		return fmt.Errorf("project name must start with a letter or digit and use only letters, digits, '.', '_' or '-'")
+	}
+	// Reload before the duplicate check: a project another process added
+	// since this config was loaded would otherwise pass it and be overwritten.
+	if err := config.Reload(a.CfgPath, a.Cfg); err != nil {
+		return fmt.Errorf("reload config: %w", err)
 	}
 	if _, exists := a.Cfg.Projects[name]; exists {
 		return fmt.Errorf("project %q already exists", name)
@@ -2429,13 +2466,14 @@ func (a *App) UpdateProject(name string, updated config.Project) error {
 	updated.Repo = config.ExpandHome(updated.Repo)
 	updated.Kind = previous.Kind
 
-	if updated.NoWorktree != previous.NoWorktree {
-		// Existing sessions were created under the old mode; their
-		// WorktreePath either is or isn't the repo itself, and deleting
-		// them under the flipped mode would target the wrong path.
+	if updated.NoWorktree != previous.NoWorktree || filepath.Clean(updated.Repo) != filepath.Clean(previous.Repo) {
+		// Existing sessions were created under the old mode and repo: their
+		// WorktreePath and Branch belong to the old one, and deleting them
+		// under the changed setting would target the wrong path or repo.
+		_ = a.Store.Reload() // another process may have added a session
 		for _, s := range a.Store.All() {
 			if s.Project == name {
-				return fmt.Errorf("cannot change worktree mode while project %q has sessions — delete them first", name)
+				return fmt.Errorf("cannot change the repo or worktree mode while project %q has sessions — delete them first", name)
 			}
 		}
 	}

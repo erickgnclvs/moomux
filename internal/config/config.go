@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -472,6 +473,9 @@ func Save(path string, cfg *Config) error {
 	if err := toml.NewEncoder(&buf).Encode(cfg); err != nil {
 		return err
 	}
+	if err := keepUnknownKeys(path, &buf); err != nil {
+		return err
+	}
 	// The first save after Load's folder migration is the write that makes
 	// the merge irreversible — projects.*.folders stops being emitted at
 	// all — so keep the pre-migration file beside it. The backup belongs
@@ -497,12 +501,89 @@ func Save(path string, cfg *Config) error {
 			// harmless. Best-effort — a failed backup must not block the
 			// save — but loud, because a silent one is indistinguishable
 			// from a backup that was never needed.
-			if err := atomicfile.Write(bak, cfg.preFolders, 0o644); err != nil {
+			if err := atomicfile.Write(bak, cfg.preFolders, 0o600); err != nil {
 				slog.Warn("pre-migration folder backup failed", "path", bak, "err", err)
 			}
 		}
 	}
-	return atomicfile.Write(path, buf.Bytes(), 0o644)
+	// 0600: config.toml holds repo paths and tailnet settings.
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return atomicfile.Write(path, buf.Bytes(), 0o600)
+}
+
+// tomlKeys is every key the toml tags of v's struct type name.
+func tomlKeys[T any]() map[string]bool {
+	keys := map[string]bool{}
+	t := reflect.TypeFor[T]()
+	for i := range t.NumField() {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("toml"), ",")
+		if name == "" {
+			name = t.Field(i).Name
+		}
+		keys[name] = true
+	}
+	return keys
+}
+
+var (
+	configKeys  = tomlKeys[Config]()
+	projectKeys = tomlKeys[Project]()
+)
+
+// retiredProjectKeys were project settings an old build wrote and this one
+// deliberately drops on Save (see TestLoadMigratesLegacyProjectAgent), so
+// they must not be carried over as "unknown".
+var retiredProjectKeys = map[string]bool{"model": true, "prompt_agent": true}
+
+// keepUnknownKeys merges into buf the keys the file at path has and this
+// build has no field for, at the top level and inside each [projects.x]
+// table. Without it, an older binary that saves (a long-running `serve`,
+// say) erased every setting a newer build had added. A key this build knows
+// but left out (omitempty, cleared) is not unknown and stays gone. Comments
+// and key order are not kept, so buf is only re-encoded when something was
+// merged back. An unreadable or unparsable file changes nothing: Load has
+// already refused to run on one, and Save must not make it worse.
+func keepUnknownKeys(path string, buf *bytes.Buffer) error {
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var oldM, newM map[string]any
+	if _, err := toml.Decode(string(old), &oldM); err != nil {
+		return nil
+	}
+	if _, err := toml.Decode(buf.String(), &newM); err != nil {
+		return err
+	}
+	merged := false
+	for k, v := range oldM {
+		if !configKeys[k] {
+			newM[k] = v
+			merged = true
+		}
+	}
+	oldProjects, _ := oldM["projects"].(map[string]any)
+	newProjects, _ := newM["projects"].(map[string]any)
+	for name, op := range oldProjects {
+		oldP, _ := op.(map[string]any)
+		newP, ok := newProjects[name].(map[string]any)
+		if !ok {
+			continue
+		}
+		for k, v := range oldP {
+			if !projectKeys[k] && !retiredProjectKeys[k] {
+				newP[k] = v
+				merged = true
+			}
+		}
+	}
+	if !merged {
+		return nil
+	}
+	buf.Reset()
+	return toml.NewEncoder(buf).Encode(newM)
 }
 
 func DefaultPath() string {
