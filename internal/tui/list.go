@@ -147,6 +147,13 @@ func (m *Model) renderList(width, height int) (string, []linkHit, []rowHit, []fo
 		b.WriteString(titleStyle.Render(title))
 		b.WriteString("\n\n")
 		titleRows = 2
+	} else if m.height >= 20 && len(m.projects) > 0 {
+		// Narrow but not short: one row naming the project and the view is
+		// affordable, and is the only signal of either at this width. Short
+		// terminals (a keyboard up) keep the row for sessions.
+		b.WriteString(titleStyle.Render(truncateToWidth(m.projects[m.activeProj]+" · "+title, width)))
+		b.WriteString("\n")
+		titleRows = 1
 	}
 	var lines []listLine
 	var sessions []session.Session
@@ -417,7 +424,7 @@ func renderRow(s session.Session, v sessionview.View, width int, selected, marke
 		nameStyle = nameStyle.Background(colSelBg).Foreground(colFg).Bold(true)
 		sepStyle = sepStyle.Background(colSelBg)
 	}
-	name := prefix + nameStyle.Render(fmt.Sprintf("%-*s", nameWidth, truncate(s.Name, nameWidth)))
+	name := prefix + nameStyle.Render(padTrunc(s.Name, nameWidth))
 	offset := dotWidth + 2 + lipgloss.Width(prefix) + nameWidth
 	for i := range hits {
 		hits[i].col0 += offset
@@ -461,14 +468,20 @@ func truncate(s string, n int) string {
 	if n <= 0 {
 		return ""
 	}
-	if len([]rune(s)) <= n {
+	if lipgloss.Width(s) <= n {
 		return s
 	}
-	r := []rune(s)
-	if n < 2 {
-		return string(r[:n])
+	return truncateToWidth(s, n)
+}
+
+// padTrunc clips s to w cells and pads with spaces to exactly w cells.
+// fmt's %-*s pads by rune count, which over-fills a row of wide characters.
+func padTrunc(s string, w int) string {
+	s = truncate(s, w)
+	if pad := w - lipgloss.Width(s); pad > 0 {
+		s += strings.Repeat(" ", pad)
 	}
-	return string(r[:n-1]) + "…"
+	return s
 }
 
 // truncateLeft keeps the end of a value visible. It is useful for read-only

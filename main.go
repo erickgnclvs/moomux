@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -40,6 +41,32 @@ var (
 	commit  = "none"
 	date    = "unknown"
 )
+
+// init lets a `go install` build report its module version: ldflags set
+// version only for goreleaser builds, so everything else would say "dev" and
+// miss the update notice and What's New.
+func init() { version = resolveVersion(version) }
+
+func resolveVersion(v string) string {
+	if v != "dev" {
+		return v
+	}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if mv := strings.TrimPrefix(info.Main.Version, "v"); mv != "" && mv != "(devel)" {
+			return mv
+		}
+	}
+	return v
+}
+
+// unknownCommand rejects a leftover argument instead of starting the TUI, so
+// a typo or `moomux version` doesn't launch a full-screen program.
+func unknownCommand(args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	return fmt.Errorf("unknown command %q (run 'moomux --help')", args[0])
+}
 
 func printUsage() {
 	fmt.Println(`moomux manages Claude Code / codex / opencode / antigravity sessions across git worktrees.
@@ -161,6 +188,10 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	}
+	if err := unknownCommand(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, "moomux:", err)
+		os.Exit(2)
 	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "moomux:", err)
@@ -416,9 +447,9 @@ func setupLogging() {
 	loggingOnce.Do(func() {
 		home, _ := os.UserHomeDir()
 		logDir := filepath.Join(home, ".local", "share", "moomux")
-		_ = os.MkdirAll(logDir, 0o755)
+		_ = os.MkdirAll(logDir, 0o700)
 		logPath := filepath.Join(logDir, "moomux.log")
-		if lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+		if lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
 			slog.SetDefault(slog.New(slog.NewTextHandler(lf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 		} else {
 			slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
@@ -462,6 +493,9 @@ func runSpawn(args []string) error {
 	list := fs.Bool("list", false, "list configured project names and exit")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("spawn: unexpected argument %q (flags only; put multi-word values in quotes)", fs.Arg(0))
 	}
 
 	if *list {
@@ -542,6 +576,9 @@ func runTag(args []string) error {
 	pr := fs.String("pr", "", "pull request URL to attach (kept as-is if omitted)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("tag: unexpected argument %q (use -ticket or -pr)", fs.Arg(0))
 	}
 
 	a, err := newApp()

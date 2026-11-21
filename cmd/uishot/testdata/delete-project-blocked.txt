@@ -12,7 +12,7 @@
 │                                      │
 │  ✖ demo has 3 session(s) (incl.      │
 │  archived) — delete them first       │
-│  esc cancel  enter open              │
+│  esc cancel  enter open  n e d       │
 │                                      │
 ╰──────────────────────────────────────╯
                                         

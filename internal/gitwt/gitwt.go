@@ -43,10 +43,10 @@ func IsRepo(path string) error {
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("%w: %s", ErrNotGitRepo, path)
 	}
-	cmd := exec.Command("git", "-C", path, "rev-parse", "--is-inside-work-tree")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%w (%s): %s", ErrNotGitRepo, path, strings.TrimSpace(string(out)))
+	// Through execRunner so a hung git (dead network mount) times out; the
+	// callers hold the config lock while they wait.
+	if out, err := (execRunner{}).Run(path, "rev-parse", "--is-inside-work-tree"); err != nil {
+		return fmt.Errorf("%w (%s): %s", ErrNotGitRepo, path, strings.TrimSpace(out))
 	}
 	return nil
 }
@@ -68,9 +68,8 @@ func Init(path, defaultBranch string) error {
 		{"-c", "user.name=moomux", "-c", "user.email=moomux@localhost", "commit", "--allow-empty", "-m", "initial commit"},
 	}
 	for _, args := range steps {
-		cmd := exec.Command("git", append([]string{"-C", path}, args...)...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("git %v: %w (%s)", args, err, strings.TrimSpace(string(out)))
+		if _, err := (execRunner{}).Run(path, args...); err != nil {
+			return err
 		}
 	}
 	return nil

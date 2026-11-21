@@ -7,7 +7,34 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 )
+
+// Lock takes an exclusive advisory lock on path+".lock" and returns the
+// release func. It serialises read-modify-write cycles across processes
+// (the in-process mutexes only cover one). The lock lives on a sidecar file
+// because Write replaces path itself by rename, which would orphan a lock
+// held on the old inode.
+func Lock(path string) (unlock func(), err error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+		if err != syscall.EINTR {
+			break
+		}
+	}
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() { f.Close() }, nil // closing drops the flock
+}
 
 // Write replaces path's contents with data, creating path's parent
 // directory if it's missing, and chmods the result to mode.
@@ -18,7 +45,13 @@ import (
 // one process's rename can steal or delete another's in-flight temp. It's
 // also dot-prefixed so a leftover temp from a crash stays out of the way of
 // anything listing the directory.
+//
+// A symlinked path is written through: the target is replaced and the link
+// stays, so a dotfile managed by a symlink farm is not turned into a copy.
 func Write(path string, data []byte, mode fs.FileMode) error {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err

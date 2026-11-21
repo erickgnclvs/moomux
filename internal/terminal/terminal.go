@@ -31,9 +31,10 @@ type TabCloser interface {
 
 // TabFinder is an optional capability for a terminal that can identify a
 // session's tab from the outside rather than from a handle it was given
-// (currently just iTerm2, which joins tmux's attached-client tty to its own
-// per-session tty). It exists for the close path: a caller that wants to
-// close a session's tab has to learn which tab that is *before* tmux dies,
+// (iTerm2 joins tmux's attached-client tty to its own per-session tty;
+// kitty and WezTerm ask the terminal which tab holds the tmux session;
+// Ghostty returns the id it stored when it opened the tab). It exists for the close path: a caller that
+// wants to close a session's tab has to learn which tab that is *before* tmux dies,
 // because tmux is half the join, and CloseTab can only be called after.
 //
 // FindTab returns an empty id, and no error, when there's no such tab.
@@ -44,7 +45,7 @@ type TabFinder interface {
 // Compile-time capability roster: which terminal implements which optional
 // interface. Cheap insurance — these are all satisfied by method name, so a
 // renamed or re-signatured method would otherwise just silently stop being
-// detected by the type assertions in app.go and main.go.
+// detected by the type assertions in terminalbackend.go.
 var (
 	_ TabCloser = (*itermClient)(nil)
 	_ TabFinder = (*itermClient)(nil)

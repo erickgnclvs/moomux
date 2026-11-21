@@ -709,3 +709,25 @@ func TestTrackedBase(t *testing.T) {
 		t.Errorf("not a repo: TrackedBase = %q, want empty", got)
 	}
 }
+
+// IsRepo runs with the config lock held by its callers, so a hung git must
+// time out instead of blocking every config reader.
+func TestIsRepoTimesOutOnHungGit(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	old := runTimeout
+	runTimeout = 200 * time.Millisecond
+	defer func() { runTimeout = old }()
+
+	start := time.Now()
+	err := IsRepo(t.TempDir())
+	if !errors.Is(err, ErrNotGitRepo) {
+		t.Fatalf("err = %v, want ErrNotGitRepo", err)
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Fatalf("IsRepo took %v, want it bounded by runTimeout", d)
+	}
+}
