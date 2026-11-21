@@ -1350,10 +1350,8 @@ func TestCreateSessionErrors(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 
-	// store.Put fails: the tmux session is already running, and the
-	// manual-attach hint that goes with a background create must survive in
-	// the returned error instead of being lost, since ErrorMsg only ever
-	// surfaces err.Error() to the user.
+	// store.Put fails: nothing could ever clean up the running tmux session,
+	// worktree and new branch (no record), so all three are rolled back.
 	noBranch(git, "storefail")
 	storefailTn := TmuxSessionName("demo:storefail", "storefail")
 	tm.out["list-panes -t ="+storefailTn+":^ -F #{pane_id}"] = "%0\n"
@@ -1362,15 +1360,225 @@ func TestCreateSessionErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.Store.Path = filepath.Join(blocker, "sessions.json")
-	_, hint, err := a.createSession("demo", "storefail", "", "", "", false, boolPtr(false), "", "", "")
+	_, _, err := a.createSession("demo", "storefail", "", "", "", false, boolPtr(false), "", "", "")
 	if err == nil || !strings.Contains(err.Error(), "store:") {
 		t.Fatalf("err = %v", err)
 	}
-	if !strings.Contains(err.Error(), "tmux attach -t "+storefailTn) {
-		t.Fatalf("store-put error dropped the manual-attach hint: %v", err)
+	if !tm.called("kill-session -t =" + storefailTn) {
+		t.Fatalf("tmux session not rolled back; calls = %v", tm.calls)
 	}
-	if !strings.Contains(hint, "tmux attach -t "+storefailTn) {
+	sfWT := filepath.Join(a.WorktreeRoot, "demo", "storefail")
+	var rmWT, rmBranch bool
+	for _, c := range git.calls {
+		j := strings.Join(c, " ")
+		rmWT = rmWT || strings.HasPrefix(j, "@/repo worktree remove "+sfWT)
+		rmBranch = rmBranch || j == "@/repo branch -D storefail"
+	}
+	if !rmWT || !rmBranch {
+		t.Fatalf("worktree/branch not rolled back (wt=%v branch=%v); calls = %v", rmWT, rmBranch, git.calls)
+	}
+}
+
+// A half-made checkout (git killed at the timeout) must not wedge the retry
+// on "a folder already exists".
+func TestCreateSessionRollsBackHalfMadeCheckout(t *testing.T) {
+	a, git, _ := newTestApp(t, gitProject("/repo"))
+	noBranch(git, "half")
+	wt := filepath.Join(a.WorktreeRoot, "demo", "half")
+	git.failOn["worktree add "+wt+" -b half origin/main"] = true
+	a.Git = &gitwt.Client{Runner: gitSpy{git, func(args []string) {
+		if len(args) > 1 && args[0] == "worktree" && args[1] == "add" {
+			_ = os.MkdirAll(wt, 0o755) // what the killed git left behind
+		}
+	}}}
+	if _, _, err := a.createSession("demo", "half", "", "", "", true, boolPtr(false), "", "", ""); err == nil {
+		t.Fatal("expected failure")
+	}
+	var rmWT bool
+	for _, c := range git.calls {
+		rmWT = rmWT || strings.HasPrefix(strings.Join(c, " "), "@/repo worktree remove "+wt)
+	}
+	if !rmWT {
+		t.Fatalf("half-made checkout not removed; calls = %v", git.calls)
+	}
+	if _, err := os.Stat(wt); !os.IsNotExist(err) {
+		t.Fatalf("half-made checkout still on disk: %v", err)
+	}
+}
+
+// A branch or base starting with "-" would reach git as an option.
+func TestCreateSessionRejectsOptionLikeRefs(t *testing.T) {
+	a, git, _ := newTestApp(t, gitProject("/repo"))
+	for _, c := range []struct{ branch, base string }{{"--upload-pack=x", ""}, {"", "--upload-pack=x"}} {
+		if _, _, err := a.createSession("demo", "n", "", c.branch, "", true, boolPtr(false), c.base, "", ""); err == nil {
+			t.Fatalf("branch=%q base=%q: expected error", c.branch, c.base)
+		}
+	}
+	if len(git.calls) != 0 {
+		t.Fatalf("git ran before validation: %v", git.calls)
+	}
+}
+
+func staleWorktreeFixture(t *testing.T, staleWT string) (*App, *fakeGitRunner) {
+	t.Helper()
+	a, git, _ := newTestApp(t, gitProject("/repo"))
+	git.out["worktree list --porcelain"] = "worktree " + staleWT + "\nbranch refs/heads/feature/login-page\n"
+	return a, git
+}
+
+func assertNoWorktreeRemove(t *testing.T, git *fakeGitRunner) {
+	t.Helper()
+	for _, c := range git.calls {
+		if strings.HasPrefix(strings.Join(c, " "), "@/repo worktree remove") {
+			t.Fatalf("must not remove the worktree; calls = %v", git.calls)
+		}
+	}
+}
+
+// A parked session's checkout is not "stale": its record would point at nothing.
+func TestCreateSessionExistingBranchKeepsParkedSessionWorktree(t *testing.T) {
+	a, git, _ := newTestApp(t, gitProject("/repo"))
+	staleWT := filepath.Join(a.WorktreeRoot, "demo", "parked")
+	git.out["worktree list --porcelain"] = "worktree " + staleWT + "\nbranch refs/heads/feature/login-page\n"
+	_ = a.Store.Put(session.Session{
+		ID: "demo:parked", Project: "demo", Name: "parked", Branch: "feature/login-page",
+		WorktreePath: staleWT, TmuxSession: "moomux-parked",
+	})
+	a.Tmux = &tmux.Client{Runner: &fakeTmuxRunner{out: map[string]string{}, failOn: map[string]bool{"has-session -t =moomux-parked": true}, failWithOutput: map[string]string{}, failFirstN: map[string]int{}}}
+
+	if _, _, err := a.createSession("demo", "", "", "feature/login-page", "", true, boolPtr(false), "", "", ""); err == nil {
+		t.Fatal("expected error: worktree belongs to a parked session")
+	}
+	assertNoWorktreeRemove(t, git)
+}
+
+// A worktree made by hand outside WorktreeRoot may hold gitignored files and a lock.
+func TestCreateSessionExistingBranchKeepsWorktreeOutsideRoot(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "my-own-checkout")
+	a, git := staleWorktreeFixture(t, outside)
+	if _, _, err := a.createSession("demo", "", "", "feature/login-page", "", true, boolPtr(false), "", "", ""); err == nil {
+		t.Fatal("expected error for a worktree outside WorktreeRoot")
+	}
+	assertNoWorktreeRemove(t, git)
+}
+
+// git prints the resolved path; a symlinked root must still match the session's.
+func TestCreateSessionExistingBranchKeepsLiveWorktreeUnderSymlinkedRoot(t *testing.T) {
+	a, git, _ := newTestApp(t, gitProject("/repo"))
+	real := filepath.Join(t.TempDir(), "real")
+	if err := os.MkdirAll(filepath.Join(real, "demo", "live"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	a.WorktreeRoot = link
+	git.out["worktree list --porcelain"] = "worktree " + filepath.Join(real, "demo", "live") + "\nbranch refs/heads/feature/login-page\n"
+	_ = a.Store.Put(session.Session{
+		ID: "demo:live", Project: "demo", Name: "live", Branch: "feature/login-page",
+		WorktreePath: filepath.Join(link, "demo", "live"), TmuxSession: "moomux-live",
+	})
+	if _, _, err := a.createSession("demo", "", "", "feature/login-page", "", true, boolPtr(false), "", "", ""); err == nil {
+		t.Fatal("expected error: live session's worktree")
+	}
+	assertNoWorktreeRemove(t, git)
+}
+
+func TestChangeSummaryFailsClosedOnUnpushedCountError(t *testing.T) {
+	a, git, _ := newTestApp(t, gitProject("/repo"))
+	_ = a.Store.Put(session.Session{ID: "demo:feat", Project: "demo", Name: "feat", Branch: "feat", WorktreePath: "/wt"})
+	git.failOn["rev-parse --abbrev-ref --symbolic-full-name @{u}"] = false
+	git.failOn["rev-list --count @{u}..HEAD"] = true
+	if _, _, ok := a.ChangeSummary("demo:feat"); ok {
+		t.Fatal("a git error must not read as a safe 0 unpushed")
+	}
+}
+
+func deleteCalls(git *fakeGitRunner) (removed, branchDeleted bool) {
+	for _, c := range git.calls {
+		j := strings.Join(c, " ")
+		removed = removed || strings.Contains(j, "worktree remove")
+		branchDeleted = branchDeleted || strings.Contains(j, "branch -D")
+	}
+	return
+}
+
+func TestDeleteSessionKeepsBranchWhenWorktreeSwitched(t *testing.T) {
+	a, git, _ := newTestApp(t, gitProject("/repo"))
+	wt := filepath.Join(a.WorktreeRoot, "demo", "feat")
+	git.out["rev-parse --abbrev-ref HEAD"] = "other-branch"
+	_ = a.Store.Put(session.Session{ID: "demo:feat", Project: "demo", Name: "feat", Branch: "feat", NewBranch: true, TmuxSession: "moomux-feat", WorktreePath: wt})
+
+	hint, err := a.DeleteSession("demo:feat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed, deleted := deleteCalls(git); !removed || deleted {
+		t.Fatalf("removed=%v branchDeleted=%v; calls = %v", removed, deleted, git.calls)
+	}
+	if !strings.Contains(hint, "kept branch feat") {
 		t.Fatalf("hint = %q", hint)
+	}
+}
+
+func TestDeleteSessionKeepsBranchWithPrunedUpstreamCommits(t *testing.T) {
+	a, git, _ := newTestApp(t, gitProject("/repo"))
+	wt := filepath.Join(a.WorktreeRoot, "demo", "feat")
+	git.out["rev-parse --abbrev-ref HEAD"] = "feat"
+	git.failOn["rev-parse --abbrev-ref --symbolic-full-name feat@{u}"] = true
+	git.out["rev-list --count refs/heads/feat --not --remotes"] = "2"
+	_ = a.Store.Put(session.Session{ID: "demo:feat", Project: "demo", Name: "feat", Branch: "feat", NewBranch: true, TmuxSession: "moomux-feat", WorktreePath: wt})
+
+	hint, err := a.DeleteSession("demo:feat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, deleted := deleteCalls(git); deleted {
+		t.Fatalf("branch with commits no remote has was deleted; calls = %v", git.calls)
+	}
+	if !strings.Contains(hint, "upstream is gone") {
+		t.Fatalf("hint = %q", hint)
+	}
+}
+
+func TestDeleteSessionDeletesPrunedBranchFullyOnRemote(t *testing.T) {
+	a, git, _ := newTestApp(t, gitProject("/repo"))
+	wt := filepath.Join(a.WorktreeRoot, "demo", "feat")
+	git.out["rev-parse --abbrev-ref HEAD"] = "feat"
+	git.failOn["rev-parse --abbrev-ref --symbolic-full-name feat@{u}"] = true
+	git.out["rev-list --count refs/heads/feat --not --remotes"] = "0"
+	_ = a.Store.Put(session.Session{ID: "demo:feat", Project: "demo", Name: "feat", Branch: "feat", NewBranch: true, TmuxSession: "moomux-feat", WorktreePath: wt})
+
+	if _, err := a.DeleteSession("demo:feat"); err != nil {
+		t.Fatal(err)
+	}
+	if _, deleted := deleteCalls(git); !deleted {
+		t.Fatalf("merged branch should be deleted; calls = %v", git.calls)
+	}
+}
+
+// A hand-edited store entry pointing at the repo, or outside WorktreeRoot,
+// must never reach RemoveWorktree's RemoveAll fallback.
+func TestDeleteSessionNeverRemovesPathsOutsideWorktreeRoot(t *testing.T) {
+	for name, path := range map[string]string{"repo": "/repo", "outside": filepath.Join(t.TempDir(), "elsewhere")} {
+		t.Run(name, func(t *testing.T) {
+			a, git, _ := newTestApp(t, gitProject("/repo"))
+			_ = a.Store.Put(session.Session{ID: "demo:feat", Project: "demo", Name: "feat", Branch: "feat", NewBranch: true, TmuxSession: "moomux-feat", WorktreePath: path})
+			hint, err := a.DeleteSession("demo:feat")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if removed, deleted := deleteCalls(git); removed || deleted {
+				t.Fatalf("removed=%v branchDeleted=%v; calls = %v", removed, deleted, git.calls)
+			}
+			if !strings.Contains(hint, "not a moomux worktree") {
+				t.Fatalf("hint = %q", hint)
+			}
+			if _, ok := a.Store.Get("demo:feat"); ok {
+				t.Fatal("record should still be deleted")
+			}
+		})
 	}
 }
 
