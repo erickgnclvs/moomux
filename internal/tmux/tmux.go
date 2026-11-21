@@ -537,16 +537,22 @@ func (c *Client) KillSession(name string) error {
 	return err
 }
 
-// CurrentSessionName returns the tmux session name of the pane this process
-// is running in (no -t target: tmux resolves it from $TMUX/$TMUX_PANE in the
-// environment, which the child process inherits). Errors when not run
-// inside a tmux client, e.g. $TMUX unset.
+// CurrentSessionName resolves the caller's explicit pane on its tmux server.
+// An untargeted display-message can report another attached client's session.
 func (c *Client) CurrentSessionName() (string, error) {
-	out, err := c.Runner.Run("display-message", "-p", "#S")
+	pane := os.Getenv("TMUX_PANE")
+	if os.Getenv("TMUX") == "" || !validPaneID(pane) {
+		return "", errors.New("missing tmux server or invalid TMUX_PANE")
+	}
+	out, err := c.Runner.Run("display-message", "-p", "-t", pane, "#{pane_id} #{session_name}")
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(out), nil
+	id, name, ok := strings.Cut(strings.TrimSuffix(out, "\n"), " ")
+	if !ok || id != pane || name == "" {
+		return "", fmt.Errorf("could not resolve tmux pane %s to its session", pane)
+	}
+	return name, nil
 }
 
 // captureMarker delimits one session's screen in CapturePanes' batched

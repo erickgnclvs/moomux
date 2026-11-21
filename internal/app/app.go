@@ -1997,12 +1997,22 @@ func (a *App) SessionForTmuxName(tmuxName string) (session.Session, bool) {
 // caller's cwd without needing an explicit session ID.
 func (a *App) SessionForPath(path string) (session.Session, bool) {
 	path = filepath.Clean(path)
-	for _, s := range a.Store.All() {
+	sessions := a.Store.All()
+	for _, s := range sessions {
 		wt := filepath.Clean(s.WorktreePath)
-		if path == wt {
+		if path == wt || pathWithin(wt, path) {
 			return s, true
 		}
-		if rel, err := filepath.Rel(wt, path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	}
+	// A tool shell may report a physical cwd for a worktree registered
+	// through a symlink (for example, /private/tmp and /tmp on macOS).
+	physical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return session.Session{}, false
+	}
+	for _, s := range sessions {
+		wt, err := filepath.EvalSymlinks(s.WorktreePath)
+		if err == nil && (physical == wt || pathWithin(wt, physical)) {
 			return s, true
 		}
 	}

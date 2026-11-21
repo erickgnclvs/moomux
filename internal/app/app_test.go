@@ -2282,6 +2282,25 @@ func TestSessionForPath(t *testing.T) {
 	}
 }
 
+func TestSessionForPathThroughSymlink(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	worktree := t.TempDir()
+	subdir := filepath.Join(worktree, "src")
+	if err := os.Mkdir(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "checkout")
+	if err := os.Symlink(worktree, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.Put(session.Session{ID: "demo:a", WorktreePath: alias}); err != nil {
+		t.Fatal(err)
+	}
+	if s, ok := a.SessionForPath(subdir); !ok || s.ID != "demo:a" {
+		t.Fatalf("resolved worktree subdirectory: s=%+v ok=%v", s, ok)
+	}
+}
+
 func TestSessionForTmuxName(t *testing.T) {
 	a, _, _ := newTestApp(t, gitProject("/repo"))
 	_ = a.Store.Put(session.Session{ID: "demo:a", Project: "demo", Name: "a", TmuxSession: "moomux-a-1234"})

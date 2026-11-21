@@ -331,11 +331,23 @@ func TestPaneCwd(t *testing.T) {
 }
 
 func TestCurrentSessionName(t *testing.T) {
-	fr := &fakeRunner{out: map[string]string{"display-message -p #S": "moomux-foo-1234\n"}}
+	t.Setenv("TMUX", "/tmp/tmux-501/default,1,0")
+	t.Setenv("TMUX_PANE", "%7")
+	fr := &fakeRunner{out: map[string]string{
+		"display-message -p -t %7 #{pane_id} #{session_name}": "%7 moomux-foo-1234\n",
+	}}
 	c := &Client{Runner: fr}
 	got, err := c.CurrentSessionName()
 	if err != nil || got != "moomux-foo-1234" {
 		t.Fatalf("got %q err %v", got, err)
+	}
+
+	for _, pane := range []string{"", "moomux-foo-1234"} {
+		t.Setenv("TMUX_PANE", pane)
+		fr.calls = nil
+		if _, err := c.CurrentSessionName(); err == nil || len(fr.calls) != 0 {
+			t.Errorf("pane %q: got calls %v, err %v; want error before calling tmux", pane, fr.calls, err)
+		}
 	}
 }
 
