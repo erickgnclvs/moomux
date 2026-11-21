@@ -1709,7 +1709,7 @@ func (a *App) SetSessionStatusTitle(id string, st watcher.State) error {
 }
 
 func (a *App) SetSessionTags(id, ticket, pr string) (session.Session, error) {
-	s, ok := a.Store.Get(id)
+	_, ok := a.Store.Get(id)
 	if !ok {
 		return session.Session{}, fmt.Errorf("unknown session %q", id)
 	}
@@ -2027,7 +2027,7 @@ func (a *App) SessionForPath(path string) (session.Session, bool) {
 }
 
 func (a *App) SetSessionPrompt(id, prompt string) (session.Session, error) {
-	s, ok := a.Store.Get(id)
+	_, ok := a.Store.Get(id)
 	if !ok {
 		return session.Session{}, fmt.Errorf("unknown session %q", id)
 	}
@@ -2086,7 +2086,7 @@ func (a *App) SetSessionAgent(id, agent string, dangerous bool) (session.Session
 	if err := validateAgent(agent); err != nil {
 		return session.Session{}, err
 	}
-	s, ok := a.Store.Get(id)
+	_, ok := a.Store.Get(id)
 	if !ok {
 		return session.Session{}, fmt.Errorf("unknown session %q", id)
 	}
