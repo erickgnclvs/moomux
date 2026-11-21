@@ -959,7 +959,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // switchProject moves the active project by delta, skipping empty ones —
-// shared by Tab/Shift-Tab and a horizontal mouse-wheel swipe.
+// shared by Tab/Shift-Tab and the [/] and H/L alternates.
 func (m *Model) switchProject(delta int) {
 	if len(m.projects) == 0 {
 		return
@@ -975,7 +975,7 @@ func (m *Model) switchProject(delta int) {
 // single-project-fallback case any cursor movement is folded back into the
 // focused project's own multi-view panel state before returning:
 // renderMultiView's enterSingleProjectContext resyncs m.cursor from that
-// state on every render, so without this a click/wheel-scroll would just get
+// state on every render, so without this a click would just get
 // silently overwritten on the next frame. Ticket/PR icon clicks (via
 // m.linkAt) work identically in all three cases — copy-vs-open over SSH
 // (m.isRemote) isn't mode-specific, so mobile clients see the same behavior
