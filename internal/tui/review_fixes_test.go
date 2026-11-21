@@ -46,6 +46,7 @@ func TestConfirmDeleteNarrow(t *testing.T) {
 	wt := "/very/long/worktrees/directory/path/that/ends/in/UNIQUETAIL"
 	m := newTestModel(&fakeBackend{sessions: []session.Session{{ID: "demo:a", Project: "demo", Name: "a", WorktreePath: wt}}})
 	m.width, m.height = 40, 30
+	m.confirmID = "demo:a"
 	m.confirmGit = gitStatusInfo{ok: true, dirty: true}
 	m.mode = ModeConfirmDelete
 	before := m.View()

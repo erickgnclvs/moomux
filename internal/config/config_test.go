@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 func TestExpandHome(t *testing.T) {
@@ -580,5 +582,81 @@ func TestSetModelExcludedLeavesOldMap(t *testing.T) {
 	c.SetModelExcluded("claude", "b", false)
 	if _, ok := c.ExcludedModels["claude"]; ok {
 		t.Fatalf("empty agent entry kept: %v", c.ExcludedModels)
+	}
+}
+
+// An older binary saving must not erase settings a newer one added: unknown
+// top-level keys and unknown keys inside a [projects.x] table both survive.
+func TestSaveKeepsUnknownKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	src := `future_setting = "keep me"
+theme = "old"
+
+[future_table]
+a = 1
+
+[projects.demo]
+repo = "/repo"
+future_project_key = true
+`
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Theme = "new"
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if _, err := toml.DecodeFile(path, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["future_setting"] != "keep me" || got["theme"] != "new" {
+		t.Fatalf("top level = %v", got)
+	}
+	if tbl, _ := got["future_table"].(map[string]any); tbl["a"] != int64(1) {
+		t.Fatalf("future_table = %v", got["future_table"])
+	}
+	proj := got["projects"].(map[string]any)["demo"].(map[string]any)
+	if proj["future_project_key"] != true || proj["repo"] != "/repo" {
+		t.Fatalf("project = %v", proj)
+	}
+}
+
+// A key this build knows but cleared (omitempty) is not "unknown": it must
+// stay gone instead of being resurrected from the old file.
+func TestSaveDoesNotResurrectClearedKnownKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("tailnet_listen = true\n\n[projects.demo]\nrepo = \"/r\"\nemoji = \"x\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.TailnetListen = false
+	p := cfg.Projects["demo"]
+	p.Emoji = ""
+	cfg.Projects["demo"] = p
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), "tailnet_listen") || strings.Contains(string(data), "emoji") {
+		t.Fatalf("cleared keys came back:\n%s", data)
+	}
+}
+
+func TestSaveFileIsPrivate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "moomux", "config.toml")
+	if err := Save(path, &Config{Projects: map[string]Project{}}); err != nil {
+		t.Fatal(err)
+	}
+	fi, _ := os.Stat(path)
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("config.toml mode = %v, want 0600", fi.Mode().Perm())
 	}
 }

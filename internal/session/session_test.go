@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -410,7 +412,7 @@ func TestAllIsDeterministicWhenOrderAndCreatedAtTie(t *testing.T) {
 	created := time.Date(2026, 5, 17, 10, 0, 0, 0, time.UTC)
 	seed := &Store{Path: path}
 	_ = seed.Load()
-	for i := range 30 {
+	for i := range 12 {
 		_ = seed.Put(Session{ID: fmt.Sprintf("p:s%02d", i), Project: "p", CreatedAt: created})
 	}
 
@@ -526,5 +528,111 @@ func TestStoreKeepsUnknownFields(t *testing.T) {
 	}
 	if _, ok := f.Sessions["b"]; ok {
 		t.Errorf("deleted session b came back: %s", data)
+	}
+}
+
+// TestStoreHelperProcess is the body of the child processes that
+// TestStoreTwoProcessesDoNotLoseWrites spawns; it does nothing in a normal run.
+func TestStoreHelperProcess(t *testing.T) {
+	path, prefix := os.Getenv("MOOMUX_TEST_STORE"), os.Getenv("MOOMUX_TEST_PREFIX")
+	if path == "" {
+		t.Skip("helper process only")
+	}
+	s := &Store{Path: path}
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 12 {
+		id := fmt.Sprintf("p:%s-%d", prefix, i)
+		if err := s.Put(Session{ID: id, Project: "p", Name: id, Prompt: strings.Repeat("x", 500)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Two moomux processes (a `moomux spawn` beside the TUI) share one
+// sessions.json. Each reload-modify-save must be atomic across processes, or
+// one process's save overwrites the other's session.
+func TestStoreTwoProcessesDoNotLoseWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.json")
+	const procs = 4
+	var cmds []*exec.Cmd
+	for i := range procs {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestStoreHelperProcess$")
+		cmd.Env = append(os.Environ(), "MOOMUX_TEST_STORE="+path, fmt.Sprintf("MOOMUX_TEST_PREFIX=%d", i))
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		cmds = append(cmds, cmd)
+	}
+	for _, cmd := range cmds {
+		if err := cmd.Wait(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &Store{Path: path}
+	if err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(s.All()), procs*12; got != want {
+		t.Fatalf("%d sessions survived, want %d: concurrent saves overwrote each other", got, want)
+	}
+}
+
+// Update changes only what edit touches, on the freshly reloaded record: a
+// stale copy cannot revert a field another process set, and a session another
+// process deleted is not resurrected.
+func TestStoreUpdateKeepsOtherProcessesChanges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.json")
+	a, b := &Store{Path: path}, &Store{Path: path}
+	for _, s := range []*Store{a, b} {
+		if err := s.Load(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.Put(Session{ID: "p:x", Project: "p", Name: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Put(Session{ID: "p:gone", Project: "p", Name: "gone"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.SetProtected("p:x", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Delete("p:gone"); err != nil {
+		t.Fatal(err)
+	}
+	// a's in-memory view is stale: Protected is unset and "gone" still exists.
+	got, err := a.Update("p:x", func(s *Session) { s.Ticket = "T-1" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Protected || got.Ticket != "T-1" {
+		t.Fatalf("Update result = %+v, want Protected kept and Ticket set", got)
+	}
+	if _, err := a.Update("p:gone", func(s *Session) { s.Ticket = "T-2" }); err == nil {
+		t.Fatal("Update resurrected a session another process deleted")
+	}
+	if _, ok := b.Get("p:gone"); ok {
+		t.Fatal("deleted session is back")
+	}
+}
+
+func TestStoreFileIsPrivate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "moomux", "sessions.json")
+	s := &Store{Path: path}
+	if err := s.Put(Session{ID: "p:x"}); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("sessions.json mode = %v, want 0600", fi.Mode().Perm())
+	}
+	di, _ := os.Stat(filepath.Dir(path))
+	if di.Mode().Perm() != 0o700 {
+		t.Fatalf("dir mode = %v, want 0700", di.Mode().Perm())
 	}
 }

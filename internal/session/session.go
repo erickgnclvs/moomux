@@ -129,6 +129,20 @@ var sessionKeys = func() map[string]bool {
 	return keys
 }()
 
+// lock takes the in-process mutex and then the cross-process file lock, so a
+// reload-modify-save cycle cannot interleave with another moomux process's.
+// The returned func releases both. Load and Reload only read, and save
+// replaces the file atomically, so they need no file lock.
+func (s *Store) lock() (func(), error) {
+	s.mu.Lock()
+	unlock, err := atomicfile.Lock(s.Path)
+	if err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
+	return func() { unlock(); s.mu.Unlock() }, nil
+}
+
 func (s *Store) Load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -222,12 +236,19 @@ func (s *Store) save() error {
 	if err != nil {
 		return err
 	}
-	return atomicfile.Write(s.Path, data, 0o644)
+	// 0600: sessions hold first prompts and ticket/PR URLs.
+	if err := os.MkdirAll(filepath.Dir(s.Path), 0o700); err != nil {
+		return err
+	}
+	return atomicfile.Write(s.Path, data, 0o600)
 }
 
 func (s *Store) Put(sess Session) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock, err := s.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if err := s.reloadLocked(); err != nil {
 		return err
 	}
@@ -236,8 +257,11 @@ func (s *Store) Put(sess Session) error {
 }
 
 func (s *Store) Delete(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock, err := s.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if err := s.reloadLocked(); err != nil {
 		return err
 	}
@@ -249,7 +273,7 @@ func (s *Store) Delete(id string) error {
 // itself (worktree, tmux entry, metadata) is left untouched — archiving only
 // hides it from the default list.
 func (s *Store) SetArchived(id string, archived bool) (Session, error) {
-	return s.update(id, func(sess *Session) { sess.Archived = archived })
+	return s.Update(id, func(sess *Session) { sess.Archived = archived })
 }
 
 // SetPinned flips a session's Pinned flag and persists it. Like archiving,
@@ -257,18 +281,25 @@ func (s *Store) SetArchived(id string, archived bool) (Session, error) {
 // sessions to the top of their group); its Order is left alone, so
 // unpinning puts it back exactly where it was.
 func (s *Store) SetPinned(id string, pinned bool) (Session, error) {
-	return s.update(id, func(sess *Session) { sess.Pinned = pinned })
+	return s.Update(id, func(sess *Session) { sess.Pinned = pinned })
 }
 
 // SetProtected flips a session's Protected flag and persists it.
 func (s *Store) SetProtected(id string, protected bool) (Session, error) {
-	return s.update(id, func(sess *Session) { sess.Protected = protected })
+	return s.Update(id, func(sess *Session) { sess.Protected = protected })
 }
 
-// update applies edit to the freshly reloaded session id and persists it.
-func (s *Store) update(id string, edit func(*Session)) (Session, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// Update applies edit to the freshly reloaded session id and persists it.
+// Prefer it to Get-then-Put for any change to a few fields: Put writes the
+// whole record, so a copy read earlier would revert whatever another caller
+// or process changed in between (Protected, tags, or a deleted session
+// coming back).
+func (s *Store) Update(id string, edit func(*Session)) (Session, error) {
+	unlock, err := s.lock()
+	if err != nil {
+		return Session{}, err
+	}
+	defer unlock()
 	if err := s.reloadLocked(); err != nil {
 		return Session{}, err
 	}
@@ -365,8 +396,11 @@ func (s *Store) ByProject(project string) []Session {
 // the rest of that project's ordering stays self-consistent; sessions
 // outside the given slice are left untouched.
 func (s *Store) Reorder(sessions []Session) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlock, err := s.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if err := s.reloadLocked(); err != nil {
 		return err
 	}
