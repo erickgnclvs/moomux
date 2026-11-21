@@ -19,6 +19,56 @@
 │  ↑↓/jk/pg scroll  ?/esc close        │
 │                                      │
 ╰──────────────────────────────────────╯
+=== 60x24 ===
+╭──────────────────────────────────────────────────────────╮
+│                                                          │
+│  moomux commands                                         │
+│                                                          │
+│  Sessions                                                │
+│    n          new session                                │
+│    f          find session (all projects)                │
+│    enter / o  open (attach tmux)                         │
+│    x          park (kill tmux)                           │
+│    d          delete (or all marked)                     │
+│    space      mark to delete                             │
+│    M          mark merged/closed PRs                     │
+│    esc        clear marks                                │
+│    a          archive session                            │
+│    A          show archived                              │
+│    p          pin to top / unpin                         │
+│    t          tag ticket / PR                            │
+│    e          edit session                               │
+│    D          diff tool                                  │
+│    g          file into a folder                         │
+│                                                          │
+│  ↑↓/jk/pg scroll  ?/esc close                            │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+=== 72x24 ===
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│  moomux commands                                                     │
+│                                                                      │
+│  Sessions                         Navigation                         │
+│    n          new session           ↑ / k              move up       │
+│    f          find session (all     ↓ / j              move down     │
+│               projects)             shift+↑↓ / KJ      reorder       │
+│    enter / o  open (attach tmux)                       session       │
+│    x          park (kill tmux)      tab / ] / →        next project  │
+│    d          delete (or all        shift+tab / [ / ←  prev project  │
+│               marked)               } / {              ...incl.      │
+│    space      mark to delete                           empty ones    │
+│    M          mark merged/closed    shift+←→ / HL      reorder       │
+│               PRs                                      project       │
+│    esc        clear marks           R                  force-copy    │
+│    a          archive session                          ticket/PR     │
+│    A          show archived                            links: off    │
+│    p          pin to top / unpin                                     │
+│    t          tag ticket / PR                                        │
+│                                                                      │
+│  ↑↓/jk/pg scroll  ?/esc close                                        │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
 === 100x32 ===
            ╭────────────────────────────────────────────────────────────────────────────╮           
            │                                                                            │           

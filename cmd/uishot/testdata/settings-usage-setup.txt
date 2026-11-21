@@ -19,6 +19,56 @@
 │  esc close  enter change             │
 │                                      │
 ╰──────────────────────────────────────╯
+=== 60x24 ===
+                                                            
+╭──────────────────────────────────────────────────────────╮
+│                                                          │
+│  SETTINGS                                                │
+│                                                          │
+│     sort mode                        manual (shift+↑↓)   │
+│     theme & appearance                  default / auto   │
+│     auto-tmux                                    [off]   │
+│     auto-submit default                          [off]   │
+│     compact detail view                          [off]   │
+│     terminal pane                                 [on]   │
+│     hidden models                                 none   │
+│     diff tool                                  not set   │
+│   ▸ Agent usage                             not set up   │
+│                                                          │
+│  To show it, install agent-usage:                        │
+│  brew install afitzgerald/agent-usage/agent-usage        │
+│  brew services start agent-usage                         │
+│                                                          │
+│  ↑↓ select  enter/←→ change  esc close                   │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+                                                            
+                                                            
+=== 72x24 ===
+                                                                        
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│  SETTINGS                                                            │
+│                                                                      │
+│     sort mode                                    manual (shift+↑↓)   │
+│     theme & appearance                              default / auto   │
+│     auto-tmux                                                [off]   │
+│     auto-submit default                                      [off]   │
+│     compact detail view                                      [off]   │
+│     terminal pane                                             [on]   │
+│     hidden models                                             none   │
+│     diff tool                                              not set   │
+│   ▸ Agent usage                                         not set up   │
+│                                                                      │
+│  To show it, install agent-usage:                                    │
+│  brew install afitzgerald/agent-usage/agent-usage                    │
+│  brew services start agent-usage                                     │
+│                                                                      │
+│  ↑↓ select  enter/←→ change  esc close                               │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
+                                                                        
+                                                                        
 === 100x32 ===
                                                                                                     
                                                                                                     

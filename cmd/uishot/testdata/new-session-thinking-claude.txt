@@ -19,6 +19,56 @@
 │  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
+=== 60x24 ===
+╭──────────────────────────────────────────────────────────╮
+│                                                          │
+│                                                          │
+│  thinking:  [default]  low  medium  high  xhigh  max     │
+│                                                          │
+│  > session name (optional)                               │
+│                                                          │
+│  > existing branch (optional)                            │
+│                                                          │
+│  > base branch (optional, defaults to pr…                │
+│                                                          │
+│  > ticket url (optional)                                 │
+│                                                          │
+│  > PR url (optional)                                     │
+│                                                          │
+│  agent:  [claude]  codex  opencode  antigravity          │
+│                                                          │
+│  model:  [default]  Sonnet  Opus  Fable                  │
+│                                                          │
+│                                                          │
+│  optional — claude --effort level; "default" omits it    │
+│  tab/↑↓ fields  ←→ choose  enter  esc cancel             │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+=== 72x24 ===
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│                                                                      │
+│  thinking:  [default]  low  medium  high  xhigh  max                 │
+│                                                                      │
+│  > session name (optional)                                           │
+│                                                                      │
+│  > existing branch (optional)                                        │
+│                                                                      │
+│  > base branch (optional, defaults to pr…                            │
+│                                                                      │
+│  > ticket url (optional)                                             │
+│                                                                      │
+│  > PR url (optional)                                                 │
+│                                                                      │
+│  agent:  [claude]  codex  opencode  antigravity                      │
+│                                                                      │
+│  model:  [default]  Sonnet  Opus  Fable                              │
+│                                                                      │
+│                                                                      │
+│  optional — claude --effort level; "default" omits it                │
+│  tab/↑↓ fields  ←→ choose  enter  esc cancel                         │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
 === 100x32 ===
            ╭────────────────────────────────────────────────────────────────────────────╮           
            │                                                                            │           

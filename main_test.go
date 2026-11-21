@@ -475,3 +475,23 @@ func TestResolveVersionKeepsInjectedVersion(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestParseSpawnMapsFormFields(t *testing.T) {
+	sa, err := parseSpawn([]string{"-project", "p", "-base", "release/x", "-pr", "https://example.test/pr/1", "-prompt", "go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := sa.req
+	if r.BaseBranch != "release/x" || r.PR != "https://example.test/pr/1" || r.OpenTerminal || !r.AutoSubmit {
+		t.Errorf("req = %+v", r)
+	}
+	if _, err := parseSpawn([]string{"-project", "p", "-background"}); err != nil {
+		t.Errorf("-background must parse: %v", err)
+	}
+}
+
+func TestParkNoticeIsNotPastTense(t *testing.T) {
+	if got := parkNotice("x"); strings.HasPrefix(got, "parked") {
+		t.Errorf("parkNotice = %q: the worker has not finished", got)
+	}
+}

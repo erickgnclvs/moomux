@@ -19,6 +19,56 @@
                                         
                                         
                                         
+=== 60x24 ===
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+╭──────────────────────────────────────────────────────────╮
+│                                                          │
+│  Delete 2 sessions?                                      │
+│  This kills their tmux sessions and removes their        │
+│  worktrees.                                              │
+│                                                          │
+│  demo/feature-auth  3 files changed, 2 commits unpushed  │
+│  demo/bugfix-timeout                                     │
+│                                                          │
+│  ⚠ 1 with uncommitted changes, 1 with unpushed commits   │
+│  y to confirm you understand   n/esc to cancel           │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+=== 72x24 ===
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│  Delete 2 sessions?                                                  │
+│  This kills their tmux sessions and removes their worktrees.         │
+│                                                                      │
+│  demo/feature-auth  3 files changed, 2 commits unpushed              │
+│  demo/bugfix-timeout                                                 │
+│                                                                      │
+│  ⚠ 1 with uncommitted changes, 1 with unpushed commits               │
+│  y to confirm you understand   n/esc to cancel                       │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+                                                                        
 === 100x32 ===
                                                                                                     
                                                                                                     

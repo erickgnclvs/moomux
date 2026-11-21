@@ -19,6 +19,56 @@
 │  ↑↓/jk/pg scroll  ?/esc close        │
 │                                      │
 ╰──────────────────────────────────────╯
+=== 60x24 ===
+╭──────────────────────────────────────────────────────────╮
+│                                                          │
+│                                                          │
+│  Projects                                                │
+│    /      pick project                                   │
+│    n/e/d  add/edit/remove (picker)                       │
+│                                                          │
+│                                                          │
+│  General                                                 │
+│    ?  toggle this help                                   │
+│    q  quit                                               │
+│    r  refresh                                            │
+│    s  settings (theme, sort mode, auto-tmux, auto-       │
+│       submit, diff tool)                                 │
+│    u  update & relaunch (when a new version is           │
+│       available)                                         │
+│                                                          │
+│                                                          │
+│  tip: park from agent: Claude /kill · Codex $kill        │
+│  tip: tag from agent: Claude /tag · Codex $tag           │
+│                                                          │
+│  ↑↓/jk/pg scroll  ?/esc close                            │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+=== 72x24 ===
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│    g          file into a folder                                     │
+│    z          collapse its folder                                    │
+│    G          manage folders                                         │
+│                                                                      │
+│                                                                      │
+│  Projects                         General                            │
+│    /      pick project              ?  toggle this help              │
+│    n/e/d  add/edit/remove (picker)  q  quit                          │
+│                                     r  refresh                       │
+│                                     s  settings (theme, sort mode,   │
+│                                        auto-tmux, auto-submit, diff  │
+│                                        tool)                         │
+│                                     u  update & relaunch (when a     │
+│                                        new version is available)     │
+│                                                                      │
+│                                                                      │
+│  tip: park from agent: Claude /kill · Codex $kill                    │
+│  tip: tag from agent: Claude /tag · Codex $tag                       │
+│                                                                      │
+│  ↑↓/jk/pg scroll  ?/esc close                                        │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
 === 100x32 ===
            ╭────────────────────────────────────────────────────────────────────────────╮           
            │                                                                            │           

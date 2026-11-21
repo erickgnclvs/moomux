@@ -19,6 +19,56 @@
 │  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
+=== 60x24 ===
+╭──────────────────────────────────────────────────────────╮
+│                                                          │
+│                                                          │
+│  project:  [demo]  spare                                 │
+│                                                          │
+│  > first prompt (optional)                               │
+│  >                                                       │
+│  >                                                       │
+│  >                                                       │
+│                                                          │
+│  thinking:  ‹ [default] ›                                │
+│                                                          │
+│  > session name (optional)                               │
+│                                                          │
+│  > existing branch (optional)                            │
+│                                                          │
+│  > base branch (optional, defaults to pr…                │
+│                                                          │
+│  > ticket url (optional)                                 │
+│                                                          │
+│  which project this session belongs to — ←→ to choose    │
+│  tab/↑↓ fields  ←→ choose  enter  esc cancel             │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+=== 72x24 ===
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│                                                                      │
+│  project:  [demo]  spare                                             │
+│                                                                      │
+│  > first prompt (optional)                                           │
+│  >                                                                   │
+│  >                                                                   │
+│  >                                                                   │
+│                                                                      │
+│  thinking:  [default]  minimal  low  medium  high  xhigh             │
+│                                                                      │
+│  > session name (optional)                                           │
+│                                                                      │
+│  > existing branch (optional)                                        │
+│                                                                      │
+│  > base branch (optional, defaults to pr…                            │
+│                                                                      │
+│  > ticket url (optional)                                             │
+│                                                                      │
+│  which project this session belongs to — ←→ to choose                │
+│  tab/↑↓ fields  ←→ choose  enter  esc cancel                         │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
 === 100x32 ===
            ╭────────────────────────────────────────────────────────────────────────────╮           
            │                                                                            │           

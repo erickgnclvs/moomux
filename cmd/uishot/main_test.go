@@ -48,7 +48,7 @@ func TestRenderScreenUnknownScreen(t *testing.T) {
 // sizes are the terminal geometries every screen is checked at: the
 // narrowest real-world client (see narrowWidthBreak in internal/tui) and the
 // default screenshot size.
-var sizes = [][2]int{{40, 20}, {100, 32}}
+var sizes = [][2]int{{40, 20}, {60, 24}, {72, 24}, {100, 32}}
 
 // platformDependent screens deliberately render OS-specific content, so
 // their golden file only means anything on the platform it was captured on —
