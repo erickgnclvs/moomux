@@ -18,7 +18,9 @@ import (
 // nested under a top-level "projects" object (root.projects[dir]), not at
 // root[dir] directly — the latter looks plausible but Claude Code never
 // reads it, so the dialog would still show despite this having "run
-// successfully". This only ever touches the entry for dir — every other
+// successfully". It deliberately does not set the external-includes
+// approval: a cloned repo's CLAUDE.md "@~/..." imports keep their own prompt.
+// This only ever touches the entry for dir — every other
 // project's trust state is left untouched.
 func TrustDirectory(home, dir string) error {
 	path := filepath.Join(home, ".claude.json")
@@ -48,13 +50,11 @@ func TrustDirectory(home, dir string) error {
 	// whatever Claude wrote in between (see install_concurrent_test.go on
 	// why installers stay off the frequent path).
 	if entry["hasTrustDialogAccepted"] == true &&
-		entry["hasCompletedProjectOnboarding"] == true &&
-		entry["hasClaudeMdExternalIncludesApproved"] == true {
+		entry["hasCompletedProjectOnboarding"] == true {
 		return nil
 	}
 	entry["hasTrustDialogAccepted"] = true
 	entry["hasCompletedProjectOnboarding"] = true
-	entry["hasClaudeMdExternalIncludesApproved"] = true
 	projects[dir] = entry
 	root["projects"] = projects
 

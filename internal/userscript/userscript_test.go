@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeScript(t *testing.T, dir, name, body string) {
@@ -108,5 +109,18 @@ func TestRunWorktreeDeleteOnlyRunsDeleteScripts(t *testing.T) {
 	}
 	if got := string(out); got != "delete\n" {
 		t.Fatalf("expected only delete script to run, got %q", got)
+	}
+}
+
+// A script that backgrounds a child holding stdout used to block the run
+// until the child exited, well past the timeout.
+func TestRunWorktreeCreateDoesNotWaitForABackgroundChild(t *testing.T) {
+	home := t.TempDir()
+	writeScript(t, globalDir(home, "worktree-create"), "10-bg.sh",
+		"#!/bin/sh\nsleep 20 &\necho started\n")
+	start := time.Now()
+	RunWorktreeCreate(home, Env{Project: "p", Worktree: t.TempDir()})
+	if d := time.Since(start); d > 8*time.Second {
+		t.Fatalf("run took %v, want it to give up on the child after ~2s", d)
 	}
 }

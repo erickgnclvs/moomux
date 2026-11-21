@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
@@ -67,7 +68,9 @@ func ListenTailnet(port int) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newTailnetListener(ln, owner), nil
+	l := newTailnetListener(ln, owner)
+	l.self = addr
+	return l, nil
 }
 
 // tailnetRetryMin and tailnetRetryMax bound ListenTailnetRetry's backoff.
@@ -107,6 +110,11 @@ func ListenTailnetRetry(port int, wake <-chan struct{}, onErr func(error)) net.L
 type tailnetListener struct {
 	net.Listener
 	owner string
+	// self is this node's own tailnet address, when known. whois admits it
+	// as the owner, so a local process dialing the tailnet port would pass
+	// as the owner's phone; admit refuses it. Empty in tests that bind
+	// loopback and dial from loopback.
+	self string
 
 	// The check is a subprocess, so it runs per connection off the accept
 	// path rather than inside Accept. Inline, one slow or wedged
@@ -160,6 +168,7 @@ func newTailnetListener(ln net.Listener, owner string) *tailnetListener {
 // result cache.
 func (l *tailnetListener) sibling(ln net.Listener) *tailnetListener {
 	s := newTailnetListener(ln, l.owner)
+	s.self = l.self
 	s.mu, s.ok = l.mu, l.ok
 	return s
 }
@@ -231,7 +240,7 @@ func (l *tailnetListener) pump() {
 
 func (l *tailnetListener) admit(c net.Conn) {
 	peer, _, err := net.SplitHostPort(c.RemoteAddr().String())
-	if err != nil || !l.authorized(peer) {
+	if err != nil || l.isSelf(peer) || !l.authorized(peer) {
 		slog.Warn("ipc: refused tailnet peer", "peer", c.RemoteAddr().String(), "on", l.Addr().String())
 		_ = c.Close()
 		return
@@ -241,6 +250,15 @@ func (l *tailnetListener) admit(c net.Conn) {
 	case <-l.done:
 		_ = c.Close()
 	}
+}
+
+func (l *tailnetListener) isSelf(peer string) bool {
+	if l.self == "" {
+		return false
+	}
+	a, errA := netip.ParseAddr(peer)
+	b, errB := netip.ParseAddr(l.self)
+	return errA == nil && errB == nil && a.Unmap() == b.Unmap()
 }
 
 func (l *tailnetListener) authorized(peer string) bool {

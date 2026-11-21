@@ -220,3 +220,29 @@ func TestEnsureCommandsInstallCurrentSkillsAndLegacyPrompts(t *testing.T) {
 		})
 	}
 }
+
+func TestEnsureCommandLeavesAUsersOwnPromptAndSkillAlone(t *testing.T) {
+	home := t.TempDir()
+	const mine = "my own kill\n"
+	paths := []string{
+		filepath.Join(home, ".codex", "prompts", "kill.md"),
+		filepath.Join(home, ".agents", "skills", "kill", "SKILL.md"),
+	}
+	for _, p := range paths {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(mine), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	changed, err := EnsureKillCommand(home)
+	if err != nil || changed {
+		t.Fatalf("changed=%v err=%v, want untouched", changed, err)
+	}
+	for _, p := range paths {
+		if got, _ := os.ReadFile(p); string(got) != mine {
+			t.Fatalf("%s overwritten: %s", p, got)
+		}
+	}
+}
