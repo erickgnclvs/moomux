@@ -88,6 +88,7 @@ type SessionCreatedMsg struct {
 // this message lands would inherit that resort instead of the order the user
 // actually saw when they confirmed the delete.
 type SessionDeletedMsg struct {
+	Err    error // the delete failed; the session is still there
 	ID     string
 	NextID string
 	Hint   string

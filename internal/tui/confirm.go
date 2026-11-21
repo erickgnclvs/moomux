@@ -8,17 +8,21 @@ import (
 )
 
 func (m *Model) renderConfirm() string {
-	if len(m.sessions) == 0 {
+	i := m.indexOfSession(m.confirmID)
+	if i < 0 {
 		return ""
 	}
-	s := m.sessions[m.cursor]
+	s := m.sessions[i]
 	avail := m.overlayWidth(formHintWidth)
 	var b strings.Builder
 	b.WriteString(dangerStyle.Render("Delete session?"))
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("name:     %s\n", s.Name))
-	b.WriteString(fmt.Sprintf("branch:   %s\n", s.Branch))
-	b.WriteString(fmt.Sprintf("worktree: %s\n", s.WorktreePath))
+	// Wrapped, not clipped: the worktree path is what the user checks before
+	// confirming a delete, and its tail is the part that identifies it.
+	wrap := func(text string) string { return strings.Join(wrapLines(text, avail), "\n") }
+	b.WriteString(wrap(fmt.Sprintf("name:     %s", s.Name)) + "\n")
+	b.WriteString(wrap(fmt.Sprintf("branch:   %s", s.Branch)) + "\n")
+	b.WriteString(wrap(fmt.Sprintf("worktree: %s", s.WorktreePath)) + "\n")
 	b.WriteString("\n")
 	warn := m.confirmGit.ok && (m.confirmGit.dirty || m.confirmGit.unpushed)
 	switch {
@@ -31,18 +35,25 @@ func (m *Model) renderConfirm() string {
 		b.WriteString(muteStyle.Render("checking git status…"))
 		b.WriteString("\n\n")
 	}
-	b.WriteString(muteStyle.Render("This kills the tmux session and removes the worktree."))
+	b.WriteString(muteStyle.Render(wrap("This kills the tmux session and removes the worktree.")))
 	b.WriteString("\n")
 	b.WriteString(muteStyle.Render("The branch is kept."))
 	b.WriteString("\n\n")
 	controls := "y to confirm   n/esc to cancel"
-	if warn && !m.confirmAck {
-		withWarning := "y to confirm you understand   n/esc to cancel"
-		// Same width-tiered fallback as formFooter/helpFooter/etc. (see
-		// view.go): drop back to the plain phrasing rather than hard-clip
-		// mid-word when the overlay is too narrow for the longer one.
-		if lipgloss.Width(withWarning) <= avail {
-			controls = withWarning
+	if warn {
+		// The first y only acknowledges the warning, so the two steps must
+		// read differently at every width; otherwise the second y looks
+		// like the first one did nothing.
+		tiers := []string{"y to confirm you understand   n/esc to cancel", "y I understand   n/esc cancel", "y ack  n/esc"}
+		if m.confirmAck {
+			tiers = []string{"y again to delete   n/esc to cancel", "y again   n/esc cancel", "y again  n/esc"}
+		}
+		controls = tiers[len(tiers)-1]
+		for _, t := range tiers {
+			if lipgloss.Width(t) <= avail {
+				controls = t
+				break
+			}
 		}
 	}
 	b.WriteString(controls)

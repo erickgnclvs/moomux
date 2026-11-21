@@ -83,7 +83,7 @@ func (m *Model) renderProjectPicker() string {
 		if nameWidth < 4 {
 			nameWidth = 4
 		}
-		row := prefix + fmt.Sprintf("%-*s", nameWidth, truncate(p, nameWidth))
+		row := prefix + padTrunc(p, nameWidth)
 		if detail != "" {
 			row += " " + detail
 		}

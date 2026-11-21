@@ -445,3 +445,33 @@ func TestAgentUsageNeedsStart(t *testing.T) {
 		}
 	}
 }
+
+func TestSpawnAndTagRejectPositionalArgs(t *testing.T) {
+	for name, err := range map[string]error{
+		"spawn": runSpawn([]string{"-project", "p", "stray", "-prompt", "x"}),
+		"tag":   runTag([]string{"https://example.test/pr/1"}),
+	} {
+		if err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+			t.Errorf("%s: err = %v, want unexpected argument", name, err)
+		}
+	}
+}
+
+func TestUnknownCommand(t *testing.T) {
+	if err := unknownCommand(nil); err != nil {
+		t.Errorf("no args: %v", err)
+	}
+	if err := unknownCommand([]string{"version"}); err == nil {
+		t.Error("`moomux version` must not fall through to the TUI")
+	}
+}
+
+func TestResolveVersionKeepsInjectedVersion(t *testing.T) {
+	if got := resolveVersion("1.2.3"); got != "1.2.3" {
+		t.Errorf("got %q", got)
+	}
+	// Under `go test` Main.Version is empty or "(devel)": stays "dev".
+	if got := resolveVersion("dev"); got != "dev" {
+		t.Errorf("got %q", got)
+	}
+}

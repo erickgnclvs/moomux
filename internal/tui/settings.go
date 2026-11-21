@@ -220,7 +220,7 @@ func (m *Model) renderSettings() string {
 		if labelWidth < 4 {
 			labelWidth = 4
 		}
-		line := prefix + fmt.Sprintf("%-*s", labelWidth, truncate(row.label, labelWidth)) + " " + value
+		line := prefix + padTrunc(row.label, labelWidth) + " " + value
 		switch {
 		// The inline editor brings its own styling (prompt, cursor,
 		// placeholder), and wrapping that in the selected-row background

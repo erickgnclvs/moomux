@@ -11,6 +11,10 @@ import (
 // ApplySettings applies a loaded config's saved theme/appearance before the
 // TUI's first render — main wires this in ahead of tea.NewProgram.
 func ApplySettings(cfg *config.Config) {
+	// Detect the real background now, before any explicit light/dark
+	// override latches lipgloss's flag: detecting later reads the override,
+	// so switching back to auto would restore the wrong value.
+	autoDark()
 	applyAppearance(cfg.Appearance)
 	applyTheme(cfg.Theme)
 }

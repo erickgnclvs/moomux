@@ -11,7 +11,7 @@
 │     legacy                   ▸ (1)   │
 │     scratch                  ▾ (0)   │
 │                                      │
-│  esc close  enter toggle             │
+│  esc  enter  n e d                   │
 │                                      │
 ╰──────────────────────────────────────╯
                                         

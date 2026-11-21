@@ -11,7 +11,7 @@
 │  no projects yet — press n to add o  │
 │                                      │
 │  ✓ removed project solo              │
-│  esc cancel  enter open              │
+│  esc cancel  enter open  n e d       │
 │                                      │
 ╰──────────────────────────────────────╯
                                         

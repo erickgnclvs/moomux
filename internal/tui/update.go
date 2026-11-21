@@ -47,8 +47,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// main() checks Relaunch once p.Run() returns and execs the
 		// freshly-installed binary; can't exec here directly since bubbletea
 		// still owns the terminal (raw mode, alt screen) at this point.
-		m.Relaunch = true
-		return m, tea.Quit
+		// A prompt being typed would be lost to the exec: keep it as a
+		// draft, and hold the quit while a create is still in flight.
+		if m.mode == ModeNewForm {
+			m.saveNewSessionDraft()
+		}
+		m.relaunchPending = true
+		return m, m.maybeRelaunch()
 
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -131,7 +136,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// mode — confirmChecking isn't cleared when the dialog is cancelled,
 		// so keying off it alone would let a late result write confirmGit
 		// for a dialog that's already closed.
-		if m.mode == ModeConfirmDelete && m.batchIDs == nil && len(m.sessions) > 0 && m.sessions[m.cursor].ID == msg.ID {
+		if m.mode == ModeConfirmDelete && m.batchIDs == nil && m.confirmID == msg.ID {
 			sum := msg.Summary
 			m.confirmSummary = sum
 			m.confirmGit = gitStatusInfo{dirty: sum.filesChanged > 0, unpushed: sum.unpushedCommits > 0, ok: sum.ok}
@@ -174,6 +179,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyCfg(msg.Cfg)
 		m.doneCreating(msg.Form.prompt)
 		m.failedCreates = append(m.failedCreates, msg)
+		if m.relaunchPending && len(m.creating) == 0 {
+			return m, m.maybeRelaunch()
+		}
 		if m.mode == ModeNewForm {
 			// Mid-way through the next session's form: leave it be.
 			return m.flashError(fmt.Errorf("a session create failed (n reopens it): %w", msg.Err))
@@ -210,16 +218,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.multiFocus = idx
 			m.ensureMultiFocusVisible()
 		}
-		return m, nil
+		return m, m.maybeRelaunch()
 
 	case SessionDeletedMsg:
+		delete(m.deleting, msg.ID) // a failed delete: the row comes back
+		if msg.Err != nil {
+			m.sessionsChanged()
+			m.refreshSessions()
+			m.setError(msg.Err)
+			return m, nil
+		}
 		text := "deleted"
 		if msg.Hint != "" {
 			text += " — " + msg.Hint
 		}
 		m.setFlash("info", text)
 		m.sessionsChanged()
-		m.refreshSessionsFocusing(msg.NextID)
+		if m.cursorOn(msg.ID) {
+			m.refreshSessionsFocusing(msg.NextID)
+		} else {
+			m.refreshSessionsAndSync() // the user moved on; leave the cursor be
+		}
 		return m, nil
 
 	case SessionArchivedMsg:
@@ -233,7 +252,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setFlash("info", "restored")
 		}
 		m.sessionsChanged()
-		m.refreshSessionsFocusing(msg.NextID)
+		if m.cursorOn(msg.ID) {
+			m.refreshSessionsFocusing(msg.NextID)
+		} else {
+			m.refreshSessionsAndSync()
+		}
 		return m, nil
 
 	case SessionPinnedMsg:
@@ -247,7 +270,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setFlash("info", "unpinned")
 		}
 		m.sessionsChanged()
-		m.refreshSessionsFocusing(msg.ID)
+		if m.cursorOn(msg.ID) {
+			m.refreshSessionsFocusing(msg.ID)
+		} else {
+			m.refreshSessionsAndSync()
+		}
 		return m, nil
 
 	case SessionTaggedMsg:
@@ -271,7 +298,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessionsChanged()
 		m.refreshSessions()
 		m.focusSession(msg.Session.ID)
-		m.mode = m.sessionDialogReturn
+		if m.mode == ModeEditSession { // not an overlay the user has since opened
+			m.mode = m.sessionDialogReturn
+		}
 		m.setFlash("info", "updated session "+msg.Session.Name)
 		return m, nil
 
@@ -379,9 +408,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Opening a session bumps its LastOpened, which can sort it to a new
 		// position under the recently-opened sort — follow it there instead
 		// of leaving the cursor on the old index.
+		follow := m.cursorOn(msg.ID)
 		m.sessionsChanged()
 		m.refreshSessions()
-		m.focusSession(msg.ID)
+		if follow {
+			m.focusSession(msg.ID)
+		}
 		text := "opened " + msg.ID
 		if msg.Hint != "" {
 			text += " — " + msg.Hint
@@ -469,7 +501,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.applyCfg(msg.Cfg)
 		m.activateProject(msg.Name)
-		m.mode = m.projectDialogReturn
+		if m.mode == ModeEditProject {
+			m.mode = m.projectDialogReturn
+		}
 		m.setFlash("info", "updated project "+msg.Name)
 		return m, nil
 
@@ -645,8 +679,13 @@ func (m *Model) newFormSnapshot() newFormState {
 
 // setNewForm opens the new-session form holding f.
 func (m *Model) setNewForm(f newFormState) {
-	m.mode = ModeNewForm
+	// A failed create reopens the form from wherever the user is now; don't
+	// drop them out of multi-view.
 	m.sessionDialogReturn = ModeList
+	if m.mode == ModeMultiView {
+		m.sessionDialogReturn = ModeMultiView
+	}
+	m.mode = ModeNewForm
 	m.newFormErr = ""
 	m.newFormProjIdx, m.newFormAgentIdx = f.projIdx, f.agentIdx
 	m.newFormModelIdx, m.newFormThinkingIdx = f.modelIdx, f.thinkingIdx
@@ -782,6 +821,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// status: this is the guard before a destructive action, and the
 			// streamed one can be up to a minute old (see
 			// sessionview.gitStaleAfter).
+			m.confirmID = id
 			m.confirmGit = m.gitStatusOf(id)
 			m.confirmSummary = changeSummary{}
 			m.confirmAck = false
@@ -834,6 +874,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = ModeTagForm
 			m.sessionDialogReturn = ModeList
 			m.tagForm = newTagForm(s.Ticket, s.PR)
+			m.tagForm.id = s.ID
 			m.resetOverlayViewport()
 			m.resizeFormInputs()
 		}
@@ -918,7 +959,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // switchProject moves the active project by delta, skipping empty ones —
-// shared by Tab/Shift-Tab and a horizontal mouse-wheel swipe.
+// shared by Tab/Shift-Tab and the [/] and H/L alternates.
 func (m *Model) switchProject(delta int) {
 	if len(m.projects) == 0 {
 		return
@@ -934,7 +975,7 @@ func (m *Model) switchProject(delta int) {
 // single-project-fallback case any cursor movement is folded back into the
 // focused project's own multi-view panel state before returning:
 // renderMultiView's enterSingleProjectContext resyncs m.cursor from that
-// state on every render, so without this a click/wheel-scroll would just get
+// state on every render, so without this a click would just get
 // silently overwritten on the next frame. Ticket/PR icon clicks (via
 // m.linkAt) work identically in all three cases — copy-vs-open over SSH
 // (m.isRemote) isn't mode-specific, so mobile clients see the same behavior
@@ -1448,7 +1489,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// of submitting — tab to another field to submit with Enter.
 			break
 		}
-		if m.newFormProjIdx < 0 {
+		if m.newFormProjIdx < 0 || m.newFormProjIdx >= len(m.projects) {
 			m.newFormErr = "choose a project — tab to the project row, then ←→"
 			return m, nil
 		}
@@ -1602,15 +1643,26 @@ func (m *Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirmAck = true
 			return m, nil
 		}
-		id := m.sessions[m.cursor].ID
-		nextID := m.neighborSessionID()
+		id := m.confirmID
+		i := m.indexOfSession(id)
+		if i < 0 {
+			m.mode = m.sessionDialogReturn
+			return m, nil
+		}
+		nextID := m.neighborOf(i)
 		m.mode = m.sessionDialogReturn
+		// Hide the row and say so, as the batch path does: the delete takes
+		// a while and the row would otherwise stay selectable.
+		if m.deleting == nil {
+			m.deleting = map[string]bool{}
+		}
+		m.deleting[id] = true
+		m.setFlash("info", "deleting…")
+		m.invalidateSessions()
+		m.refreshSessions()
 		return m, func() tea.Msg {
 			hint, err := m.backend.DeleteSession(id)
-			if err != nil {
-				return ErrorMsg{Err: err}
-			}
-			return SessionDeletedMsg{ID: id, NextID: nextID, Hint: hint}
+			return SessionDeletedMsg{ID: id, NextID: nextID, Hint: hint, Err: err}
 		}
 	case key.Matches(msg, m.keys.No), key.Matches(msg, m.keys.Cancel):
 		m.mode = m.sessionDialogReturn
@@ -1879,11 +1931,11 @@ func (m *Model) updateTagForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cycleFormFocus(m.tagForm.inputs, &m.tagForm.focus, len(m.tagForm.inputs), forward)
 		return m, nil
 	case key.Matches(msg, m.keys.Enter):
-		if len(m.sessions) == 0 {
+		id := m.tagForm.id
+		if m.indexOfSession(id) < 0 {
 			m.mode = m.sessionDialogReturn
 			return m, nil
 		}
-		id := m.sessions[m.cursor].ID
 		ticket := m.tagForm.inputs[0].Value()
 		pr := m.tagForm.inputs[1].Value()
 		m.mode = m.sessionDialogReturn
@@ -2317,4 +2369,14 @@ func (m *Model) updateThemePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) flashError(err error) (tea.Model, tea.Cmd) {
 	m.setError(err)
 	return m, nil
+}
+
+// maybeRelaunch quits for the relaunch once the upgrade has landed and no
+// create is still in flight.
+func (m *Model) maybeRelaunch() tea.Cmd {
+	if !m.relaunchPending || len(m.creating) > 0 {
+		return nil
+	}
+	m.Relaunch = true
+	return tea.Quit
 }

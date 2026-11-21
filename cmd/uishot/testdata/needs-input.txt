@@ -3,9 +3,9 @@
  _/(!!)  can't budge without a moo-ti…  
   \(__)                                 
 ┌──────────────────────────────────────┐
+│ demo · SESSIONS¹                     │
 │  ⬤  feature-auth              📌 🎫  │
 │  ⬤  bugfix-timeout               🔀  │
-│                                      │
 │                                      │
 │                                      │
 │                                      │

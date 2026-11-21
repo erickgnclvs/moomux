@@ -3,8 +3,8 @@
  _/(oo)                                 
   \(__)                                 
 ┌──────────────────────────────────────┐
+│ spare · SESSIONS                     │
 │   no sessions — press n to create    │
-│                                      │
 │                                      │
 │                                      │
 │                                      │

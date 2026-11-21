@@ -435,6 +435,7 @@ type pendingProject struct {
 }
 
 type tagForm struct {
+	id     string            // the session the form opened for; Enter tags this one, not whatever the cursor is on by then
 	inputs []textinput.Model // [0]=ticket, [1]=PR
 	focus  int
 }
@@ -557,6 +558,9 @@ type Model struct {
 	// whatsNewChecked is set once this run has compared the core's notes with
 	// client.WhatsNewSeen, so later snapshots don't ask again.
 	whatsNewChecked bool
+	// relaunchPending: the upgrade finished while a create was in flight;
+	// quit (and relaunch) once the creates drain.
+	relaunchPending bool
 	// updating is true while runUpdateCmd's `brew upgrade` is in flight, so
 	// a repeat press of Update doesn't shell out twice concurrently.
 	updating bool
@@ -664,6 +668,10 @@ type Model struct {
 	confirmGit      gitStatusInfo
 	confirmChecking bool
 	confirmAck      bool
+	// confirmID is the session the single-delete dialog opened for. The
+	// dialog acts on this, never on m.cursor: a late result or a snapshot
+	// can move the cursor while the dialog is open.
+	confirmID string
 	// confirmSummary is the file/commit-count detail for the warning line in
 	// the delete dialog, from the same check that resolves confirmGit.
 	confirmSummary changeSummary
@@ -1201,7 +1209,17 @@ func (m *Model) nudge() {
 }
 
 func (m *Model) refreshProjects() {
+	// newFormProjIdx indexes m.projects too: re-anchor it by name so a
+	// project added or moved elsewhere doesn't retarget an open form.
+	formName := m.projectAt(m.newFormProjIdx)
 	m.projects = m.cfg.OrderedProjectNames()
+	if formName != "" {
+		if i := indexOfProject(m.projects, formName); i >= 0 {
+			m.newFormProjIdx = i
+		} else {
+			m.newFormProjIdx = -1 // gone: make the user choose again
+		}
+	}
 	if m.activeProj >= len(m.projects) {
 		m.activeProj = 0
 	}
@@ -1366,16 +1384,38 @@ func (m *Model) focusSession(id string) bool {
 // for one delete: once from the resort, once from the list
 // shrinking.
 func (m *Model) neighborSessionID() string {
-	if m.cursor < 0 || m.cursor >= len(m.sessions) {
+	return m.neighborOf(m.cursor)
+}
+
+// neighborOf is neighborSessionID for the session at index i.
+func (m *Model) neighborOf(i int) string {
+	if i < 0 || i >= len(m.sessions) {
 		return ""
 	}
-	if m.cursor+1 < len(m.sessions) {
-		return m.sessions[m.cursor+1].ID
+	if i+1 < len(m.sessions) {
+		return m.sessions[i+1].ID
 	}
-	if m.cursor-1 >= 0 {
-		return m.sessions[m.cursor-1].ID
+	if i-1 >= 0 {
+		return m.sessions[i-1].ID
 	}
 	return ""
+}
+
+// indexOfSession returns where id sits in m.sessions, or -1.
+func (m *Model) indexOfSession(id string) int {
+	for i, s := range m.sessions {
+		if s.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// cursorOn reports whether the cursor is on session id. Async results that
+// would refocus the list check it first, so a late result for a session the
+// user has moved off doesn't drag the cursor back.
+func (m *Model) cursorOn(id string) bool {
+	return m.cursor >= 0 && m.cursor < len(m.sessions) && m.sessions[m.cursor].ID == id
 }
 
 // refreshSessionsFocusing refreshes the session list and, if nextID is set,
@@ -1420,6 +1460,9 @@ func (m *Model) refreshSessions() {
 		} else {
 			m.cursor = len(m.sessions) - 1
 		}
+	}
+	if m.mode == ModeConfirmDelete && m.batchIDs == nil && m.indexOfSession(m.confirmID) < 0 {
+		m.mode = m.sessionDialogReturn // its session is gone: nothing left to confirm
 	}
 }
 
