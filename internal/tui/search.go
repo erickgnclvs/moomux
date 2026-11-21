@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 
@@ -95,7 +94,7 @@ func (m *Model) renderSearch() string {
 		if nameWidth < 4 {
 			nameWidth = 4
 		}
-		row := prefix + fmt.Sprintf("%-*s", nameWidth, truncate(s.Name, nameWidth)) + " " + detail
+		row := prefix + padTrunc(s.Name, nameWidth) + " " + detail
 		if selected {
 			row = listRowSelected.Render(row)
 		} else {

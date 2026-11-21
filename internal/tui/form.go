@@ -502,14 +502,14 @@ func (m *Model) renderProjectInitChoice() string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("Path is not a git repository"))
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("path: %s\n", m.pending.p.Repo))
+	b.WriteString(strings.Join(wrapLines("path: "+m.pending.p.Repo, m.overlayWidth(formHintWidth)), "\n") + "\n")
 	// Warning text comes from the core with the error that opened this
 	// dialog (App.AddProject returns it alongside the error, from
 	// App.PathWarning): whether a path is inside a protected
 	// folder is a fact about the machine it's on, which over the socket is
 	// not this one.
 	if m.pending.warning != "" {
-		b.WriteString(warnStyle.Width(64).Render(m.pending.warning))
+		b.WriteString(warnStyle.Render(strings.Join(wrapLines(m.pending.warning, min(64, m.overlayWidth(formHintWidth))), "\n")))
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")

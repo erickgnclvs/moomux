@@ -79,7 +79,7 @@ func (m *Model) renderModelFilter() string {
 		}
 		value := renderToggle(!m.cfg.ModelExcluded(r.agent, r.id), false)
 		labelWidth := max(rowWidth-lipgloss.Width(prefix)-lipgloss.Width(value)-1, 4)
-		line := prefix + fmt.Sprintf("%-*s", labelWidth, truncate(r.label, labelWidth)) + " " + value
+		line := prefix + padTrunc(r.label, labelWidth) + " " + value
 		if i == m.modelFilterCursor {
 			line = listRowSelected.Render(line)
 		} else {
