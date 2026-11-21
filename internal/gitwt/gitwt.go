@@ -218,6 +218,33 @@ func (c *Client) HasUnpushedCommits(worktreePath string) (bool, error) {
 	return strings.TrimSpace(out) != "0", nil
 }
 
+// CurrentBranch returns the branch checked out in worktreePath, or "HEAD"
+// when detached.
+func (c *Client) CurrentBranch(worktreePath string) (string, error) {
+	out, err := c.Runner.Run(worktreePath, "rev-parse", "--abbrev-ref", "HEAD")
+	return strings.TrimSpace(out), err
+}
+
+// UpstreamPruned reports whether branch had an upstream configured whose
+// remote ref is gone (e.g. deleted after its PR merged).
+func (c *Client) UpstreamPruned(repoDir, branch string) bool {
+	if _, err := c.Runner.Run(repoDir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", branch+"@{u}"); err == nil {
+		return false
+	}
+	_, err := c.Runner.Run(repoDir, "config", "--get", "branch."+branch+".merge")
+	return err == nil
+}
+
+// CommitsNotOnRemote counts commits on branch that no remote-tracking ref
+// contains. A merge-commit merge leaves 0; a squash merge leaves them all.
+func (c *Client) CommitsNotOnRemote(repoDir, branch string) (int, error) {
+	out, err := c.Runner.Run(repoDir, "rev-list", "--count", "refs/heads/"+branch, "--not", "--remotes")
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(strings.TrimSpace(out))
+}
+
 // FilesChangedCount reports how many files worktreePath has uncommitted
 // changes in (staged, unstaged, or untracked) — one count per line of `git
 // status --porcelain`. Separate from IsWorktreeClean (rather than having it

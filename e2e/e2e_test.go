@@ -725,3 +725,130 @@ func TestFullLifecycle_EndToEnd(t *testing.T) {
 		t.Fatalf("RemoveProject scripts: %v", err)
 	}
 }
+
+func gitIn(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.test"}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v (%s)", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func newDeleteFixture(t *testing.T) (*app.App, string, session.Session) {
+	t.Helper()
+	repo := initRepo(t, "main")
+	a := newTestApp(t)
+	if _, err := a.AddProject("demo", config.Project{Repo: repo, BaseBranch: "main"}); err != nil {
+		t.Fatalf("AddProject: %v", err)
+	}
+	s, _, err := a.CreateSession(session.CreateRequest{Project: "demo", Name: "feature", OpenTerminal: true, Dangerous: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	return a, repo, s
+}
+
+// The dialog warns about dirty files and unpushed commits and the user
+// confirms, so delete still removes everything.
+func TestDeleteSession_DirtyAndUnpushedStillDeleted(t *testing.T) {
+	a, repo, s := newDeleteFixture(t)
+	if err := os.WriteFile(filepath.Join(s.WorktreePath, "new.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, s.WorktreePath, "add", "new.txt")
+	gitIn(t, s.WorktreePath, "commit", "-m", "work")
+	if err := os.WriteFile(filepath.Join(s.WorktreePath, "dirty.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	files, unpushed, ok := a.ChangeSummary(s.ID)
+	if !ok || files != 1 || unpushed != 2 { // initial commit + work: no upstream at all
+		t.Fatalf("ChangeSummary = %d files, %d unpushed, ok=%v", files, unpushed, ok)
+	}
+	if _, err := a.DeleteSession(s.ID); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	if _, err := os.Stat(s.WorktreePath); !os.IsNotExist(err) {
+		t.Fatalf("worktree still on disk: %v", err)
+	}
+	if gitBranchExists(t, repo, s.Branch) {
+		t.Fatalf("branch %s should be deleted", s.Branch)
+	}
+}
+
+// The agent committed on the session branch, then moved to a fresh branch.
+// The dialog measures the fresh branch; delete must not orphan the commits.
+func TestDeleteSession_SwitchedBranchKeepsSessionBranch(t *testing.T) {
+	a, repo, s := newDeleteFixture(t)
+	if err := os.WriteFile(filepath.Join(s.WorktreePath, "work.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, s.WorktreePath, "add", "work.txt")
+	gitIn(t, s.WorktreePath, "commit", "-m", "work")
+	gitIn(t, s.WorktreePath, "switch", "-c", "elsewhere")
+
+	hint, err := a.DeleteSession(s.ID)
+	if err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	if !gitBranchExists(t, repo, s.Branch) {
+		t.Fatalf("branch %s with unreferenced commits was deleted", s.Branch)
+	}
+	if !strings.Contains(hint, "kept branch") {
+		t.Fatalf("hint = %q", hint)
+	}
+	if _, err := os.Stat(s.WorktreePath); !os.IsNotExist(err) {
+		t.Fatalf("worktree still on disk: %v", err)
+	}
+}
+
+// pushThenPrune pushes the session branch to a bare remote, sets it as
+// upstream, then deletes the remote branch and prunes, as a merged PR does.
+func pushThenPrune(t *testing.T, repo string, s session.Session) {
+	t.Helper()
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	if out, err := exec.Command("git", "init", "--bare", remote).CombinedOutput(); err != nil {
+		t.Fatalf("init bare: %v (%s)", err, out)
+	}
+	gitIn(t, repo, "remote", "add", "origin", remote)
+	gitIn(t, s.WorktreePath, "push", "-u", "origin", s.Branch)
+	gitIn(t, remote, "branch", "-D", s.Branch)
+	gitIn(t, repo, "fetch", "--prune", "origin")
+}
+
+func TestDeleteSession_PrunedUpstreamKeepsFollowUpCommits(t *testing.T) {
+	a, repo, s := newDeleteFixture(t)
+	pushThenPrune(t, repo, s)
+	if err := os.WriteFile(filepath.Join(s.WorktreePath, "after-merge.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, s.WorktreePath, "add", "after-merge.txt")
+	gitIn(t, s.WorktreePath, "commit", "-m", "follow-up after the PR merged")
+
+	hint, err := a.DeleteSession(s.ID)
+	if err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	if !gitBranchExists(t, repo, s.Branch) {
+		t.Fatalf("branch %s with a follow-up commit was deleted", s.Branch)
+	}
+	if !strings.Contains(hint, "upstream is gone") {
+		t.Fatalf("hint = %q", hint)
+	}
+}
+
+func TestDeleteSession_PrunedUpstreamFullyMergedIsDeleted(t *testing.T) {
+	a, repo, s := newDeleteFixture(t)
+	pushThenPrune(t, repo, s)
+	// Keep origin/main containing every commit, as a merge-commit merge would.
+	gitIn(t, repo, "push", "origin", "main")
+
+	if _, err := a.DeleteSession(s.ID); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	if gitBranchExists(t, repo, s.Branch) {
+		t.Fatalf("branch %s is on a remote already and should be deleted", s.Branch)
+	}
+}

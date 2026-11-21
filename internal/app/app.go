@@ -899,7 +899,7 @@ func newBranchName(proj config.Project, name string) string {
 // Empty result means no live session is using path.
 func (a *App) tmuxSessionUsingWorktree(path string) (string, error) {
 	for _, s := range a.Store.All() {
-		if s.WorktreePath != path {
+		if !samePath(s.WorktreePath, path) {
 			continue
 		}
 		has, err := a.Tmux.HasSession(s.TmuxSession)
@@ -911,6 +911,28 @@ func (a *App) tmuxSessionUsingWorktree(path string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// sessionOwningWorktree returns the id of any tracked session, live or not,
+// whose worktree is path. Empty means none does.
+func (a *App) sessionOwningWorktree(path string) string {
+	for _, s := range a.Store.All() {
+		if samePath(s.WorktreePath, path) {
+			return s.ID
+		}
+	}
+	return ""
+}
+
+// rollbackCreate undoes a failed create's worktree (and the branch, if this
+// create made it) so a retry with the same name isn't wedged on "already
+// exists".
+func (a *App) rollbackCreate(repo, wt, branch string, newBranch bool) {
+	if err := a.Git.RemoveWorktree(repo, wt); err != nil {
+		slog.Warn("roll back worktree", "path", wt, "err", err)
+	} else if newBranch {
+		_ = a.Git.DeleteBranch(repo, branch)
+	}
 }
 
 // newBranchBaseBranch returns the ref a freshly cut branch was actually
@@ -1113,6 +1135,13 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 	if err := validateAgent(agent); err != nil {
 		return session.Session{}, "", err
 	}
+	// A value starting with "-" would reach git as an option (e.g.
+	// --upload-pack=...) in Fetch and worktree add below.
+	for _, ref := range []string{existingBranch, baseBranch} {
+		if strings.HasPrefix(ref, "-") {
+			return session.Session{}, "", fmt.Errorf("invalid branch name %q: must not start with '-'", ref)
+		}
+	}
 	id := session.MakeID(project, name)
 	if !a.reserveSessionID(id) {
 		// Same name means the same worktree path — creating it again would
@@ -1172,18 +1201,28 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 		}
 		var err error
 		if !newBranch {
-			if staleWT, ferr := a.Git.WorktreeForBranch(proj.Repo, branch); ferr == nil && staleWT != "" && staleWT != wt {
+			if staleWT, ferr := a.Git.WorktreeForBranch(proj.Repo, branch); ferr == nil && staleWT != "" && !samePath(staleWT, wt) {
+				// Only a checkout moomux made (under WorktreeRoot) that no
+				// session record owns, live or parked, may be removed. A
+				// hand-made worktree or a parked session's checkout holds
+				// work (gitignored files, locks) that "clean" doesn't cover.
+				if busy, terr := a.tmuxSessionUsingWorktree(staleWT); terr != nil {
+					return session.Session{}, "", fmt.Errorf("check tmux sessions for %s: %w", staleWT, terr)
+				} else if busy != "" {
+					return session.Session{}, "", fmt.Errorf("branch %q is already checked out at %s, in use by tmux session %q", branch, staleWT, busy)
+				}
+				if owner := a.sessionOwningWorktree(staleWT); owner != "" {
+					return session.Session{}, "", fmt.Errorf("branch %q is already checked out at %s, which belongs to session %q", branch, staleWT, owner)
+				}
+				if !pathWithin(a.WorktreeRoot, staleWT) {
+					return session.Session{}, "", fmt.Errorf("branch %q is already checked out at %s", branch, staleWT)
+				}
 				clean, cerr := a.Git.IsWorktreeClean(staleWT)
 				if cerr != nil {
 					return session.Session{}, "", fmt.Errorf("check existing worktree %s: %w", staleWT, cerr)
 				}
 				if !clean {
 					return session.Session{}, "", fmt.Errorf("branch %q is already checked out at %s with uncommitted changes", branch, staleWT)
-				}
-				if busy, terr := a.tmuxSessionUsingWorktree(staleWT); terr != nil {
-					return session.Session{}, "", fmt.Errorf("check tmux sessions for %s: %w", staleWT, terr)
-				} else if busy != "" {
-					return session.Session{}, "", fmt.Errorf("branch %q is already checked out at %s, in use by tmux session %q", branch, staleWT, busy)
 				}
 				if err := a.Git.RemoveWorktree(proj.Repo, staleWT); err != nil {
 					return session.Session{}, "", fmt.Errorf("remove stale worktree %s: %w", staleWT, err)
@@ -1196,6 +1235,11 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 		}
 		if err != nil {
 			slog.Error("git worktree add failed", "repo", proj.Repo, "path", wt, "branch", branch, "err", err)
+			// wt did not exist before this attempt, so a folder now is a
+			// half-made checkout (e.g. git killed at the timeout).
+			if _, statErr := os.Stat(wt); statErr == nil {
+				a.rollbackCreate(proj.Repo, wt, branch, newBranch)
+			}
 			if errors.Is(err, gitwt.ErrBaseBranchNotFound) {
 				fix := "set a base branch that still exists in the project's settings"
 				if baseBranch != "" {
@@ -1244,11 +1288,7 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 			// Undo the worktree (and the branch, if this create made it), so
 			// a retry with the same name and prompt can succeed rather than
 			// hit "already exists" on what this failed attempt left behind.
-			if rmErr := a.Git.RemoveWorktree(proj.Repo, wt); rmErr != nil {
-				slog.Warn("roll back worktree", "path", wt, "err", rmErr)
-			} else if newBranch {
-				_ = a.Git.DeleteBranch(proj.Repo, branch)
-			}
+			a.rollbackCreate(proj.Repo, wt, branch, newBranch)
 		}
 		return session.Session{}, "", fmt.Errorf("tmux new-session: %w", err)
 	}
@@ -1289,14 +1329,15 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 	}
 	if err := a.Store.Put(s); err != nil {
 		slog.Error("store put failed", "id", s.ID, "err", err)
-		err = fmt.Errorf("store: %w", err)
-		if hint != "" {
-			// The tmux session is already running at this point (see
-			// above); don't let the caller lose the manual-attach hint
-			// just because persisting the session record also failed.
-			err = fmt.Errorf("%w; %s", err, hint)
+		// Without a record nothing can ever clean this up, so undo it all:
+		// the agent, the worktree and the new branch.
+		if kerr := a.Tmux.KillSession(tmuxName); kerr != nil {
+			slog.Warn("roll back tmux session", "name", tmuxName, "err", kerr)
 		}
-		return s, hint, err
+		if proj.UsesWorktree() {
+			a.rollbackCreate(proj.Repo, wt, branch, newBranch)
+		}
+		return session.Session{}, "", fmt.Errorf("store: %w", err)
 	}
 	return s, hint, nil
 }
@@ -2811,7 +2852,7 @@ func (a *App) ChangeSummary(id string) (filesChanged, unpushedCommits int, ok bo
 	}
 	commits, err := a.Git.UnpushedCommitCount(s.WorktreePath)
 	if err != nil {
-		return files, 0, true
+		return files, 0, false
 	}
 	return files, commits, true
 }
@@ -2860,6 +2901,26 @@ func (a *App) PRStatus(id string) (prstatus.Info, bool) {
 	return pr.Info, true
 }
 
+// branchToKeep returns a hint, non-empty when deleting s's branch could lose
+// commits that exist nowhere else. It must run before the worktree is moved
+// or removed. Two cases: the worktree has switched to another branch (the
+// delete dialog measured that one, not s.Branch), and a branch whose
+// upstream was pruned with commits no remote ref contains.
+func (a *App) branchToKeep(repo string, s session.Session) string {
+	if !s.NewBranch || s.Branch == "" {
+		return ""
+	}
+	if cur, err := a.Git.CurrentBranch(s.WorktreePath); err == nil && cur != "" && cur != s.Branch {
+		return fmt.Sprintf("kept branch %s: the worktree had %s checked out, so its commits were never checked", s.Branch, cur)
+	}
+	if a.Git.UpstreamPruned(repo, s.Branch) {
+		if n, err := a.Git.CommitsNotOnRemote(repo, s.Branch); err != nil || n > 0 {
+			return fmt.Sprintf("kept branch %s: its upstream is gone and it may have commits no remote has", s.Branch)
+		}
+	}
+	return ""
+}
+
 // DeleteSession removes the session's worktree, branch, and store entry,
 // and closes the terminal tab it was open in (see closeTermTab). The
 // returned hint, when non-empty, is a user-facing message worth surfacing
@@ -2901,13 +2962,24 @@ func (a *App) DeleteSession(id string) (string, error) {
 					hint = JoinHints(hint, w)
 				}
 			}
-			a.moveToTrash(s.WorktreePath)
-			if err := a.Git.RemoveWorktree(proj.Repo, s.WorktreePath); err != nil {
-				if cleanupErr == nil {
-					cleanupErr = fmt.Errorf("remove worktree: %w", err)
+			if samePath(s.WorktreePath, proj.Repo) || !pathWithin(a.WorktreeRoot, s.WorktreePath) {
+				// Not a checkout moomux made: removing it could wipe the
+				// real repo or the user's own folder.
+				hint = JoinHints(hint, fmt.Sprintf("left %s on disk: it is not a moomux worktree", s.WorktreePath))
+			} else {
+				keepBranch := a.branchToKeep(proj.Repo, s)
+				a.moveToTrash(s.WorktreePath)
+				if err := a.Git.RemoveWorktree(proj.Repo, s.WorktreePath); err != nil {
+					if cleanupErr == nil {
+						cleanupErr = fmt.Errorf("remove worktree: %w", err)
+					}
+				} else if s.NewBranch && s.Branch != "" {
+					if keepBranch != "" {
+						hint = JoinHints(hint, keepBranch)
+					} else {
+						_ = a.Git.DeleteBranch(proj.Repo, s.Branch)
+					}
 				}
-			} else if s.NewBranch && s.Branch != "" {
-				_ = a.Git.DeleteBranch(proj.Repo, s.Branch)
 			}
 		}
 	} else if pathWithin(a.WorktreeRoot, s.WorktreePath) {
