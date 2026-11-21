@@ -19,6 +19,56 @@
 ╰──────────────────────────────────────╯
                                         
                                         
+=== 60x24 ===
+                                                            
+                                                            
+                                                            
+╭──────────────────────────────────────────────────────────╮
+│                                                          │
+│  SETTINGS                                                │
+│                                                          │
+│     sort mode                        manual (shift+↑↓)   │
+│     theme & appearance                  default / auto   │
+│     auto-tmux                                    [off]   │
+│     auto-submit default                          [off]   │
+│     compact detail view                          [off]   │
+│     terminal pane                                 [on]   │
+│     hidden models                                 none   │
+│   ▸ diff tool       > diffier                            │
+│     Agent usage                          not available   │
+│                                                          │
+│  enter save  esc cancel                                  │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+                                                            
+                                                            
+                                                            
+                                                            
+=== 72x24 ===
+                                                                        
+                                                                        
+                                                                        
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│  SETTINGS                                                            │
+│                                                                      │
+│     sort mode                                    manual (shift+↑↓)   │
+│     theme & appearance                              default / auto   │
+│     auto-tmux                                                [off]   │
+│     auto-submit default                                      [off]   │
+│     compact detail view                                      [off]   │
+│     terminal pane                                             [on]   │
+│     hidden models                                             none   │
+│   ▸ diff tool       > diffier                                        │
+│     Agent usage                                      not available   │
+│                                                                      │
+│  enter save  esc cancel                                              │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
+                                                                        
+                                                                        
+                                                                        
+                                                                        
 === 100x32 ===
                                                                                                     
                                                                                                     

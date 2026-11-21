@@ -19,6 +19,56 @@
 │  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
+=== 60x24 ===
+╭──────────────────────────────────────────────────────────╮
+│                                                          │
+│                                                          │
+│  > myfeat                                                │
+│                                                          │
+│  > existing branch (optional)                            │
+│                                                          │
+│  > base branch (optional, defaults to pr…                │
+│                                                          │
+│  > ticket url (optional)                                 │
+│                                                          │
+│  > PR url (optional)                                     │
+│                                                          │
+│  agent:  claude  [codex]  opencode  antigravity          │
+│                                                          │
+│                                                          │
+│  list + folder name — blank: from branch, prompt, or     │
+│  random                                                  │
+│  no branch "merchant-physcal" in /tmp/demo (checked      │
+│  local and origin) — fix the name, or clear the branch   │
+│  field to start a new branch off main                    │
+│  tab/↑↓ fields  ←→ choose  enter  esc cancel             │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+=== 72x24 ===
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│                                                                      │
+│  > myfeat                                                            │
+│                                                                      │
+│  > existing branch (optional)                                        │
+│                                                                      │
+│  > base branch (optional, defaults to pr…                            │
+│                                                                      │
+│  > ticket url (optional)                                             │
+│                                                                      │
+│  > PR url (optional)                                                 │
+│                                                                      │
+│  agent:  claude  [codex]  opencode  antigravity                      │
+│                                                                      │
+│  model:  [default]  Sol  Terra  Luna                                 │
+│                                                                      │
+│  list + folder name — blank: from branch, prompt, or random          │
+│  no branch "merchant-physcal" in /tmp/demo (checked local and        │
+│  origin) — fix the name, or clear the branch field to start a new    │
+│  branch off main                                                     │
+│  tab/↑↓ fields  ←→ choose  enter  esc cancel                         │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
 === 100x32 ===
            ╭────────────────────────────────────────────────────────────────────────────╮           
            │                                                                            │           

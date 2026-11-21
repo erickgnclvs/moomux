@@ -19,6 +19,56 @@
 ╰──────────────────────────────────────╯
                                         
                                         
+=== 60x24 ===
+                                                            
+                                                            
+                                                            
+╭──────────────────────────────────────────────────────────╮
+│                                                          │
+│  Add project                                             │
+│                                                          │
+│  repo:          > repo path (e.g. ~/Development/eg_…     │
+│  name:          > name (e.g. eg_system)                  │
+│  base branch:   > base branch (default:…                 │
+│  dangerous:     [off]                                    │
+│  branch prefix: > branch prefix (option…                 │
+│  worktrees:     [on]                                     │
+│  emoji:         ‹ [auto] ›                               │
+│                                                          │
+│  path to the project's git repo — edit or point          │
+│  elsewhere                                               │
+│  tab/↑↓  ←→ choose  enter save  esc cancel               │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+                                                            
+                                                            
+                                                            
+                                                            
+=== 72x24 ===
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│  Add project                                                         │
+│                                                                      │
+│  repo:          > repo path (e.g. ~/Development/eg_system)           │
+│  name:          > name (e.g. eg_system)                              │
+│  base branch:   > base branch (default:…                             │
+│  dangerous:     [off]                                                │
+│  branch prefix: > branch prefix (option…                             │
+│  worktrees:     [on]                                                 │
+│  emoji:         [auto]  🐙  🦊  🚀  🔥  🌊  🍀  ⚡  🎯  🐝  🦉  🐄   │
+│                                                                      │
+│  path to the project's git repo — edit or point elsewhere            │
+│  tab/↑↓  ←→ choose  enter save  esc cancel                           │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
+                                                                        
+                                                                        
+                                                                        
+                                                                        
 === 100x32 ===
                                                                                                     
                                                                                                     

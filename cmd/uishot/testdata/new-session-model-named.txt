@@ -19,6 +19,56 @@
 │  esc cancel  tab/↑↓  enter           │
 │                                      │
 ╰──────────────────────────────────────╯
+=== 60x24 ===
+╭──────────────────────────────────────────────────────────╮
+│                                                          │
+│                                                          │
+│  > existing branch (optional)                            │
+│                                                          │
+│  > base branch (optional, defaults to pr…                │
+│                                                          │
+│  > ticket url (optional)                                 │
+│                                                          │
+│  > PR url (optional)                                     │
+│                                                          │
+│  agent:  claude  [codex]  opencode  antigravity          │
+│                                                          │
+│  model:  default  [Sol]  Terra  Luna                     │
+│                                                          │
+│  open in background:  [off]                              │
+│                                                          │
+│  auto-submit:  [off]                                     │
+│                                                          │
+│  optional — passed as --model to the agent; "default"    │
+│  omits the flag                                          │
+│  tab/↑↓ fields  ←→ choose  enter  esc cancel             │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+=== 72x24 ===
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│                                                                      │
+│  > existing branch (optional)                                        │
+│                                                                      │
+│  > base branch (optional, defaults to pr…                            │
+│                                                                      │
+│  > ticket url (optional)                                             │
+│                                                                      │
+│  > PR url (optional)                                                 │
+│                                                                      │
+│  agent:  claude  [codex]  opencode  antigravity                      │
+│                                                                      │
+│  model:  default  [Sol]  Terra  Luna                                 │
+│                                                                      │
+│  open in background:  [off]                                          │
+│                                                                      │
+│  auto-submit:  [off]                                                 │
+│                                                                      │
+│  optional — passed as --model to the agent; "default" omits the      │
+│  flag                                                                │
+│  tab/↑↓ fields  ←→ choose  enter  esc cancel                         │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
 === 100x32 ===
            ╭────────────────────────────────────────────────────────────────────────────╮           
            │                                                                            │           

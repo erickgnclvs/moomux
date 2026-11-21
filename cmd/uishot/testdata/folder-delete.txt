@@ -19,6 +19,56 @@
                                         
                                         
                                         
+=== 60x24 ===
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+╭──────────────────────────────────────────────────────────╮
+│                                                          │
+│  Delete folder?                                          │
+│                                                          │
+│  name: auth                                              │
+│                                                          │
+│  3 session(s) across 2 projects move back to top level.  │
+│  No session or worktree is deleted.                      │
+│                                                          │
+│  y to confirm   n/esc to cancel                          │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+=== 72x24 ===
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+      ╭──────────────────────────────────────────────────────────╮      
+      │                                                          │      
+      │  Delete folder?                                          │      
+      │                                                          │      
+      │  name: auth                                              │      
+      │                                                          │      
+      │  3 session(s) across 2 projects move back to top level.  │      
+      │  No session or worktree is deleted.                      │      
+      │                                                          │      
+      │  y to confirm   n/esc to cancel                          │      
+      │                                                          │      
+      ╰──────────────────────────────────────────────────────────╯      
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+                                                                        
 === 100x32 ===
                                                                                                     
                                                                                                     

@@ -19,6 +19,56 @@
 └──────────────────────────────────────┘
                                         
  ? help                            vdev 
+=== 60x24 ===
+   ^__^                                                     
+ _/(**)  no time to graze                                   
+  \(__)                                                     
+┌──────────────────────────────────────────────────────────┐
+│ demo · SESSIONS                                          │
+│  ⬤  feature-auth                                  📌 🎫  │
+│  ⬤  bugfix-timeout                               🔀 ± ↑  │
+│                            ⌄                             │
+│ ──────────────────────────────────────────────────────── │
+│ project:   demo                                          │
+│ status:    ⬤  grazing                                    │
+│ name:      feature-auth                                  │
+│ agent:     claude                                        │
+│ ticket:    https://tracker.example/TICK-123              │
+│ tmux:      moomux-feature-auth                           │
+│ prompt:    add JWT-based auth to the login flow,         │
+│            including refresh token rotation, session     │
+│            revocation on logout, and rate limiting…      │
+│                                                          │
+│  ________________________________________                │
+│ < no time to graze                       >               │
+└──────────────────────────────────────────────────────────┘
+                                                            
+ ? help                                                vdev 
+=== 72x24 ===
+   ^__^                                                                 
+   (**)\_                                                               
+   (__)\ )                                                              
+┌──────────────────────────────────────────┐┌──────────────────────────┐
+│ SESSIONS                                 ││                          │
+│                                          ││                          │
+│  ⬤  feature-auth                  📌 🎫  ││ project:   demo          │
+│  ⬤  bugfix-timeout               🔀 ± ↑  ││ status:    ⬤  grazing    │
+│  ⬤  review-copy                          ││ name:      feature-a…    │
+│  ⬤  stale-idea                           ││ agent:     claude        │
+│                                          ││ ticket:    …/TICK-123    │
+│                                          ││ tmux:      moomux-fe…    │
+│                                          ││ worktree:  …ture-auth    │
+│                                          ││ created:   just now      │
+│                                          ││ prompt:    add           │
+│                                          ││            JWT-based     │
+│                                          ││            auth to…      │
+│                                          ││                          │
+│                                          ││  ______________________  │
+│                                          ││ < no time to graze     > │
+│                                          ││  ----------------------  │
+└──────────────────────────────────────────┘└──────────────────────────┘
+                                                                        
+ ? help                                                            vdev 
 === 100x32 ===
    ^__^                                                                                             
    (**)\_                                                                                           

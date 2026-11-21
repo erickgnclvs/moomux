@@ -19,6 +19,56 @@
                                         
                                         
                                         
+=== 60x24 ===
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+╭──────────────────────────────────────────────────────────╮
+│                                                          │
+│  Assign to folder                                        │
+│                                                          │
+│  folder:     > auth                                      │
+│                                                          │
+│  blank removes it from any folder                        │
+│  existing: auth, legacy, scratch                         │
+│                                                          │
+│                                                          │
+│  enter save  esc cancel                                  │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+                                                            
+=== 72x24 ===
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│  Assign to folder                                                    │
+│                                                                      │
+│  folder:     > auth                                                  │
+│                                                                      │
+│  blank removes it from any folder                                    │
+│  existing: auth, legacy, scratch                                     │
+│                                                                      │
+│                                                                      │
+│  enter save  esc cancel                                              │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+                                                                        
 === 100x32 ===
                                                                                                     
                                                                                                     

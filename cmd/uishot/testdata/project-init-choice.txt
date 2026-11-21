@@ -19,6 +19,56 @@
 │                                      │
 ╰──────────────────────────────────────╯
                                         
+=== 60x24 ===
+                                                            
+                                                            
+                                                            
+╭──────────────────────────────────────────────────────────╮
+│                                                          │
+│  Path is not a git repository                            │
+│                                                          │
+│  path: /home/moo/Documents/projects                      │
+│  ⚠ inside ~/Documents — macOS may block brew/claude      │
+│  here unless your terminal has Files and Folders         │
+│  access (Privacy & Security settings)                    │
+│                                                          │
+│  How should moomux set this up?                          │
+│                                                          │
+│    i  init a new git repo here (mkdir + git init + empt  │
+│    s  skip git — manage as a plain folder, no worktrees  │
+│                                                          │
+│  b/esc to go back to the form                            │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+                                                            
+                                                            
+                                                            
+                                                            
+=== 72x24 ===
+                                                                        
+                                                                        
+                                                                        
+ ╭───────────────────────────────────────────────────────────────────╮  
+ │                                                                   │  
+ │  Path is not a git repository                                     │  
+ │                                                                   │  
+ │  path: /home/moo/Documents/projects                               │  
+ │  ⚠ inside ~/Documents — macOS may block brew/claude here unless   │  
+ │  your terminal has Files and Folders access (Privacy & Security   │  
+ │  settings)                                                        │  
+ │                                                                   │  
+ │  How should moomux set this up?                                   │  
+ │                                                                   │  
+ │    i  init a new git repo here (mkdir + git init + empty commit)  │  
+ │    s  skip git — manage as a plain folder, no worktrees/branches  │  
+ │                                                                   │  
+ │  b/esc to go back to the form                                     │  
+ │                                                                   │  
+ ╰───────────────────────────────────────────────────────────────────╯  
+                                                                        
+                                                                        
+                                                                        
+                                                                        
 === 100x32 ===
                                                                                                     
                                                                                                     

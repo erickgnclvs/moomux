@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/erickgnclvs/moomux/internal/sessionview"
 )
 
 // whois admits this node's own address as the owner, so a local process that
@@ -109,5 +111,23 @@ func TestHandleAllowsASlowButSteadyRequest(t *testing.T) {
 	b, err := io.ReadAll(cli)
 	if err != nil || !strings.Contains(string(b), "unknown") {
 		t.Fatalf("got %q, %v; want an unknown-method answer", b, err)
+	}
+}
+
+// A Watch client that connects and never reads would block stream's write
+// forever, holding its goroutine and descriptor. The write deadline ends it.
+func TestStreamDropsAClientThatStopsReading(t *testing.T) {
+	srv, cli := net.Pipe() // unbuffered: a write blocks until cli reads
+	defer cli.Close()
+	snap := sessionview.Snapshot{Views: map[string]sessionview.View{"moomux:a": {ID: "moomux:a"}}, PollTime: time.Now()}
+	s := &Server{Source: &blockingWatcher{snap: snap}, ioTimeout: 200 * time.Millisecond}
+	pr, pw := io.Pipe() // the client's nudge half: silent, but open
+	defer pw.Close()
+	done := make(chan struct{})
+	go func() { s.stream(srv, pr); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stream still blocked writing to a client that never reads")
 	}
 }
