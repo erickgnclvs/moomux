@@ -8,10 +8,11 @@ import (
 )
 
 func (m *Model) renderConfirm() string {
-	if len(m.sessions) == 0 {
+	i := m.indexOfSession(m.confirmID)
+	if i < 0 {
 		return ""
 	}
-	s := m.sessions[m.cursor]
+	s := m.sessions[i]
 	avail := m.overlayWidth(formHintWidth)
 	var b strings.Builder
 	b.WriteString(dangerStyle.Render("Delete session?"))
