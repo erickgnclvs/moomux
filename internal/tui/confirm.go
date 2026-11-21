@@ -34,6 +34,10 @@ func (m *Model) renderConfirm() string {
 	case m.confirmChecking:
 		b.WriteString(muteStyle.Render("checking git status…"))
 		b.WriteString("\n\n")
+	case !m.confirmGit.ok:
+		// A failed check must not read as a clean worktree.
+		b.WriteString(warnStyle.Render("⚠ " + truncate("couldn't check git status", avail-2)))
+		b.WriteString("\n\n")
 	}
 	b.WriteString(muteStyle.Render(wrap("This kills the tmux session and removes the worktree.")))
 	b.WriteString("\n")

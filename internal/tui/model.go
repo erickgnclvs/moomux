@@ -680,6 +680,9 @@ type Model struct {
 	// projects and the list re-sorting under them. While it's non-empty, d
 	// opens the batch dialog instead of the single one.
 	marked map[string]bool
+	// parkArmed is the session id a first x press (on a working agent) is
+	// waiting to confirm; any other key clears it.
+	parkArmed string
 	// batchIDs is what the open batch dialog will delete, and batchSummary
 	// their fresh checks. batchIDs is nil whenever ModeConfirmDelete is the
 	// single-session dialog, which is how the two tell themselves apart.

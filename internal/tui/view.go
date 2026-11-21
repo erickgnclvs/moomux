@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -662,6 +663,11 @@ func (m *Model) renderFooter() string {
 	// subtract 2 for the footer's horizontal padding (Padding(0,1) = 1 each side)
 	inner := m.width - 2
 	hint := helpKeyStyle.Foreground(colAccent).Render("?") + helpDescStyle.Render(" help")
+	if n := len(m.marked); n > 0 {
+		// Marks survive switching projects, so count them all, not just the
+		// visible rows' — the dialog on d deletes every one.
+		hint += "  " + dangerStyle.Render(fmt.Sprintf("✗ %d marked", n))
+	}
 	hintRow := m.hintRowWithVersion(hint, inner)
 
 	messageRow := lipgloss.NewStyle().Width(inner).Render(m.flashLine(inner))
