@@ -70,21 +70,13 @@ func TestSaveConfigLogsFailure(t *testing.T) {
 	}
 }
 
-// stubTmuxRunner answers "display-message -p #S" with a fixed session name,
-// simulating a process running inside that tmux session regardless of cwd.
-type stubTmuxRunner struct{ currentSessionName string }
+type stubTmuxRunner map[string]string
 
 func (r stubTmuxRunner) Run(args ...string) (string, error) {
-	return r.currentSessionName, nil
+	return r[strings.Join(args, " ")], nil
 }
 
-// TestCurrentSessionPrefersTmuxOverStaleCwd reproduces the /kill bug where a
-// stray `cd` earlier in the conversation (e.g. to read a sibling worktree's
-// file) left the process cwd inside session "b"'s worktree while the agent
-// was still running in session "a"'s tmux session and pane. Resolving purely
-// from cwd (the old behavior) would identify session "b" and park/tag it
-// instead — currentSession must resolve via the actual tmux session instead.
-func TestCurrentSessionPrefersTmuxOverStaleCwd(t *testing.T) {
+func TestCurrentSession(t *testing.T) {
 	root := t.TempDir()
 	wtA := filepath.Join(root, "a")
 	wtB := filepath.Join(root, "b")
@@ -105,20 +97,40 @@ func TestCurrentSessionPrefersTmuxOverStaleCwd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	a := &app.App{
-		Store: store,
-		Tmux:  &tmux.Client{Runner: stubTmuxRunner{currentSessionName: "moomux-a-1111"}},
-	}
-
-	t.Setenv("TMUX", "/tmp/tmux-501/default,1,0")
-	t.Chdir(wtB) // stale cwd: left over in session a's shell from an earlier `cd` into b
-
-	s, err := currentSession(a)
-	if err != nil {
+	// An untargeted query sees session a, even when the tool shell runs in b.
+	a := &app.App{Store: store, Tmux: &tmux.Client{Runner: stubTmuxRunner{
+		"display-message -p #S":                               "moomux-a-1111\n",
+		"display-message -p -t %1 #{pane_id} #{session_name}": "%1 moomux-a-1111\n",
+		"display-message -p -t %2 #{pane_id} #{session_name}": "%2 unmanaged\n",
+		"display-message -p -t %9 #{pane_id} #{session_name}": "%1 moomux-a-1111\n",
+	}}}
+	subdir := filepath.Join(wtB, "src")
+	if err := os.Mkdir(subdir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if s.ID != "demo:a" {
-		t.Fatalf("currentSession = %+v, want session a (the tmux session we're actually in), not the stale-cwd session", s)
+	t.Setenv("TMUX", "/tmp/tmux-501/default,1,0")
+	for _, tc := range []struct {
+		name, pane, cwd, want string
+	}{
+		{"valid pane after cd", "%1", subdir, "demo:a"},
+		{"absent pane", "", subdir, "demo:b"},
+		{"stale pane", "%8", subdir, "demo:b"},
+		{"different pane returned", "%9", subdir, "demo:b"},
+		{"unmanaged pane", "%2", subdir, "demo:b"},
+		{"outside a worktree with stale pane", "%8", root, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("TMUX_PANE", tc.pane)
+			t.Chdir(tc.cwd)
+			s, err := currentSession(a)
+			if tc.want == "" {
+				if err == nil || !strings.Contains(err.Error(), "no moomux session") {
+					t.Fatalf("got session %q, error %v; want a missing-session error", s.ID, err)
+				}
+			} else if err != nil || s.ID != tc.want {
+				t.Fatalf("got session %q, error %v; want %q", s.ID, err, tc.want)
+			}
+		})
 	}
 }
 

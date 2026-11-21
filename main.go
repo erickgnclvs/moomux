@@ -531,10 +531,8 @@ func runSpawn(args []string) error {
 	return nil
 }
 
-// runTag implements `moomux tag`: attach a ticket and/or PR URL to whichever
-// moomux session's worktree the current directory is inside (or a
-// subdirectory of), so it can be run from an agent's own pane right after
-// opening a PR. Flags left unset keep the session's existing value rather
+// runTag implements `moomux tag`: attach a ticket and/or PR URL to the
+// current session. Flags left unset keep the session's existing value rather
 // than clearing it. Called with neither flag set, it just prints the
 // session's current ticket/PR instead of erroring, so an agent can check
 // what's already tracked before deciding whether it needs to go find a link.
@@ -705,31 +703,22 @@ func runReseed() error {
 	return nil
 }
 
-// currentSession identifies "the moomux session this process is running
-// in" for the park/tag CLI backends. It prefers the tmux session the
-// caller's pane actually belongs to (via $TMUX, resolved by
-// Tmux.CurrentSessionName) over cwd: an agent that `cd`s into a sibling
-// worktree earlier in the conversation — to read a file, say — leaves cwd
-// pointing at that *other* session's directory, which previously made
-// SessionForPath silently park or tag the wrong session. The tmux session a
-// pane belongs to can't change out from under it that way, so it's the more
-// reliable signal. Falls back to cwd only when not running inside tmux at
-// all (SessionForTmuxName has nothing to key off).
+// currentSession prefers the caller's pane because a shell can cd into a
+// sibling worktree. Tool shells with missing, stale, or unmanaged panes
+// identify their session by the worktree containing their cwd.
 func currentSession(a *app.App) (session.Session, error) {
-	if os.Getenv("TMUX") != "" {
-		if name, err := a.Tmux.CurrentSessionName(); err == nil {
-			if s, ok := a.SessionForTmuxName(name); ok {
-				return s, nil
-			}
+	if name, err := a.Tmux.CurrentSessionName(); err == nil {
+		if s, ok := a.SessionForTmuxName(name); ok {
+			return s, nil
 		}
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		return session.Session{}, err
+		return session.Session{}, fmt.Errorf("no moomux session found for the calling pane; cannot read working directory: %w", err)
 	}
 	s, ok := a.SessionForPath(cwd)
 	if !ok {
-		return session.Session{}, fmt.Errorf("no moomux session found for %s (run this from inside a session's worktree)", cwd)
+		return session.Session{}, fmt.Errorf("no moomux session found for the calling pane or working directory %q", cwd)
 	}
 	return s, nil
 }
