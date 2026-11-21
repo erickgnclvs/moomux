@@ -259,12 +259,15 @@ moomux shows Claude and Codex quota in the TUI header or footer. Codex quota req
 ```bash
 moomux spawn -project <project> [-name <name>] [-agent claude|codex|opencode|antigravity] \
   [-model <model>] [-thinking <level>] [-dangerous] \
-  [-branch <existing-branch>] [-ticket <url>] [-folder <folder>] [-prompt "<initial task>"]
+  [-branch <existing-branch>] [-base <branch>] [-ticket <url>] [-pr <url>] \
+  [-folder <folder>] [-prompt "<initial task>"]
 
 moomux spawn -list    # print the configured project names
 ```
 
 `-dangerous` starts the agent with its permission-skipping flag (`--dangerously-skip-permissions` for Claude and Antigravity, `--yolo` for Codex). Use it only in a repository you trust.
+
+`-base` cuts the new branch from that branch instead of the project's base branch. `-pr` attaches a pull request URL. `spawn` never opens a terminal; the session runs in tmux.
 
 `-folder` files the new session under that folder, creating it if it doesn't exist yet — handy for keeping a batch of delegated sessions together. It's fire-and-forget: prints the new tmux session's name and exits immediately, without waiting for the agent or reporting anything back. Run `moomux spawn -h` for the full flag list, or `moomux --help` for top-level usage.
 

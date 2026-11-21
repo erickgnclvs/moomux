@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -476,7 +477,15 @@ func explicitFlagOverride(fs *flag.FlagSet, name string, value bool) *bool {
 	return override
 }
 
-func runSpawn(args []string) error {
+// spawnArgs is runSpawn's parsed command line, split out so the flag-to-request
+// mapping is testable without an App.
+type spawnArgs struct {
+	list            bool
+	req             session.CreateRequest
+	peers, contract string
+}
+
+func parseSpawn(args []string) (spawnArgs, error) {
 	fs := flag.NewFlagSet("spawn", flag.ExitOnError)
 	project := fs.String("project", "", "project name (required; run -list to see configured projects)")
 	name := fs.String("name", "", "session name (derived from -branch, else -prompt, else random, if omitted)")
@@ -485,20 +494,41 @@ func runSpawn(args []string) error {
 	thinking := fs.String("thinking", "", "thinking/reasoning level: for codex, a real -c model_reasoning_effort value (minimal, low, medium, high, xhigh); for claude, --effort (low, medium, high, xhigh, max); for antigravity, --effort (low, medium, high), which agy accepts only when no -model is given; for opencode, a phrase prepended to -prompt (e.g. think, think hard, ultrathink) — no effect there without -prompt")
 	dangerous := fs.Bool("dangerous", false, "run the agent with its permission-skipping flag (claude/antigravity: --dangerously-skip-permissions, codex: --yolo)")
 	branch := fs.String("branch", "", "existing branch to check out, instead of creating a new one")
+	base := fs.String("base", "", "branch to cut the new branch from (default: the project's base branch)")
 	ticket := fs.String("ticket", "", "ticket URL to attach to the session")
+	pr := fs.String("pr", "", "pull request URL to attach to the session")
 	folder := fs.String("folder", "", "folder to file the session under (created if it doesn't exist yet)")
 	prompt := fs.String("prompt", "", "initial prompt to type into the new session's agent pane")
 	peers := fs.String("peers", "", "comma-separated names of the sessions this one has to agree with; appends the coordination rules from docs/multi-repo-sessions.md to -prompt (needs -contract)")
 	contract := fs.String("contract", "", "path (or URL) of the shared contract the -peers sessions work to")
 	list := fs.Bool("list", false, "list configured project names and exit")
+	// -background is an undocumented no-op (spawn never opens a terminal).
+	// Dropped before parsing so it stays out of -h but scripts passing it work.
+	args = slices.DeleteFunc(slices.Clone(args), func(a string) bool { return a == "-background" || a == "--background" })
 	if err := fs.Parse(args); err != nil {
-		return err
+		return spawnArgs{}, err
 	}
 	if fs.NArg() > 0 {
-		return fmt.Errorf("spawn: unexpected argument %q (flags only; put multi-word values in quotes)", fs.Arg(0))
+		return spawnArgs{}, fmt.Errorf("spawn: unexpected argument %q (flags only; put multi-word values in quotes)", fs.Arg(0))
 	}
+	return spawnArgs{
+		list: *list, peers: *peers, contract: *contract,
+		req: session.CreateRequest{
+			Project: *project, Name: *name, Agent: *agent, Branch: *branch, BaseBranch: *base, Ticket: *ticket, PR: *pr,
+			Model: *model, Thinking: *thinking, Prompt: *prompt, AutoSubmit: *prompt != "",
+			Dangerous: explicitFlagOverride(fs, "dangerous", *dangerous), Spawned: true, Folder: *folder,
+		},
+	}, nil
+}
 
-	if *list {
+func runSpawn(args []string) error {
+	sa, err := parseSpawn(args)
+	if err != nil {
+		return err
+	}
+	list, req := sa.list, sa.req
+
+	if list {
 		a, err := newApp()
 		if err != nil {
 			return err
@@ -509,11 +539,9 @@ func runSpawn(args []string) error {
 		return nil
 	}
 
-	if *project == "" {
+	if req.Project == "" {
 		return fmt.Errorf("spawn: -project is required (run 'moomux spawn -list' to see configured projects)")
 	}
-
-	dangerousOverride := explicitFlagOverride(fs, "dangerous", *dangerous)
 
 	a, err := newApp()
 	if err != nil {
@@ -523,12 +551,12 @@ func runSpawn(args []string) error {
 	// The coordinator is whoever runs spawn. Best-effort: outside a moomux
 	// session the rules fall back to "the session that spawned you".
 	var coordinator string
-	if *peers != "" {
+	if sa.peers != "" {
 		if s, err := currentSession(a); err == nil {
 			coordinator = s.Name
 		}
 	}
-	if *prompt, err = coordinatedPrompt(*prompt, *peers, *contract, coordinator); err != nil {
+	if req.Prompt, err = coordinatedPrompt(req.Prompt, sa.peers, sa.contract, coordinator); err != nil {
 		return fmt.Errorf("spawn: %w", err)
 	}
 
@@ -537,11 +565,8 @@ func runSpawn(args []string) error {
 	// and the TUI can't disagree about them. They used to — this path
 	// applied the thinking prefix by hand and never stored the prompt on
 	// the session at all, so a spawned session showed no prompt in the list.
-	s, report, err := a.CreateSessionReport(session.CreateRequest{
-		Project: *project, Name: *name, Agent: *agent, Branch: *branch, Ticket: *ticket,
-		Model: *model, Thinking: *thinking, Prompt: *prompt, AutoSubmit: *prompt != "",
-		Dangerous: dangerousOverride, Spawned: true, Folder: *folder,
-	})
+	req.AutoSubmit = req.Prompt != ""
+	s, report, err := a.CreateSessionReport(req)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}
@@ -646,9 +671,13 @@ func runPark() error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("park: %w", err)
 	}
-	fmt.Println("parked " + s.Name)
+	fmt.Println(parkNotice(s.Name))
 	return nil
 }
+
+// parkNotice words the result as in progress: the detached worker has only
+// been started, and it may still fail (its errors go to the log).
+func parkNotice(name string) string { return "parking " + name + "…" }
 
 // newParkHelperCommand leaves Stdin/Stdout/Stderr unset (-> /dev/null, see
 // os/exec's Cmd docs) rather than inheriting this process's own: when the
