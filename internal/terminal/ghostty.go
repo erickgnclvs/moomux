@@ -11,12 +11,12 @@ import (
 // the scripts don't depend on the app's display name.
 const ghosttyAppID = "com.mitchellh.ghostty"
 
-// ghosttyClient implements TabReopener/TabCloser for Ghostty on macOS via
+// ghosttyClient implements TabFinder/TabCloser for Ghostty on macOS via
 // its AppleScript dictionary (Ghostty 1.3+, `macos-applescript = true`,
 // which is the default). Ghostty still has no CLI flag for opening a tab in
 // an existing window (see ghosttyArgs), but the scripting suite exposes
 // `new tab in front window` plus stable tab ids that can be selected and
-// closed later — everything TabReopener/TabCloser need.
+// closed later — everything TabFinder/TabCloser need.
 //
 // Every path falls back to fallback (a fresh ghostty window) when the
 // script fails, because AppleScript can be unavailable for reasons moomux
