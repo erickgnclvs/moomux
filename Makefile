@@ -41,6 +41,8 @@ lint:
 	go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 	go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 	./scripts/next_version_test.sh
+	./scripts/check_dep_age_test.sh
+	./scripts/check_dep_age.sh
 
 install: check-deps build
 	mkdir -p "$(PREFIX)/bin"

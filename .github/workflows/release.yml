@@ -42,7 +42,9 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
+          # This job holds the signing key and tap token; do not restore a
+          # cache other workflows can write.
+          cache: false
 
       # Darwin builds are signed with a stable self-signed certificate
       # (hooks.post in .goreleaser.yaml). macOS keys Accessibility / Screen
@@ -83,7 +85,8 @@ jobs:
 
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
-          version: "~> v2"
+          # Exact, like every other pin. Bump by hand once the release is 72h old.
+          version: "v2.20.2"
           args: release --clean --release-notes=${{ runner.temp }}/notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
