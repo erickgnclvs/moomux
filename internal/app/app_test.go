@@ -4416,3 +4416,89 @@ func TestCodexDisplayedStateOverridesNeedsInputMarker(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateProjectRepoChangeBlockedWithSessions(t *testing.T) {
+	// Real repos, so IsRepo passes and only the sessions check can refuse.
+	oldRepo, newRepo := t.TempDir(), t.TempDir()
+	for _, dir := range []string{oldRepo, newRepo} {
+		if err := gitwt.Init(dir, "main"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, _, _ := newTestApp(t, gitProject(oldRepo))
+	_ = a.Store.Put(session.Session{ID: "demo:feat", Project: "demo", Name: "feat", Branch: "b", WorktreePath: "/wt/feat"})
+
+	p := a.Cfg.Projects["demo"]
+	p.Repo = newRepo
+	err := a.UpdateProject("demo", p)
+	if err == nil || !strings.Contains(err.Error(), "has sessions") {
+		t.Fatalf("err = %v: changing Repo while the project has sessions must fail (delete would run branch -D in the new repo)", err)
+	}
+	if got := a.Cfg.Projects["demo"].Repo; got != oldRepo {
+		t.Fatalf("Repo = %q after rejected update", got)
+	}
+}
+
+func TestAddProjectRejectsUnsafeNames(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	for _, name := range []string{".trash", "..", ".hidden", "a b", "a/b", `a\b`, "-x", ""} {
+		if err := a.AddPlainProject(name, config.Project{Repo: t.TempDir()}); err == nil {
+			t.Errorf("project name %q accepted", name)
+		}
+	}
+	if err := a.AddPlainProject("ok.name_1-x", config.Project{Repo: t.TempDir()}); err != nil {
+		t.Fatalf("valid name rejected: %v", err)
+	}
+}
+
+// A project another moomux process added after this App loaded its config
+// must be caught by the duplicate check, not silently overwritten.
+func TestAddProjectSeesProjectAddedByAnotherProcess(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	other := &config.Config{Projects: map[string]config.Project{
+		"demo": {Kind: "git", Repo: "/repo", BaseBranch: "main"},
+		"late": {Kind: "git", Repo: "/theirs", BaseBranch: "main"},
+	}}
+	if err := config.Save(a.CfgPath, other); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.AddPlainProject("late", config.Project{Repo: t.TempDir()}); err == nil {
+		t.Fatal("duplicate of a project added by another process was accepted")
+	}
+	loaded, err := config.Load(a.CfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Projects["late"].Repo != "/theirs" {
+		t.Fatalf("other process's project overwritten: %+v", loaded.Projects["late"])
+	}
+}
+
+// Single-field session writes must apply to the freshly reloaded record. a's
+// in-memory store is stale here: another process set Protected and tags.
+func TestSessionFieldWritesDoNotRevertOtherProcessesChanges(t *testing.T) {
+	a, _, _ := newTestApp(t, gitProject("/repo"))
+	if err := a.Store.Put(session.Session{ID: "demo:x", Project: "demo", Name: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	other := &session.Store{Path: a.Store.Path}
+	if err := other.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.Update("demo:x", func(s *session.Session) { s.Protected = true; s.PR = "https://example.test/pr/1" }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.SetSessionPrompt("demo:x", "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.SetSessionTags("demo:x", "T-1", "https://example.test/pr/1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := other.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := other.Get("demo:x")
+	if !got.Protected || got.Prompt != "hello" || got.Ticket != "T-1" {
+		t.Fatalf("session = %+v, want Protected kept, prompt and ticket set", got)
+	}
+}
