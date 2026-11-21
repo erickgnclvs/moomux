@@ -3,6 +3,8 @@ package tui
 import (
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/erickgnclvs/moomux/internal/session"
 )
 
@@ -82,5 +84,41 @@ func TestMatchSessionsNoMatchReturnsEmpty(t *testing.T) {
 
 	if len(got) != 0 {
 		t.Fatalf("matchSessions with no match = %d results, want 0", len(got))
+	}
+}
+
+func TestMatchSessionsSearchesEveryField(t *testing.T) {
+	all := []session.Session{
+		{ID: "branch", Name: "a", Branch: "alan/zebra-fix"},
+		{ID: "project", Name: "b", Project: "zebra-app"},
+		{ID: "folder", Name: "c", Folder: "Zebra"},
+		{ID: "ticket", Name: "d", Ticket: "https://linear.app/x/ZEBRA-1"},
+		{ID: "pr", Name: "e", PR: "https://github.com/o/zebra/pull/9"},
+		{ID: "prompt", Name: "f", Prompt: "Fix the ZEBRA crossing"},
+		{ID: "none", Name: "g", Branch: "main"},
+	}
+	got := matchSessions(all, "zebra")
+	if len(got) != 6 {
+		t.Fatalf("got %d matches, want 6: %+v", len(got), got)
+	}
+	for _, s := range got {
+		if s.ID == "none" {
+			t.Errorf("unrelated session matched")
+		}
+	}
+}
+
+// ctrl+u inside a text field must edit the text (delete to line start), not
+// scroll the overlay viewport underneath it.
+func TestCtrlUInSearchFieldEditsTextNotViewport(t *testing.T) {
+	m := newTestModel(&fakeBackend{sessions: []session.Session{{ID: "a", Project: "p", Name: "alpha"}}})
+	run(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	if m.mode != ModeSearch {
+		t.Fatalf("mode = %v, want ModeSearch", m.mode)
+	}
+	typeText(m, "alp")
+	run(m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	if got := m.searchInput.Value(); got != "" {
+		t.Fatalf("search input after ctrl+u = %q, want cleared", got)
 	}
 }

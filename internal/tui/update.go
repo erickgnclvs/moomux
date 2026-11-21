@@ -17,6 +17,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/gitwt"
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/sessionview"
+	"github.com/erickgnclvs/moomux/internal/watcher"
 	"github.com/erickgnclvs/moomux/internal/whatsnew"
 )
 
@@ -556,7 +557,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelPoll()
 			return m, tea.Quit
 		}
-		if m.mode != ModeList && m.mode != ModeHelp && m.mode != ModeMultiView && isOverlayScrollKey(msg) {
+		if m.mode != ModeList && m.mode != ModeHelp && m.mode != ModeMultiView && isOverlayScrollKey(msg) && !m.typingInOverlay(msg) {
 			var cmd tea.Cmd
 			m.overlayViewport, cmd = m.overlayViewport.Update(msg)
 			return m, cmd
@@ -605,6 +606,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// typingInOverlay reports whether msg is a ctrl+u/ctrl+d meant for a text
+// field (delete-to-start / delete-char). pgup/pgdown still scroll everywhere.
+func (m *Model) typingInOverlay(msg tea.KeyMsg) bool {
+	if k := msg.String(); k != "ctrl+u" && k != "ctrl+d" {
+		return false
+	}
+	switch m.mode {
+	case ModeNewForm, ModeNewProject, ModeEditProject, ModeTagForm, ModeFolderForm,
+		ModeEditSession, ModeSearch, ModeModelFilter:
+		return true
+	case ModeSettings:
+		return m.settingsInput.Focused()
+	}
+	return false
 }
 
 func isOverlayScrollKey(msg tea.KeyMsg) bool {
@@ -713,6 +730,9 @@ func (m *Model) doneCreating(prompt string) {
 }
 
 func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Any key but a second park press disarms the park confirm.
+	parkArmed := m.parkArmed
+	m.parkArmed = ""
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		m.cancelPoll()
@@ -779,6 +799,12 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if len(m.sessions) > 0 {
 			id := m.sessions[m.cursor].ID
+			if m.viewFor(id).State == watcher.Working && parkArmed != id {
+				m.parkArmed = id
+				m.setFlash("error", m.sessions[m.cursor].Name+" is working — press x again to park it")
+				return m, nil
+			}
+			m.setFlash("info", "parking "+m.sessions[m.cursor].Name+"…")
 			return m, func() tea.Msg {
 				if err := m.backend.KillTmux(id); err != nil {
 					return ErrorMsg{Err: err}
@@ -1323,6 +1349,9 @@ func (m *Model) moveProjectCmd(name string, delta int) tea.Cmd {
 // openSessionCmd returns a Cmd that opens/attaches the given session, used
 // by the Enter/o key binding.
 func (m *Model) openSessionCmd(id string) tea.Cmd {
+	if i := m.indexOfSession(id); i >= 0 {
+		m.setFlash("info", "opening "+m.sessions[i].Name+"…")
+	}
 	return func() tea.Msg {
 		hint, err := m.backend.OpenSession(id)
 		if err != nil {

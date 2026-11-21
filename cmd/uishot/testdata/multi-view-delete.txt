@@ -1,6 +1,5 @@
 === 40x20 ===
                                         
-                                        
  ╭────────────────────────────────────╮ 
  │                                    │ 
  │  Delete session?                   │ 
@@ -8,6 +7,8 @@
  │  name:     feature-auth            │ 
  │  branch:   feature/auth            │ 
  │  worktree: /tmp/demo/feature-auth  │ 
+ │                                    │ 
+ │  ⚠ couldn't check git status       │ 
  │                                    │ 
  │  This kills the tmux session and   │ 
  │  removes the worktree.             │ 
@@ -18,9 +19,7 @@
  ╰────────────────────────────────────╯ 
                                         
                                         
-                                        
 === 100x32 ===
-                                                                                                    
                                                                                                     
                                                                                                     
                                                                                                     
@@ -37,13 +36,14 @@
                     │  branch:   feature/auth                                 │                     
                     │  worktree: /tmp/demo/feature-auth                       │                     
                     │                                                         │                     
+                    │  ⚠ couldn't check git status                            │                     
+                    │                                                         │                     
                     │  This kills the tmux session and removes the worktree.  │                     
                     │  The branch is kept.                                    │                     
                     │                                                         │                     
                     │  y to confirm   n/esc to cancel                         │                     
                     │                                                         │                     
                     ╰─────────────────────────────────────────────────────────╯                     
-                                                                                                    
                                                                                                     
                                                                                                     
                                                                                                     

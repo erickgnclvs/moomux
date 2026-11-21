@@ -15,7 +15,8 @@ import (
 const searchRowMarker = "▸ "
 
 // matchSessions returns every session across every project — active or
-// archived — whose Name contains query, case-insensitively. An empty query
+// archived — where Name, Branch, Project, Folder, Ticket, PR or Prompt
+// contains query, case-insensitively. An empty query
 // matches everything, letting the search overlay double as a browse-all-
 // sessions list before the user types anything. Results are sorted by
 // archived status (active first), then project, then name for a stable,
@@ -25,7 +26,7 @@ func matchSessions(all []session.Session, query string) []session.Session {
 	query = strings.ToLower(strings.TrimSpace(query))
 	out := make([]session.Session, 0, len(all))
 	for _, s := range all {
-		if query == "" || strings.Contains(strings.ToLower(s.Name), query) {
+		if query == "" || sessionMatches(s, query) {
 			out = append(out, s)
 		}
 	}
@@ -39,6 +40,17 @@ func matchSessions(all []session.Session, query string) []session.Session {
 		return out[i].Name < out[j].Name
 	})
 	return out
+}
+
+// sessionMatches reports whether any searchable field contains the already
+// lowercased query.
+func sessionMatches(s session.Session, query string) bool {
+	for _, f := range []string{s.Name, s.Branch, s.Project, s.Folder, s.Ticket, s.PR, s.Prompt} {
+		if strings.Contains(strings.ToLower(f), query) {
+			return true
+		}
+	}
+	return false
 }
 
 // refreshSearchResults recomputes m.searchResults from the current query,

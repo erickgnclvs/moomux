@@ -219,3 +219,14 @@ func TestProtectedSessionCannotBeDeleted(t *testing.T) {
 		t.Fatalf("deleteCalls = %v", be.deleteCalls)
 	}
 }
+
+// Marks are kept across project switches, so the footer must count the ones
+// whose rows aren't on screen.
+func TestFooterCountsMarksInOtherProjects(t *testing.T) {
+	m := newTestModel(&fakeBackend{})
+	m.width = 80
+	m.marked = map[string]bool{"elsewhere:a": true, "elsewhere:b": true}
+	if got := m.renderFooter(); !strings.Contains(got, "2 marked") {
+		t.Fatalf("footer = %q, want it to count 2 marked", got)
+	}
+}
