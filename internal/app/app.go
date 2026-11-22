@@ -2815,6 +2815,10 @@ func (a *App) moveToTrash(wt string) {
 	}()
 }
 
+// WaitTrash blocks until moveToTrash's background removals have finished. Tests
+// call it before their TempDir cleanup, which would otherwise race them.
+func (a *App) WaitTrash() { a.trashWG.Wait() }
+
 // EmptyTrash removes whatever moveToTrash's background removals left behind
 // when the process running them exited first.
 func (a *App) EmptyTrash() { _ = os.RemoveAll(a.trashDir()) }

@@ -12,7 +12,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -35,11 +38,14 @@ func newTestApp(t *testing.T) *app.App {
 	dir := t.TempDir()
 	// Agent creation installs hooks and skills under the caller's home.
 	t.Setenv("HOME", dir)
+	tm := tmux.New()
+	rec := &pgidRecorder{Runner: tm.Runner}
+	tm.Runner = rec
 	a := &app.App{
 		Cfg:          &config.Config{Projects: map[string]config.Project{}},
 		CfgPath:      filepath.Join(dir, "config.toml"),
 		Store:        &session.Store{Path: filepath.Join(dir, "sessions.json")},
-		Tmux:         tmux.New(),
+		Tmux:         tm,
 		Git:          gitwt.New(),
 		WorktreeRoot: filepath.Join(dir, "worktrees"),
 	}
@@ -50,8 +56,57 @@ func newTestApp(t *testing.T) *app.App {
 		for _, s := range a.Store.All() {
 			_ = a.Tmux.KillSession(s.TmuxSession)
 		}
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		waitGone(rec.pgids)
+		// DeleteSession removes the trashed worktree in the background; let it
+		// finish before TempDir's own RemoveAll runs (this cleanup runs first,
+		// being registered after every TempDir the test took earlier).
+		a.WaitTrash()
 	})
 	return a
+}
+
+// pgidRecorder wraps tmux's Runner and notes the pane process groups of every
+// session it is asked to kill, whoever asks (the test, DeleteSession, KillTmux,
+// a rename). Each pane shell leads its own group, so the pane pid is the pgid.
+// kill-session returns before the agents (real claude/codex binaries) exit,
+// and they may still be writing under the temp dir when cleanup runs.
+type pgidRecorder struct {
+	tmux.Runner
+	mu    sync.Mutex
+	pgids []int
+}
+
+func (r *pgidRecorder) Run(args ...string) (string, error) {
+	if len(args) > 0 && args[0] == "kill-session" {
+		for i, arg := range args[:len(args)-1] {
+			if arg != "-t" {
+				continue
+			}
+			out, _ := r.Runner.Run("list-panes", "-s", "-t", args[i+1], "-F", "#{pane_pid}")
+			r.mu.Lock()
+			for _, f := range strings.Fields(out) {
+				if n, err := strconv.Atoi(f); err == nil {
+					r.pgids = append(r.pgids, n)
+				}
+			}
+			r.mu.Unlock()
+		}
+	}
+	return r.Runner.Run(args...)
+}
+
+// waitGone blocks until no process is left in any of the given process groups
+// (or a 10s deadline passes).
+func waitGone(pgids []int) {
+	for _, g := range pgids {
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+			if syscall.Kill(-g, 0) == syscall.ESRCH {
+				break
+			}
+		}
+	}
 }
 
 // initRepo creates a fresh git repo with one empty commit on `base`.
