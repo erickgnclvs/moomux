@@ -20,10 +20,27 @@ const StaleAfter = 15 * time.Minute
 
 // Usage is Snapshot.Usage on the wire.
 type Usage struct {
-	Status    string   `json:"status"` // ok | failed | signed_out | stale | idle
-	UpdatedAt string   `json:"updated_at,omitempty"`
-	Windows   []Window `json:"windows"` // never null
-	Tokens    *Tokens  `json:"tokens,omitempty"`
+	Status      string       `json:"status"` // ok | failed | signed_out | stale | idle
+	UpdatedAt   string       `json:"updated_at,omitempty"`
+	Windows     []Window     `json:"windows"` // never null
+	Tokens      *Tokens      `json:"tokens,omitempty"`
+	LimitResets *LimitResets `json:"limit_resets,omitempty"`
+}
+
+// LimitResets is the provider's banked reset inventory at the last quota fetch.
+type LimitResets struct {
+	AvailableCount  int          `json:"available_count"`
+	RedeemableCount *int         `json:"redeemable_count,omitempty"`
+	Grants          []ResetGrant `json:"grants,omitzero"`
+	CooldownUntil   string       `json:"cooldown_until,omitempty"`
+}
+
+type ResetGrant struct {
+	Name         string   `json:"name"`
+	Count        int      `json:"count"`
+	ExpiresAt    string   `json:"expires_at,omitempty"`
+	Windows      []string `json:"windows,omitzero"`
+	IsRedeemable *bool    `json:"is_redeemable,omitempty"`
 }
 
 // Tokens is local history, independent of subscription quota.
@@ -45,8 +62,8 @@ type Window struct {
 	Headline bool   `json:"headline"`
 }
 
-// file is the slice of usage.json (schema 3) the core reads. Dates stay
-// strings so updated_at and resets_at go out verbatim.
+// file is the slice of usage.json (schema 3) the core reads. Dates go out as
+// verbatim strings.
 type file struct {
 	Schema      int       `json:"schema"`
 	GeneratedAt time.Time `json:"generatedAt"`
@@ -78,6 +95,38 @@ type quota struct {
 		Percent  float64 `json:"percentUsed"`
 		ResetsAt string  `json:"resetsAt"`
 	} `json:"windows"`
+	LimitResets *fileLimitResets `json:"limitResets"`
+}
+
+type fileLimitResets struct {
+	AvailableCount  int    `json:"availableCount"`
+	RedeemableCount *int   `json:"redeemableCount"`
+	CooldownUntil   string `json:"cooldownUntil"`
+	Grants          []struct {
+		Name         string   `json:"name"`
+		Count        int      `json:"count"`
+		ExpiresAt    string   `json:"expiresAt"`
+		Windows      []string `json:"windows"`
+		IsRedeemable *bool    `json:"isRedeemable"`
+	} `json:"grants"`
+}
+
+func (r *fileLimitResets) wire() *LimitResets {
+	if r == nil {
+		return nil
+	}
+	resets := &LimitResets{
+		AvailableCount:  r.AvailableCount,
+		RedeemableCount: r.RedeemableCount,
+		CooldownUntil:   r.CooldownUntil,
+	}
+	if r.Grants != nil {
+		resets.Grants = make([]ResetGrant, len(r.Grants))
+		for i, grant := range r.Grants {
+			resets.Grants[i] = ResetGrant(grant)
+		}
+	}
+	return resets
 }
 
 // DefaultPath is agent-usage's output, or $MOOMUX_USAGE_FILE when set.
@@ -173,6 +222,7 @@ func buildAgent(f *file, now time.Time, agent string) (*Usage, string) {
 	switch q.Status {
 	case "ok", "failed":
 		u.Status = q.Status
+		u.LimitResets = q.LimitResets.wire()
 	case "signedOut":
 		u.Status = "signed_out"
 	default: // No quota; local token history can still exist.

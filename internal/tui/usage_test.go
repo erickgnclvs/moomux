@@ -254,6 +254,40 @@ func TestCodexUsage(t *testing.T) {
 	}
 }
 
+func TestUsageLimitResets(t *testing.T) {
+	u := &usage.Usage{
+		Status:      "ok",
+		Windows:     []usage.Window{{Name: "Week", Percent: 20, Headline: true}},
+		LimitResets: &usage.LimitResets{AvailableCount: 2, RedeemableCount: new(0)},
+	}
+	m := usageModel(u, 100)
+	m.codexUsage = &usage.Usage{Status: "ok", LimitResets: &usage.LimitResets{AvailableCount: 1}}
+	for width, want := range map[int]string{
+		100: "Claude Week 20% · 2 resets (0 ready)  │  Codex 1 reset",
+		10:  "Week 20%",
+	} {
+		if got := ansi.Strip(m.fitUsage(width)); got != want {
+			t.Errorf("width %d: usage = %q, want %q", width, got, want)
+		}
+	}
+	m.usage = nil
+	if got := ansi.Strip(m.fitUsage(100)); got != "Codex 1 reset" {
+		t.Errorf("Codex inventory alone = %q", got)
+	}
+	m.usage, m.codexUsage = u, nil
+	for _, status := range []string{"failed", "stale", "signed_out"} {
+		u.Status = status
+		if got := ansi.Strip(m.fitUsage(100)); strings.Contains(got, "reset") {
+			t.Errorf("%s quota shows reset inventory: %q", status, got)
+		}
+	}
+	u.Status = "ok"
+	u.LimitResets.AvailableCount = 0
+	if got := ansi.Strip(m.fitUsage(100)); got != "Week 20% used" {
+		t.Errorf("zero inventory changes quota line: %q", got)
+	}
+}
+
 // Token totals are served but not drawn: Claude alone with tokens is the
 // same line as without, and tokens with no quota draw nothing.
 func TestUsageIgnoresTokens(t *testing.T) {

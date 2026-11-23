@@ -252,6 +252,8 @@ moomux shows Claude and Codex quota in the TUI header or footer. Codex quota req
 
 `MOOMUX_USAGE_FILE` overrides the file read (default `~/Library/Application Support/AgentUsage/usage.json`). The quota is marked stale after 15 minutes without a write.
 
+With an agent-usage release containing [PR 13](https://github.com/afitzgerald/agent-usage/pull/13), the TUI also shows banked reset counts alongside current quota when space allows. The ready count appears when the provider reports how many can be redeemed.
+
 ## Spawning a session from the CLI
 
 `moomux spawn` creates a session non-interactively — no TUI, just a worktree + tmux session + agent, same as pressing `n` — and optionally types an initial prompt into the agent's pane. Useful for one agent to delegate a sub-task to a fresh session of its own, or for any script/automation:

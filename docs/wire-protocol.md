@@ -294,7 +294,15 @@ credential. `internal/usage` is the whole implementation.
   "windows": [
     { "kind": "session", "name": "5h", "percent": 40,
       "resets_at": "2026-09-30T21:49:59Z", "level": "ok", "headline": true }
-  ]
+  ],
+  "limit_resets": {
+    "available_count": 1,
+    "redeemable_count": 1,
+    "grants": [
+      { "name": "Full reset", "count": 1, "expires_at": "2026-10-22T22:00:00Z",
+        "windows": ["five_hour", "seven_day"], "is_redeemable": true }
+    ]
+  }
 }
 ```
 
@@ -335,13 +343,20 @@ credential. `internal/usage` is the whole implementation.
   know, so a new window still gets a row). `headline` marks the ones to show
   inline. `level` (`ok` / `warn` ≥ 80 / `critical` ≥ 95) is the only place the
   thresholds live: clients colour by `level`, never by `percent`.
+- `limit_resets` carries the provider's banked reset inventory from the last
+  quota fetch. `available_count` counts resets held, including zero.
+  `redeemable_count` counts resets usable at the time of that fetch when known.
+  When the provider supplies `grants`, each contains a `name` and `count` and
+  can include `expires_at`, covered provider `windows`, and `is_redeemable`.
+  `cooldown_until` is optional. Dates are copied verbatim. An omitted inventory
+  means the provider or agent-usage version supplied no inventory.
+  A `failed` or `stale` status can carry the previous inventory.
 
 `codex_usage` uses the same shape as `usage`; it is additive and older clients ignore it. Each agent is looked up by its `agent` key. A weekly window can be the only headline window. An idle or missing quota is omitted unless local token history exists. An optional `tokens` object gives `updated_at`, `window_days`, and summed `input`, `output`, `cache_read`, and `cache_write` counts across local daily history. These are local counts, not subscription quota. Empty history is omitted.
 
-Countdown strings and spend are deliberately left out. A
-countdown changes every minute, so clients format `resets_at` themselves. The
-shape is shared with moomux-mac, whose `docs/usage-contract.md` is the
-cross-repo contract. Change it there first.
+Clients format `resets_at` themselves because the countdown changes every minute.
+The snapshot omits spend. The Apple clients decode this shape in
+moomux-mac's `Sources/MoomuxKit/Core/Models.swift`.
 
 ### `update_available`: a newer moomux can be installed
 
