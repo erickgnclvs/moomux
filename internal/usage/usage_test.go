@@ -178,3 +178,48 @@ func TestCodexAndLocalTokens(t *testing.T) {
 		t.Fatalf("stale = %+v", u)
 	}
 }
+
+func TestLimitResetsWire(t *testing.T) {
+	body := `{"schema":3,"generatedAt":"2026-09-30T19:25:03Z","agents":[
+		{"agent":"claude","quota":{"status":"ok","limitResets":{"availableCount":2,"redeemableCount":0,
+			"cooldownUntil":"2026-09-30T20:00:00Z","grants":[{"name":"Full reset","count":2,
+			"expiresAt":"2026-10-03T14:00:00Z","windows":["five_hour","seven_day"],"isRedeemable":false}]}}},
+		{"agent":"codex","quota":{"status":"failed","limitResets":{"availableCount":1}}},
+		{"agent":"empty","quota":{"status":"ok","limitResets":{"availableCount":0,"grants":[]}}},
+		{"agent":"legacy","quota":{"status":"ok"}},
+		{"agent":"signed-out","quota":{"status":"signedOut","limitResets":{"availableCount":2}}}
+	]}`
+	p := filepath.Join(t.TempDir(), "usage.json")
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := &Reader{Path: p}
+	for _, tc := range []struct {
+		agent, status, want string
+		age                 time.Duration
+	}{
+		{"claude", "ok", `{"available_count":2,"redeemable_count":0,"grants":[{"name":"Full reset","count":2,"expires_at":"2026-10-03T14:00:00Z","windows":["five_hour","seven_day"],"is_redeemable":false}],"cooldown_until":"2026-09-30T20:00:00Z"}`, 0},
+		{"codex", "failed", `{"available_count":1}`, 0},
+		{"codex", "stale", `{"available_count":1}`, time.Hour},
+		{"empty", "ok", `{"available_count":0,"grants":[]}`, 0},
+		{"legacy", "ok", "", 0},
+		{"signed-out", "signed_out", "", 0},
+		{"signed-out", "stale", "", time.Hour},
+	} {
+		u, why := r.ReadAgent(now.Add(tc.age), tc.agent)
+		if u == nil || u.Status != tc.status || why != "" {
+			t.Fatalf("%s: usage = %+v, reason = %q, want status %q", tc.agent, u, why, tc.status)
+		}
+		b, err := json.Marshal(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wire map[string]json.RawMessage
+		if err := json.Unmarshal(b, &wire); err != nil {
+			t.Fatal(err)
+		}
+		if got := string(wire["limit_resets"]); got != tc.want {
+			t.Errorf("%s (%s): limit_resets = %s, want %s", tc.agent, tc.status, got, tc.want)
+		}
+	}
+}

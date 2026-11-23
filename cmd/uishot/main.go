@@ -172,9 +172,10 @@ var screens = map[string][]string{
 	// one still at ok that must stay hidden. No keys: it arrives on the
 	// StatusTickMsg, see screenUsage. usage-stale is the same windows once
 	// agent-usage has stopped writing.
-	"usage":       {},
-	"usage-stale": {},
-	"usage-codex": {},
+	"usage":        {},
+	"usage-stale":  {},
+	"usage-codex":  {},
+	"usage-resets": {},
 	// Submits the new-project form with a path under ~/Documents that isn't
 	// a git repo, landing on the "skip git" choice screen with its macOS
 	// Files-and-Folders warning (see App.PathWarning in internal/app). "$HOME" is
@@ -838,6 +839,18 @@ func renderScreen(screenName string, width, height int, theme, appearance string
 		snap.Usage = screenUsage("usage")
 		snap.Usage.Tokens = &usage.Tokens{WindowDays: 30, Input: 123000, Output: 45000}
 		snap.CodexUsage = &usage.Usage{Status: "ok", Windows: []usage.Window{{Kind: "weekly_all", Name: "Week", Percent: 62, Headline: true, Level: "ok"}}, Tokens: &usage.Tokens{WindowDays: 30, Input: 230000, Output: 12000}}
+	}
+	if screenName == "usage-resets" {
+		snap.Usage = &usage.Usage{
+			Status:      "ok",
+			Windows:     []usage.Window{{Kind: "weekly_all", Name: "Week", Percent: 83, Headline: true, Level: "warn"}},
+			LimitResets: &usage.LimitResets{AvailableCount: 2, RedeemableCount: new(1)},
+		}
+		snap.CodexUsage = &usage.Usage{
+			Status:      "ok",
+			Windows:     []usage.Window{{Kind: "weekly_all", Name: "Week", Percent: 62, Headline: true, Level: "ok"}},
+			LimitResets: &usage.LimitResets{AvailableCount: 1},
+		}
 	}
 	if screenName == "settings-usage-setup" {
 		snap.UsageSetup = usage.NotInstalled

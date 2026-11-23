@@ -10,7 +10,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/usage"
 )
 
-// usageCandidates renders the core's Claude quota (sessionview.Snapshot.Usage)
+// agentUsageCandidates renders one agent's quota
 // from most to least detailed (with a trailing "used", then without, then
 // without countdowns), so a caller can take the first that fits instead of
 // clipping it mid-word. Nil when there's nothing to draw — the core omits
@@ -97,33 +97,23 @@ func (m *Model) agentUsageCandidates(u *usage.Usage, agent string) []string {
 func (m *Model) usageCandidates() []string {
 	a := m.agentUsageCandidates(m.usage, "claude")
 	b := m.agentUsageCandidates(m.codexUsage, "codex")
-	if b == nil {
-		return a
+	claudeResets, codexResets := resetSummary(m.usage), resetSummary(m.codexUsage)
+	var result []string
+	if claudeResets != "" || codexResets != "" {
+		if a == nil && claudeResets != "" && b == nil && codexResets == "" {
+			return []string{"Claude " + claudeResets}
+		}
+		result = m.combineUsageCandidates(withResetSummary(a, claudeResets), withResetSummary(b, codexResets))
 	}
+	result = append(result, m.combineUsageCandidates(a, b)...)
+	if b == nil {
+		return result
+	}
+
 	agents := []struct {
 		name string
 		u    *usage.Usage
-		c    []string
-	}{{"Claude", m.usage, a}, {"Codex", m.codexUsage, b}}
-	var result []string
-	for i := 1; i <= 2; i++ {
-		var parts []string
-		for _, ag := range agents {
-			if len(ag.c) == 0 {
-				continue
-			}
-			c := ag.c[min(i, len(ag.c)-1)]
-			if ag.u.Status == "signed_out" {
-				c = muteStyle.Render("signed out")
-			}
-			parts = append(parts, ag.name+" "+c)
-		}
-		result = append(result, strings.Join(parts, muteStyle.Render("  │  ")))
-	}
-	// Single-spaced, so a ~60-column footer keeps the styling and warnings.
-	// Every double space is a plain join between styled runs.
-	result = append(result, strings.ReplaceAll(result[1], "  ", " "))
-
+	}{{"Claude", m.usage}, {"Codex", m.codexUsage}}
 	var minimal []string
 	for _, ag := range agents {
 		if ag.u == nil {
@@ -153,6 +143,63 @@ func (m *Model) usageCandidates() []string {
 		result = append(result, strings.Join(minimal, " "))
 	}
 	return result
+}
+
+func (m *Model) combineUsageCandidates(a, b []string) []string {
+	if b == nil {
+		return a
+	}
+	agents := []struct {
+		name string
+		u    *usage.Usage
+		c    []string
+	}{{"Claude", m.usage, a}, {"Codex", m.codexUsage, b}}
+	var result []string
+	for i := 1; i <= 2; i++ {
+		var parts []string
+		for _, ag := range agents {
+			if len(ag.c) == 0 {
+				continue
+			}
+			c := ag.c[min(i, len(ag.c)-1)]
+			if ag.u.Status == "signed_out" {
+				c = muteStyle.Render("signed out")
+			}
+			parts = append(parts, ag.name+" "+c)
+		}
+		result = append(result, strings.Join(parts, muteStyle.Render("  │  ")))
+	}
+	// Single spacing keeps the styling and warnings on a narrow footer.
+	return append(result, strings.ReplaceAll(result[1], "  ", " "))
+}
+
+func withResetSummary(candidates []string, summary string) []string {
+	if summary == "" {
+		return candidates
+	}
+	if len(candidates) == 0 {
+		return []string{muteStyle.Render(summary)}
+	}
+	result := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		result = append(result, candidate+muteStyle.Render(" · "+summary))
+	}
+	return result
+}
+
+func resetSummary(u *usage.Usage) string {
+	if u == nil || u.Status != "ok" || u.LimitResets == nil || u.LimitResets.AvailableCount <= 0 {
+		return ""
+	}
+	resets := u.LimitResets
+	summary := fmt.Sprintf("%d reset", resets.AvailableCount)
+	if resets.AvailableCount > 1 {
+		summary += "s"
+	}
+	if resets.RedeemableCount != nil {
+		summary += fmt.Sprintf(" (%d ready)", *resets.RedeemableCount)
+	}
+	return summary
 }
 
 // fitUsage is the most detailed usage candidate no wider than width, or "".
