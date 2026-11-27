@@ -64,7 +64,7 @@ func EnsureKillPrompt(home string) (changed bool, err error) {
 // description/argument-hint, not Claude Code's allowed-tools, so this
 // carries no frontmatter Codex doesn't understand.
 const tagPrompt = `---
-description: Tag this moomux session with its PR (and ticket, if one is already tracked)
+description: Tag this moomux session with a confirmed ticket, an open PR, or both
 ---
 
 ` + tagSkillInstructions

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+
+	"github.com/erickgnclvs/moomux/internal/tagguide"
 )
 
 // killCommand is installed as the body of the /kill custom command — see
@@ -27,11 +29,12 @@ allowed-tools: Bash(moomux park:*)
 //
 // Custom commands live in the user's global commands dir so they're
 // available from every worktree with no per-project trust approval — unlike
-// a hook, a custom command only ever runs when the user explicitly types
-// it, so Claude Code requires none.
+// a hook, a custom command is invoked by the user.
 func ensureCommand(home, name, body string) (changed bool, err error) {
-	path := filepath.Join(home, ".claude", "commands", name+".md")
+	return ensureManagedFile(filepath.Join(home, ".claude", "commands", name+".md"), body)
+}
 
+func ensureManagedFile(path, body string) (changed bool, err error) {
 	existing, err := os.ReadFile(path)
 	if err == nil && string(existing) == body {
 		return false, nil
@@ -55,37 +58,37 @@ func EnsureKillCommand(home string) (changed bool, err error) {
 	return ensureCommand(home, "kill", killCommand)
 }
 
-// tagCommand is installed as the body of the /tag custom command — see
-// EnsureTagCommand.
 const tagCommand = `---
-description: Tag this moomux session with its PR (and ticket, if one is already tracked)
-allowed-tools: Bash(gh pr view:*), Bash(git log:*), Bash(git branch:*), Bash(moomux tag:*)
+description: Tag this moomux session with a confirmed ticket, an open PR, or both
+` + tagToolsAndBody
+
+const tagSkill = `---
+name: tag
+description: ` + tagguide.Description + ` Also use when the user invokes /tag or asks to tag this session.
+` + tagToolsAndBody
+
+const tagToolsAndBody = `allowed-tools: Bash(gh pr view:*), Bash(git log:*), Bash(git branch:*), Bash(moomux tag:*)
 ---
 
-Run ` + "`moomux tag`" + ` with no flags first to see what's already tracked on this
-session.
+` + tagguide.Instructions
 
-Find the open pull request for the current branch (e.g. ` + "`gh pr view --json url,body --jq '.url + \"\\n\" + .body'`" + `) and run:
-
-    moomux tag -pr <that PR URL>
-
-Leave out ` + "`-ticket`" + ` — moomux keeps this session's existing ticket automatically
-when you don't pass one. If ` + "`moomux tag`" + ` showed no ticket tracked yet, look for
-a ticket link in the PR title/body, the branch name, and recent commit
-messages (` + "`git log --oneline -20`" + `). Recognize common
-formats: Asana (` + "`https://app.asana.com/.../task/...`" + `), Jira
-(` + "`https://<org>.atlassian.net/browse/<KEY>-<num>`" + ` or a bare ` + "`<KEY>-<num>`" + `
-you can expand to that URL), and Linear (` + "`https://linear.app/<org>/issue/<KEY>-<num>`" + `).
-If you find one, pass it too:
-` + "`moomux tag -pr <PR URL> -ticket <ticket URL>`" + `.
-
-If there's no open PR yet, say so instead of guessing one. Don't guess a
-ticket link either — only pass ` + "`-ticket`" + ` when you actually found one.
-`
-
-// EnsureTagCommand installs the /tag custom command — see ensureCommand.
+// EnsureTagCommand installs the discoverable tag skill and refreshes the legacy /tag command.
 func EnsureTagCommand(home string) (changed bool, err error) {
-	return ensureCommand(home, "tag", tagCommand)
+	commandPath := filepath.Join(home, ".claude", "commands", "tag.md")
+	commandChanged, err := ensureManagedFile(commandPath, tagCommand)
+	if err != nil {
+		return false, err
+	}
+	if !commandChanged {
+		// A same-named skill takes precedence over a custom command in Claude.
+		// Don't install one over the user's own /tag command.
+		existing, err := os.ReadFile(commandPath)
+		if err != nil || string(existing) != tagCommand {
+			return false, err
+		}
+	}
+	skillChanged, skillErr := ensureManagedFile(filepath.Join(home, ".claude", "skills", "tag", "SKILL.md"), tagSkill)
+	return commandChanged || skillChanged, skillErr
 }
 
 // spawnCommand is installed as the body of the /spawn custom command — see
