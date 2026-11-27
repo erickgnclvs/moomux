@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -148,4 +149,41 @@ func detectFromProcessTree() TerminalOpener {
 		}
 	}
 	return nil
+}
+
+// attachedClientEnv returns a getenv over the environment of the most
+// recently active tmux client attached to moomux's session — the process
+// running in the emulator the human is looking at, whose env, unlike
+// moomux's own, isn't the tmux server's snapshot. ok is false when there
+// is no client or its env can't be read (anything without /proc, such as
+// macOS).
+func attachedClientEnv() (getenv func(string) string, ok bool) {
+	pids, err := attachedClientPIDs()
+	if err != nil || len(pids) == 0 {
+		return nil, false
+	}
+	env, err := processEnv(pids[0])
+	if err != nil {
+		return nil, false
+	}
+	return func(k string) string { return env[k] }, true
+}
+
+// processEnv reads pid's environment from /proc.
+var processEnv = func(pid int) (map[string]string, error) {
+	raw, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/environ")
+	if err != nil {
+		return nil, err
+	}
+	return parseEnviron(raw), nil
+}
+
+func parseEnviron(raw []byte) map[string]string {
+	env := map[string]string{}
+	for _, kv := range strings.Split(string(raw), "\x00") {
+		if k, v, ok := strings.Cut(kv, "="); ok && k != "" {
+			env[k] = v
+		}
+	}
+	return env
 }
