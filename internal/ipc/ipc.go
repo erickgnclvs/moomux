@@ -113,11 +113,13 @@ type Args struct {
 
 // Result is the matching union of every return shape. Same trade as Args.
 type Result struct {
-	Session  *session.Session     `json:"session,omitempty"`
-	Sessions []session.Session    `json:"sessions,omitempty"`
-	Cfg      *config.Config       `json:"cfg,omitempty"`
-	Agents   []config.AgentOption `json:"agents,omitempty"`
-	Themes   []config.Theme       `json:"themes,omitempty"`
+	Session  *session.Session        `json:"session,omitempty"`
+	Sessions []session.Session       `json:"sessions,omitempty"`
+	Cfg      *config.Config          `json:"cfg,omitempty"`
+	OpenCode *config.OpenCodeOptions `json:"opencode,omitempty"`
+	Models   []string                `json:"models,omitempty"`
+	Agents   []config.AgentOption    `json:"agents,omitempty"`
+	Themes   []config.Theme          `json:"themes,omitempty"`
 	// Ghostty is GhosttyConfig's answer, always present for that method —
 	// empty text and no files when there's no config.
 	Ghostty *GhosttyConfig `json:"ghostty,omitempty"`

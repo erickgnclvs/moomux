@@ -69,9 +69,9 @@ var screens = map[string][]string{
 	"new-session-model-named": append(append([]string{"n"}, keys("tab", 9)...), "right"),
 	// The agent selector, which the active sample project ("demo") defaults
 	// to codex; one "right" cycles it to opencode, then a tab lands on the
-	// model row, which for opencode is a free-text input instead of the
-	// claude/codex selector — exercises that per-agent branch.
-	"new-session-model-opencode": append(append([]string{"n"}, keys("tab", 8)...), "right", "tab"),
+	// OpenCode agent row. Choose Plan, the first model, and its high effort.
+	"new-session-model-opencode":  append(append([]string{"n"}, keys("tab", 8)...), "right", "tab", "right", "tab", "right"),
+	"new-session-effort-opencode": append(append([]string{"n"}, keys("tab", 8)...), "right", "tab", "right", "tab", "right", "tab", "right", "right"),
 	// two "right" presses cycle to antigravity, then tab to model row.
 	"new-session-model-antigravity": append(append([]string{"n"}, keys("tab", 8)...), "right", "right", "tab"),
 	// Back up six rows from the agent to the thinking row, with antigravity's
@@ -417,6 +417,10 @@ func (f *fakeBackend) TmuxStates() map[string]watcher.State {
 		alive[s.ID] = watcher.Unknown
 	}
 	return alive
+}
+
+func (f *fakeBackend) OpenCodeOptions(project string) (config.OpenCodeOptions, error) {
+	return config.OpenCodeOptions{Models: []string{"local/atlas", "local/ember"}, DefaultModel: "local/atlas", Variants: map[string][]string{"local/atlas": {"low", "high"}}, Agents: []config.OpenCodeAgent{{ID: "build", Name: "Build"}, {ID: "plan", Name: "Plan"}}}, nil
 }
 
 // SuggestedProject mirrors the real core's cwd prefill. TestScreens pins the

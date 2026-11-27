@@ -200,6 +200,14 @@ func (c *Client) AgentOptions() ([]config.AgentOption, error) {
 	return r.Agents, nil
 }
 
+func (c *Client) OpenCodeOptions(project string) (config.OpenCodeOptions, error) {
+	r, err := c.call("OpenCodeOptions", Args{Project: project})
+	if r.OpenCode == nil {
+		return config.OpenCodeOptions{}, err
+	}
+	return *r.OpenCode, err
+}
+
 // Themes fetches the server's color palettes — the agent-state colors a
 // front end renders, and the list a theme picker offers. Like AgentOptions,
 // it isn't part of tui.Backend: fetched once at startup, not per render.

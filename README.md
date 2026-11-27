@@ -30,6 +30,12 @@ git clone https://github.com/erickgnclvs/moomux && cd moomux && make install
 
 Requires `tmux` and `git` on `$PATH`. Each session's agent CLI (`claude`, `codex`, `opencode`, or `antigravity`) must also be on `$PATH`, but only for the agents you use.
 
+In the moomux TUI, select **opencode** under **Agent**. With OpenCode v2, **OpenCode agent** lists the project's visible primary agents, including custom agents. Use **← / →** to choose an agent, a **Model**, and an **Effort**. Effort lists the reasoning variants supported by that model. With the model on **default**, moomux uses the agent’s configured model or the project default to list variants. Selecting an effort launches that model and variant together. On the CLI, use `-opencode-agent <id>` and `-model provider/model#variant`. OpenCode v1 offers model discovery only in the moomux form.
+
+Inside OpenCode v2, **Shift+Tab** cycles agents such as Build and Plan. **Ctrl+X**, then **A**, opens the agent picker. **Ctrl+X**, then **M**, opens the model picker. **Ctrl+T** cycles the selected model’s reasoning variants. **Ctrl+P** opens the command palette. After parking and reopening, **Ctrl+X**, then **L**, opens the conversation history. These are OpenCode’s default bindings. OpenCode handles its own approvals. The moomux **Dangerous** setting has no effect for this agent.
+
+Moomux reads OpenCode v2’s full-screen terminal status from the agent pane. A running turn shows **Working**, a pending approval or question form shows **Needs input**, and an idle client shows **Done**. Closing the tmux session shows **Parked**. If a user pipe already owns the pane, or the client emits no terminal status, moomux estimates activity from the OpenCode database by worktree. That fallback reports **Working** for ten seconds after an update, then **Done**. A live worktree with no recorded status has state `unknown`.
+
 **Agent usage (macOS)**: Homebrew installs [agent-usage](https://github.com/afitzgerald/agent-usage) with moomux, and moomux starts its service on first run. It supplies Claude and Codex usage and the Claude and Codex models and thinking levels in the new-session form; without it, the only choice for either is `default`. See [Agent usage](#agent-usage). With any other install method, install it yourself:
 
 ```bash

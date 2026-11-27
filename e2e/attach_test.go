@@ -38,7 +38,7 @@ func newCoreSession(t *testing.T, name string) (*app.App, session.Session) {
 		Branch: "main", WorktreePath: repo,
 		TmuxSession: app.TmuxSessionName("demo:"+name, name),
 	}
-	if err := a.Tmux.NewSession(s.TmuxSession, repo, "", name); err != nil {
+	if err := a.Tmux.NewSession(s.TmuxSession, repo, "", "", name); err != nil {
 		t.Fatalf("tmux NewSession: %v", err)
 	}
 	if err := a.Store.Put(s); err != nil {

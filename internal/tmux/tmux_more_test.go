@@ -59,14 +59,14 @@ func TestNewSessionErrors(t *testing.T) {
 	// new-session itself fails
 	fr := &fakeRunner{failOn: map[string]bool{"new-session -d -s s -c /wt -n w": true}}
 	c := &Client{Runner: fr}
-	if err := c.NewSession("s", "/wt", "cmd", "w"); err == nil {
+	if err := c.NewSession("s", "/wt", "", "cmd", "w"); err == nil {
 		t.Fatal("expected error from new-session")
 	}
 
 	// list-panes fails
 	fr = &fakeRunner{failOn: map[string]bool{"list-panes -t =s:^ -F #{pane_id}": true}}
 	c = &Client{Runner: fr}
-	if err := c.NewSession("s", "/wt", "cmd", "w"); err == nil {
+	if err := c.NewSession("s", "/wt", "", "cmd", "w"); err == nil {
 		t.Fatal("expected error from list-panes")
 	}
 
@@ -76,7 +76,7 @@ func TestNewSessionErrors(t *testing.T) {
 		failOn: map[string]bool{"split-window -h -t =s:^ -c /wt -l 33%": true},
 	}
 	c = &Client{Runner: fr}
-	if err := c.NewSession("s", "/wt", "cmd", "w"); err == nil {
+	if err := c.NewSession("s", "/wt", "", "cmd", "w"); err == nil {
 		t.Fatal("expected error from split-window")
 	}
 
@@ -86,7 +86,7 @@ func TestNewSessionErrors(t *testing.T) {
 		failOn: map[string]bool{"select-pane -t %0": true},
 	}
 	c = &Client{Runner: fr}
-	if err := c.NewSession("s", "/wt", "cmd", "w"); err == nil {
+	if err := c.NewSession("s", "/wt", "", "cmd", "w"); err == nil {
 		t.Fatal("expected error from select-pane")
 	}
 
@@ -96,7 +96,7 @@ func TestNewSessionErrors(t *testing.T) {
 		failOn: map[string]bool{"send-keys -t %0 cmd Enter": true},
 	}
 	c = &Client{Runner: fr}
-	if err := c.NewSession("s", "/wt", "cmd", "w"); err == nil {
+	if err := c.NewSession("s", "/wt", "", "cmd", "w"); err == nil {
 		t.Fatal("expected error from send-keys")
 	}
 }

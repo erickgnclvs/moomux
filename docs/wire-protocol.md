@@ -433,9 +433,10 @@ own timer, which catches three things no event can announce:
 
 Where an event *does* exist, it's already used: the agent watchers are
 fsevents-driven on darwin with a debounce, Claude Code reports an open
-dialog in its own session file, and Codex reports its displayed lifecycle state
-through OSC 7501 in the agent pane. The core reads that pane's status with
-tmux liveness. It uses the SQLite and hook signals when the pane has no
+dialog in its own session file, and Codex and OpenCode v2 report their displayed
+lifecycle state through OSC 7501 in the agent pane. OpenCode's root record
+summarizes the client's tabs, including pending permission requests and question
+forms. The core reads that pane's status with tmux liveness. It uses the SQLite and hook signals when the pane has no
 native status. The timer is a floor, not the
 primary signal.
 
@@ -475,7 +476,7 @@ as plain folder" dialog.
 
 ### Methods
 
-**Read** — `Config`, `Sessions`, `AgentOptions`, `Themes`, `GhosttyConfig`,
+**Read** — `Config`, `Sessions`, `AgentOptions`, `OpenCodeOptions`, `OpenCodeModels`, `Themes`, `GhosttyConfig`,
 `SuggestedProject`, `WorktreeStatus`, `ChangeSummary`, `Capture`, `Diff`,
 `ReadBaseFile`.
 
@@ -485,6 +486,8 @@ display name is in `model_names` and its thinking levels in `model_thinking`
 (both keyed by model ID); `thinking` is then the list for model `"default"`,
 every level any model offers. `models` is the full list. A picker leaves out
 the IDs in `Config.excluded_models[agent]`, which `SetModelExcluded` edits.
+
+`OpenCodeOptions` takes `args.project`. Its `result.opencode` contains the project's enabled model IDs, `default_model`, per-model `variants`, and visible primary `agents` with their IDs, names, and configured models. The first agent is the project default. A client passes the selected agent ID in `CreateRequest.OpenCodeAgent` and a selected variant in `Model` as `provider/model#variant`. With effort on default the client sends the model as selected. It leaves `Thinking` empty for native reasoning. The older `OpenCodeModels` method returns just `result.models`.
 
 **Session lifecycle** — `CreateSession`, `EnsureTmux`, `DeleteSession`,
 `KillTmux` (park), `Review`, `SelectWindow`, `ResizeAttach` (see `Attach` below).

@@ -37,7 +37,7 @@ var testAgentOptions = []config.AgentOption{
 			"gpt-5.6-terra": {"default", "low", "medium", "high"},
 			"gpt-5.6-luna":  {"default"},
 		}},
-	{Name: "opencode", Thinking: []string{"default", "think", "think hard", "think harder", "ultrathink"}},
+	{Name: "opencode", Models: []string{"default"}, Thinking: []string{"default"}},
 	{Name: "antigravity", Models: []string{"default"}, Thinking: []string{"default", "low", "medium", "high"}},
 }
 
@@ -213,6 +213,9 @@ type deleteFolderCall struct {
 	name string
 }
 
+func (f *fakeBackend) OpenCodeOptions(project string) (config.OpenCodeOptions, error) {
+	return config.OpenCodeOptions{Models: []string{project + "/test"}, DefaultModel: project + "/test", Variants: map[string][]string{project + "/test": {"low", "high"}}, Agents: []config.OpenCodeAgent{{ID: "build", Name: "Build"}, {ID: "review", Name: "Review", Model: project + "/test"}}}, nil
+}
 func (f *fakeBackend) SuggestedProject() (string, string) { return "", "" }
 
 func (f *fakeBackend) CreateSession(req session.CreateRequest) (session.Session, string, error) {

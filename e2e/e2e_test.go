@@ -385,7 +385,7 @@ func TestCreateSession_EmptyRequestGetsRandomName(t *testing.T) {
 	}
 }
 
-func TestCreateSession_OpenCodePortAllocation(t *testing.T) {
+func TestCreateSession_IndependentOpenCodeSessions(t *testing.T) {
 	repo := initRepo(t, "main")
 	a := newTestApp(t)
 	if _, err := a.AddProject("demo", config.Project{Repo: repo, BaseBranch: "main"}); err != nil {
@@ -396,16 +396,19 @@ func TestCreateSession_OpenCodePortAllocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession 1: %v", err)
 	}
-	if s1.AgentPort != 4096 {
-		t.Fatalf("s1 port = %d, want 4096", s1.AgentPort)
-	}
 
 	s2, _, err := a.CreateSession(session.CreateRequest{Project: "demo", Name: "oc2", Agent: "opencode", OpenTerminal: true, Dangerous: boolPtr(false)})
 	if err != nil {
 		t.Fatalf("CreateSession 2: %v", err)
 	}
-	if s2.AgentPort != 4097 {
-		t.Fatalf("s2 port = %d, want 4097", s2.AgentPort)
+	if s1.TmuxSession == s2.TmuxSession || s1.WorktreePath == s2.WorktreePath {
+		t.Fatal("OpenCode sessions must have distinct panes and worktrees")
+	}
+	for _, s := range []session.Session{s1, s2} {
+		if s.AgentPort != 0 {
+			t.Fatalf("unexpected port %d", s.AgentPort)
+		}
+		waitPaneCwd(t, s.TmuxSession, s.WorktreePath, "OpenCode session")
 	}
 }
 

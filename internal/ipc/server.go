@@ -679,6 +679,12 @@ func (s *Server) dispatch(method string, a Args) (Result, error) {
 			return Result{}, errors.New("server has no config")
 		}
 		return cfgResult(s.Config()), nil
+	case "OpenCodeOptions", "OpenCodeModels":
+		opts, err := b.OpenCodeOptions(a.Project)
+		if method == "OpenCodeModels" {
+			return Result{Models: opts.Models}, err
+		}
+		return Result{OpenCode: &opts}, err
 	case "AgentOptions":
 		if s.AgentOptions == nil {
 			return Result{}, errors.New("server has no agent options")

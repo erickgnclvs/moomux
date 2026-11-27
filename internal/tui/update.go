@@ -25,6 +25,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// One backend read per pass — see allSessions.
 	m.invalidateSessions()
 	switch msg := msg.(type) {
+	case openCodeOptionsMsg:
+		if msg.request == m.openCodeRequest {
+			m.openCodeCatalog.loading = false
+			m.openCodeCatalog.loaded = msg.err == nil
+			m.openCodeCatalog.err = msg.err
+			if msg.err == nil {
+				m.openCodeCatalog.OpenCodeOptions = msg.options
+			}
+		}
+		return m, nil
 	case UpdateCheckedMsg:
 		if msg.Err != nil || msg.Version == "" {
 			m.updating = false
@@ -188,8 +198,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.flashError(fmt.Errorf("a session create failed (n reopens it): %w", msg.Err))
 		}
 		m.flash, m.flashKind = "", ""
-		m.openNewSessionForm()
-		return m, nil
+		return m, m.openNewSessionForm()
 
 	case SessionCreatedMsg:
 		m.applyCfg(msg.Cfg)
@@ -429,8 +438,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Err == nil {
 				m.activateProject(msg.Name)
 				m.setFlash("info", "added project "+msg.Name)
-				m.finishProjectAdded(msg.Name)
-				return m, nil
+				return m, m.finishProjectAdded(msg.Name)
 			}
 			if errors.Is(msg.Err, gitwt.ErrNotGitRepo) {
 				m.pending = pendingProject{name: msg.Name, p: msg.Project, warning: msg.Warning}
@@ -455,8 +463,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.setFlash("info", "added plain (non-git) project "+msg.Name)
 			}
-			m.finishProjectAdded(msg.Name)
-			return m, nil
+			return m, m.finishProjectAdded(msg.Name)
 		}
 		return m, nil
 
@@ -645,13 +652,13 @@ func (m *Model) resetOverlayViewport() {
 // and change, it just isn't forced to an empty choice.
 // openNewSessionForm opens the new-session form: blank, or — when a create
 // failed while another form was open — as that failed one was submitted.
-func (m *Model) openNewSessionForm() {
+func (m *Model) openNewSessionForm() tea.Cmd {
 	if len(m.failedCreates) > 0 {
 		failed := m.failedCreates[0]
 		m.failedCreates = m.failedCreates[1:]
 		m.setNewForm(failed.Form)
 		m.newFormErr = failed.Err.Error()
-		return
+		return m.loadOpenCodeOptions()
 	}
 	draft := m.loadNewSessionDraft()
 	if slices.Contains(m.creating, draft) {
@@ -672,13 +679,15 @@ func (m *Model) openNewSessionForm() {
 		f.focus = newFormProjFocus
 	}
 	m.setNewForm(f)
+	return m.loadOpenCodeOptions()
 }
 
 // newFormState is everything the new-session form holds, so a submitted form
 // can be put back exactly as it was if its create fails.
 type newFormState struct {
 	projIdx, agentIdx, modelIdx, thinkingIdx, focus int
-	extraModel, model                               string
+	extraModel                                      string
+	catalog                                         openCodeCatalog
 	name, branch, baseBranch, ticket, pr, prompt    string
 	background, autoSubmit                          bool
 }
@@ -687,7 +696,7 @@ func (m *Model) newFormSnapshot() newFormState {
 	return newFormState{
 		projIdx: m.newFormProjIdx, agentIdx: m.newFormAgentIdx,
 		modelIdx: m.newFormModelIdx, thinkingIdx: m.newFormThinkingIdx, focus: m.newFormFocus,
-		extraModel: m.newFormExtraModel, model: m.newFormModelInput.Value(),
+		extraModel: m.newFormExtraModel, catalog: m.openCodeCatalog,
 		name: m.nameInput.Value(), branch: m.branchInput.Value(), baseBranch: m.baseBranchInput.Value(),
 		ticket: m.ticketInput.Value(), pr: m.prInput.Value(), prompt: m.promptInput.Value(),
 		background: m.newFormOpenInBackground, autoSubmit: m.newFormAutoSubmit,
@@ -708,7 +717,9 @@ func (m *Model) setNewForm(f newFormState) {
 	m.newFormModelIdx, m.newFormThinkingIdx = f.modelIdx, f.thinkingIdx
 	m.newFormFocus = f.focus
 	m.newFormExtraModel = f.extraModel
-	m.newFormModelInput.SetValue(f.model)
+	m.openCodeRequest++
+	m.openCodeCatalog = f.catalog
+	m.openCodeCatalog.loading = false
 	m.nameInput.SetValue(f.name)
 	m.branchInput.SetValue(f.branch)
 	m.baseBranchInput.SetValue(f.baseBranch)
@@ -827,7 +838,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.projects) == 0 {
 			return m.flashError(fmt.Errorf("no projects configured — press / then n to add one"))
 		}
-		m.openNewSessionForm()
+		return m, m.openNewSessionForm()
 	case key.Matches(msg, m.keys.Delete):
 		if len(m.creating) > 0 {
 			return m.flashError(fmt.Errorf("still creating a session — wait for it to finish"))
@@ -1414,6 +1425,38 @@ func (m *Model) updateWhatsNew(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+type openCodeCatalog struct {
+	config.OpenCodeOptions
+	project         string
+	agentIdx        int
+	loading, loaded bool
+	err             error
+}
+
+type openCodeOptionsMsg struct {
+	request uint64
+	options config.OpenCodeOptions
+	err     error
+}
+
+// Load once per form and project, when OpenCode is selected. Ignore a slow reply after changing projects.
+func (m *Model) loadOpenCodeOptions() tea.Cmd {
+	project := m.projectAt(m.newFormProjIdx)
+	if m.agentNames()[m.newFormAgentIdx] != "opencode" || project == "" {
+		return nil
+	}
+	if m.openCodeCatalog.project == project && (m.openCodeCatalog.loading || m.openCodeCatalog.loaded) {
+		return nil
+	}
+	m.openCodeRequest++
+	request := m.openCodeRequest
+	m.openCodeCatalog = openCodeCatalog{project: project, loading: true}
+	return func() tea.Msg {
+		opts, err := m.backend.OpenCodeOptions(project)
+		return openCodeOptionsMsg{request: request, options: opts, err: err}
+	}
+}
+
 func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Cancel):
@@ -1449,6 +1492,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// focused field; otherwise the arrows belong to the text input's
 		// cursor.
 		if m.newFormFocus == newFormProjFocus {
+			old := m.newFormProjIdx
 			if len(m.projects) > 0 {
 				if m.newFormProjIdx < 0 {
 					m.newFormProjIdx = 0
@@ -1458,6 +1502,12 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.newFormProjIdx = (m.newFormProjIdx + 1) % len(m.projects)
 				}
 			}
+			if old != m.newFormProjIdx && m.agentNames()[m.newFormAgentIdx] == "opencode" {
+				m.openCodeRequest++
+				m.openCodeCatalog = openCodeCatalog{}
+				m.newFormModelIdx, m.newFormExtraModel, m.newFormThinkingIdx = 0, "", 0
+				return m, m.loadOpenCodeOptions()
+			}
 			return m, nil
 		}
 		if m.newFormFocus == newFormAgentFocus {
@@ -1466,23 +1516,33 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			} else {
 				m.newFormAgentIdx = (m.newFormAgentIdx + 1) % len(m.agentNames())
 			}
-			// Each agent has its own model list (or, for opencode, a
-			// free-text field) and thinking-level list; a stale choice from a
-			// previous agent could point at the wrong value, so reset both
-			// whenever the agent changes.
 			m.newFormModelIdx = 0
 			m.newFormExtraModel = ""
-			m.newFormModelInput.SetValue("")
+			m.openCodeCatalog.agentIdx = 0
 			m.newFormThinkingIdx = 0
+			return m, m.loadOpenCodeOptions()
+		}
+		switch m.newFormFocus {
+		case newFormModelFocus, newFormOpenCodeAgentFocus, newFormThinkingFocus:
+			if cmd := m.loadOpenCodeOptions(); cmd != nil {
+				return m, cmd
+			}
+		}
+		if m.newFormFocus == newFormOpenCodeAgentFocus {
+			prev := m.newFormThinkingNames()[m.newFormThinkingIdx]
+			n := len(m.openCodeCatalog.Agents)
+			if n > 0 {
+				step := 1
+				if key.Matches(msg, m.keys.Left) {
+					step = -1
+				}
+				m.openCodeCatalog.agentIdx = (m.openCodeCatalog.agentIdx + step + n) % n
+				m.newFormKeepThinking(prev)
+			}
 			return m, nil
 		}
 		if m.newFormFocus == newFormModelFocus {
 			agent := m.agentNames()[m.newFormAgentIdx]
-			if m.agentUsesFreeTextModel(agent) {
-				// Free-text field: leave ←→ to the text input's own cursor
-				// movement, handled by the default routing below.
-				break
-			}
 			names := m.newFormModelChoices(agent)
 			// Each model has its own thinking levels; keep the chosen one
 			// where the new model offers it.
@@ -1533,6 +1593,14 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		agent := m.agentNames()[m.newFormAgentIdx]
 		_, model := m.newFormAgentModel()
 		thinking := m.newFormThinkingNames()[m.newFormThinkingIdx]
+		var primary string
+		if agent == "opencode" {
+			primary = m.openCodeAgent().ID
+			if thinking != "default" {
+				model = m.openCodeEffortModel() + "#" + thinking
+			}
+			thinking = ""
+		}
 		openTerminal := !m.newFormOpenInBackground
 		// Saved before the create runs, so the prompt outlives the TUI
 		// itself dying mid-create; SessionCreatedMsg clears it.
@@ -1556,7 +1624,7 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// plumbing exists to avoid (see New()'s doc comment on m.cfg).
 		autoSubmitDefault := m.cfg.AutoSubmitDefault
 		req := session.CreateRequest{
-			Project: proj, Name: name, Agent: agent, Branch: branch, BaseBranch: baseBranch,
+			Project: proj, Name: name, Agent: agent, OpenCodeAgent: primary, Branch: branch, BaseBranch: baseBranch,
 			Ticket: ticket, PR: pr, Model: model, Thinking: thinking,
 			Prompt: firstPrompt, AutoSubmit: autoSubmit, OpenTerminal: openTerminal,
 		}
@@ -1594,10 +1662,6 @@ func (m *Model) updateNewForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ticketInput, cmd = m.ticketInput.Update(msg)
 	case newFormPRFocus:
 		m.prInput, cmd = m.prInput.Update(msg)
-	case newFormModelFocus:
-		if m.agentUsesFreeTextModel(m.agentNames()[m.newFormAgentIdx]) {
-			m.newFormModelInput, cmd = m.newFormModelInput.Update(msg)
-		}
 	}
 	return m, cmd
 }
@@ -1622,13 +1686,10 @@ func (m *Model) newFormBlurAll() {
 	m.ticketInput.Blur()
 	m.prInput.Blur()
 	m.promptInput.Blur()
-	m.newFormModelInput.Blur()
 }
 
 // newFormFocusInput focuses the text input at the current focus, if any — the
-// selector and toggle rows have nothing to focus. The model row is a text
-// input only for opencode; for claude/codex it's a selector, so it's left
-// unfocused there.
+// selector and toggle rows have nothing to focus.
 func (m *Model) newFormFocusInput() {
 	switch m.newFormFocus {
 	case newFormNameFocus:
@@ -1643,10 +1704,6 @@ func (m *Model) newFormFocusInput() {
 		m.ticketInput.Focus()
 	case newFormPRFocus:
 		m.prInput.Focus()
-	case newFormModelFocus:
-		if m.agentUsesFreeTextModel(m.agentNames()[m.newFormAgentIdx]) {
-			m.newFormModelInput.Focus()
-		}
 	}
 }
 
@@ -2006,16 +2063,16 @@ func (m *Model) activateProject(name string) {
 // into creating its first session, but adding one from the picker returns to
 // the picker — with the cursor following the project just added — rather
 // than yanking the user into an unrelated dialog they didn't ask for.
-func (m *Model) finishProjectAdded(name string) {
+func (m *Model) finishProjectAdded(name string) tea.Cmd {
 	if m.projectDialogReturn == ModeProjectPicker {
 		if i := indexOfProject(m.projects, name); i >= 0 {
 			m.pickerCursor = i
 		}
 		m.mode = ModeProjectPicker
 		m.resetOverlayViewport()
-		return
+		return nil
 	}
-	m.openNewSessionForm()
+	return m.openNewSessionForm()
 }
 
 func (m *Model) updateProjectInitChoice(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

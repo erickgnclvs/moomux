@@ -1,0 +1,104 @@
+=== 40x20 ===
+╭──────────────────────────────────────╮
+│                                      │
+│                                      │
+│  agent:  ‹ [opencode] ›              │
+│                                      │
+│  OpenCode agent:  Build  [Plan]      │
+│                                      │
+│  model:  ‹ [local/atlas] ›           │
+│                                      │
+│  effort:  default  low  [high]       │
+│                                      │
+│  open in background:  [off]          │
+│                                      │
+│  auto-submit:  [off]                 │
+│                                      │
+│  Choose a reasoning variant for      │
+│  local/atlas.                        │
+│  esc cancel  tab/↑↓  enter           │
+│                                      │
+╰──────────────────────────────────────╯
+=== 60x24 ===
+╭──────────────────────────────────────────────────────────╮
+│                                                          │
+│  > base branch (optional, defaults to pr…                │
+│                                                          │
+│  > ticket url (optional)                                 │
+│                                                          │
+│  > PR url (optional)                                     │
+│                                                          │
+│  agent:  claude  codex  [opencode]  antigravity          │
+│                                                          │
+│  OpenCode agent:  Build  [Plan]                          │
+│                                                          │
+│  model:  default  [local/atlas]  local/ember             │
+│                                                          │
+│  effort:  default  low  [high]                           │
+│                                                          │
+│  open in background:  [off]                              │
+│                                                          │
+│  auto-submit:  [off]                                     │
+│                                                          │
+│  Choose a reasoning variant for local/atlas.             │
+│  tab/↑↓ fields  ←→ choose  enter  esc cancel             │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+=== 72x24 ===
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│  > base branch (optional, defaults to pr…                            │
+│                                                                      │
+│  > ticket url (optional)                                             │
+│                                                                      │
+│  > PR url (optional)                                                 │
+│                                                                      │
+│  agent:  claude  codex  [opencode]  antigravity                      │
+│                                                                      │
+│  OpenCode agent:  Build  [Plan]                                      │
+│                                                                      │
+│  model:  default  [local/atlas]  local/ember                         │
+│                                                                      │
+│  effort:  default  low  [high]                                       │
+│                                                                      │
+│  open in background:  [off]                                          │
+│                                                                      │
+│  auto-submit:  [off]                                                 │
+│                                                                      │
+│  Choose a reasoning variant for local/atlas.                         │
+│  tab/↑↓ fields  ←→ choose  enter  esc cancel                         │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
+=== 100x32 ===
+           ╭────────────────────────────────────────────────────────────────────────────╮           
+           │                                                                            │           
+           │  >                                                                         │           
+           │  >                                                                         │           
+           │  >                                                                         │           
+           │                                                                            │           
+           │  > session name (optional)                                                 │           
+           │                                                                            │           
+           │  > existing branch (optional)                                              │           
+           │                                                                            │           
+           │  > base branch (optional, defaults to pr…                                  │           
+           │                                                                            │           
+           │  > ticket url (optional)                                                   │           
+           │                                                                            │           
+           │  > PR url (optional)                                                       │           
+           │                                                                            │           
+           │  agent:  claude  codex  [opencode]  antigravity                            │           
+           │                                                                            │           
+           │  OpenCode agent:  Build  [Plan]                                            │           
+           │                                                                            │           
+           │  model:  default  [local/atlas]  local/ember                               │           
+           │                                                                            │           
+           │  effort:  default  low  [high]                                             │           
+           │                                                                            │           
+           │  open in background:  [off]                                                │           
+           │                                                                            │           
+           │  auto-submit:  [off]                                                       │           
+           │                                                                            │           
+           │  Choose a reasoning variant for local/atlas.                               │           
+           │  tab/↑↓ fields  ←→ choose  enter  esc cancel                               │           
+           │                                                                            │           
+           ╰────────────────────────────────────────────────────────────────────────────╯           

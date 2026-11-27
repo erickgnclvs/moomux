@@ -20,8 +20,15 @@ type hookPayload struct {
 // marker mechanism without the others — or main.go's dispatch — needing to
 // change.
 func runHook(args []string) error {
-	if len(args) == 4 && args[0] == "codex" && args[1] == "terminal" {
-		return tmux.ReportCodexTerminal(os.Stdin, args[2], args[3])
+	if (len(args) == 3 || len(args) == 4) && args[0] == "opencode" && args[1] == "launch-model" {
+		var agent string
+		if len(args) == 4 {
+			agent = args[3]
+		}
+		return launchOpenCodeModel(args[2], agent)
+	}
+	if len(args) == 4 && tmux.ReportsTerminalState(args[0]) && args[1] == "terminal" {
+		return tmux.ReportTerminalState(os.Stdin, args[0], args[2], args[3])
 	}
 	if len(args) != 2 || (args[1] != "set" && args[1] != "clear") {
 		return fmt.Errorf("usage: moomux hook <agent> set|clear")

@@ -19,6 +19,9 @@ type aliasingBackend struct {
 	live *config.Config
 }
 
+func (b *aliasingBackend) OpenCodeOptions(project string) (config.OpenCodeOptions, error) {
+	return config.OpenCodeOptions{}, nil
+}
 func (b *aliasingBackend) SuggestedProject() (string, string) { return "", "" }
 
 func (b *aliasingBackend) AddProject(name string, p config.Project) (string, error) {

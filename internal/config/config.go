@@ -30,8 +30,7 @@ import (
 // package cycle.
 type AgentOption struct {
 	Name string `json:"name"`
-	// Models is nil for an agent with no fixed list worth hardcoding (a
-	// free-text field is more honest than a stale one).
+	// Models lists global choices. OpenCodeOptions supplies project-specific IDs.
 	Models []string `json:"models,omitempty"`
 	// ModelNames maps a model ID in Models to the name a picker shows
 	// ("Opus 5.5"). An ID with no entry shows as itself.
@@ -609,4 +608,18 @@ func ExpandHome(p string) string {
 		return p
 	}
 	return filepath.Join(home, strings.TrimPrefix(p, "~"))
+}
+
+// OpenCodeOptions contains only display and launch values for a single project.
+type OpenCodeOptions struct {
+	Models       []string            `json:"models,omitempty"`
+	DefaultModel string              `json:"default_model,omitempty"`
+	Variants     map[string][]string `json:"variants,omitempty"`
+	Agents       []OpenCodeAgent     `json:"agents,omitempty"` // The first selectable agent is OpenCode's default.
+}
+
+type OpenCodeAgent struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Model string `json:"model,omitempty"`
 }
