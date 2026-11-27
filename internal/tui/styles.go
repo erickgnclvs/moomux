@@ -1,6 +1,12 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"net/url"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+)
 
 // Every var below is reassigned by buildStyles whenever the active theme
 // changes (see theme.go's applyTheme) — declarations only, no values here.
@@ -140,4 +146,28 @@ func buildStyles() {
 // screen. Prompts are arbitrary pasted text, so this is where it bites.
 func renderLink(s string) string {
 	return "\x1b[4m" + detailLinkStyle.Render(s) + "\x1b[24m"
+}
+
+// renderLinkTo is renderLink for text that stands for a URL, wrapping it in
+// an OSC 8 hyperlink to target. The visible text is often truncated (the
+// detail pane left-truncates a PR URL to "…b.com/org/repo/pull/1"), and
+// terminals that detect URLs in on-screen text — cmd-click in iTerm2,
+// Ghostty, WezTerm — would otherwise open what's visible, a non-URL like
+// "https://b.com/...". An explicit hyperlink makes them open the full target.
+// Anything that isn't a plain http(s) URL is rendered without one: target
+// comes from session data, and a stray control byte inside the OSC payload
+// would end the sequence early and spill the rest onto the screen.
+func renderLinkTo(s, target string) string {
+	if !isHyperlinkTarget(target) {
+		return renderLink(s)
+	}
+	return ansi.SetHyperlink(target) + renderLink(s) + ansi.ResetHyperlink()
+}
+
+func isHyperlinkTarget(target string) bool {
+	if strings.ContainsFunc(target, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return false
+	}
+	u, err := url.Parse(target)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }

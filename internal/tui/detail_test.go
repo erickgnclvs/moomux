@@ -29,7 +29,7 @@ func TestDetailTruncatesLongTicketURLButKeepsItClickable(t *testing.T) {
 	m.width, m.height = 80, 24
 
 	frame, hits := m.renderDetail(80-2, 24-2)
-	joined := strings.Join(strings.Fields(frame), "")
+	joined := strings.Join(strings.Fields(ansi.Strip(frame)), "")
 	if strings.Contains(joined, strings.ReplaceAll(longURL, " ", "")) {
 		t.Errorf("expected the long ticket URL to be truncated on screen, but it appeared unbroken; frame:\n%s", frame)
 	}
@@ -183,7 +183,7 @@ func TestCompactDetailTrimsFieldsAndShortensPR(t *testing.T) {
 	if !strings.Contains(frame, "#5478") {
 		t.Fatalf("expected compact detail to show the PR as #5478:\n%s", frame)
 	}
-	if strings.Contains(frame, "https://github.com/example/repo/pull/5478") {
+	if strings.Contains(ansi.Strip(frame), "https://github.com/example/repo/pull/5478") {
 		t.Fatalf("expected compact detail to hide the full PR URL:\n%s", frame)
 	}
 	if !strings.Contains(frame, "pr status") || !strings.Contains(frame, "merged") {
@@ -323,6 +323,43 @@ func TestNewlyMergedFlash(t *testing.T) {
 	for _, c := range cases {
 		if got := newlyMergedFlash(c.prev, c.next, sessions); got != c.want {
 			t.Errorf("%s: newlyMergedFlash = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestDetailTruncatedPRCarriesFullHyperlink guards the cmd-click path: the
+// terminal, not moomux, handles a modifier-click on link text, and it opens
+// whatever URL it finds. Left-truncated to "…b.com/org/repo/pull/7877", the
+// visible text alone made it open "https://b.com/...". The row must carry an
+// OSC 8 hyperlink to the full URL so the terminal opens the real PR.
+func TestDetailTruncatedPRCarriesFullHyperlink(t *testing.T) {
+	prURL := "https://github.com/eGiftify/eg_system/pull/7877"
+	cfg := &config.Config{Projects: map[string]config.Project{"demo": {Repo: "/tmp/demo"}}}
+	be := &fakeBackend{sessions: []session.Session{
+		{ID: "demo:one", Project: "demo", Name: "one", PR: prURL},
+	}}
+	statusCh := make(chan sessionview.Snapshot)
+	m := New(cfg, be, testAgentOptions, statusCh, func() {})
+	m.width, m.height = 40, 24
+
+	frame, _ := m.renderDetail(40-2, 24-2)
+	if strings.Contains(ansi.Strip(frame), prURL) {
+		t.Fatalf("test needs the PR URL truncated on screen to mean anything; frame:\n%s", ansi.Strip(frame))
+	}
+	if !strings.Contains(frame, ansi.SetHyperlink(prURL)) {
+		t.Errorf("expected an OSC 8 hyperlink to the full PR URL %q in the detail pane, got:\n%q", prURL, frame)
+	}
+}
+
+func TestRenderLinkToSkipsUnsafeTargets(t *testing.T) {
+	for _, target := range []string{
+		"tmux attach -t demo",
+		"file:///etc/passwd",
+		"https://example.com/\x07injected",
+		"https://example.com/\x1b]8;;evil\x07",
+	} {
+		if got := renderLinkTo("x", target); strings.Contains(got, "\x1b]8;") {
+			t.Errorf("renderLinkTo(%q) emitted a hyperlink: %q", target, got)
 		}
 	}
 }

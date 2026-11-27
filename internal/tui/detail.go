@@ -162,7 +162,11 @@ func (m *Model) renderDetailContent(s session.Session, view sessionview.View, ha
 					col1:      col1,
 				})
 			}
-			v = renderLink(v)
+			if copyOnly {
+				v = renderLink(v)
+			} else {
+				v = renderLinkTo(v, url)
+			}
 		}
 		b.WriteString(fmt.Sprintf("%s %s\n", key, v))
 	}
