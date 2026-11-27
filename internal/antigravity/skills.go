@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/erickgnclvs/moomux/internal/atomicfile"
+	"github.com/erickgnclvs/moomux/internal/tagguide"
 )
 
 // Antigravity's skills are its slash commands: a SKILL.md discovered under a
@@ -15,35 +16,20 @@ import (
 // moomux installs skills only.
 //
 // ~/.gemini/config is the global (machine-local) customization root, so these
-// land in every worktree without a per-project step. Like claudehook's
-// commands and codexhook's skills, they only ever run when the user types
-// them, so there's no trust/review hop — unlike TrustWorkspace's problem.
+// land in every worktree without a per-project trust/review step.
 //
 // The instructions are deliberately direct ("run it now, don't ask"): a skill
 // hands the agent prose, not a command to execute, so it still has to decide
 // to shell out.
 const (
 	killSkillDescription   = "Park the current moomux session, keeping its worktree and branch. Use when the user invokes /kill or asks to park this moomux session."
-	tagSkillDescription    = "Tag the current moomux session with its pull request and any tracked ticket. Use when the user invokes /tag or asks to tag this moomux session."
+	tagSkillDescription    = tagguide.Description + " Also use when the user invokes /tag or asks to tag this session."
 	spawnSkillDescription  = "Spawn a new moomux worktree and agent session for a delegated task. Use when the user invokes /spawn or asks to delegate work through moomux."
 	reseedSkillDescription = "Re-run this moomux session's worktree-create userscripts with force enabled. Use when the user invokes /reseed or asks to re-seed its worktree."
 
 	killSkillInstructions = `Run ` + "`moomux park`" + ` now, without asking a separate confirmation question first.
 
 Despite the name, this parks rather than deletes: it stops the tmux session and closes its terminal tab, but keeps the worktree and branch so the session can be reopened later (the same as moomux's own ` + "`x`" + ` key). Report success only if the command succeeded; otherwise say the session was not parked and include the error.
-`
-
-	tagSkillInstructions = `Run ` + "`moomux tag`" + ` with no flags first, to see what is already tracked on this session.
-
-Find the open pull request for the current branch (e.g. ` + "`gh pr view --json url,body --jq '.url + \"\\n\" + .body'`" + `) and run:
-
-    moomux tag -pr <that PR URL>
-
-Leave out ` + "`-ticket`" + ` — moomux keeps this session's existing ticket when you don't pass one. If ` + "`moomux tag`" + ` showed no ticket tracked yet, look for a ticket link in the pull request title and body, the branch name, and recent commit messages (` + "`git log --oneline -20`" + `). Recognize Asana (` + "`https://app.asana.com/.../task/...`" + `), Jira (` + "`https://<org>.atlassian.net/browse/<KEY>-<num>`" + `, or a bare ` + "`<KEY>-<num>`" + ` you can expand to that URL), and Linear (` + "`https://linear.app/<org>/issue/<KEY>-<num>`" + `). If you find one, pass it too:
-
-    moomux tag -pr <PR URL> -ticket <ticket URL>
-
-If there is no open pull request yet, say so instead of guessing one. Don't guess a ticket link either — only pass ` + "`-ticket`" + ` when you actually found one.
 `
 
 	spawnSkillInstructions = `Treat the task description supplied with this invocation as literal text — don't resolve issue-like tokens such as ` + "`#123`" + ` against GitHub or anything else.
@@ -96,7 +82,7 @@ func EnsureKillCommand(home string) (bool, error) {
 
 // EnsureTagCommand installs the /tag skill — see ensureSkill.
 func EnsureTagCommand(home string) (bool, error) {
-	return ensureSkill(home, "tag", tagSkillDescription, tagSkillInstructions)
+	return ensureSkill(home, "tag", tagSkillDescription, tagguide.Instructions)
 }
 
 // EnsureSpawnCommand installs the /spawn skill — see ensureSkill.

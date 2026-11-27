@@ -126,6 +126,24 @@ func TestEnsureTagCommandIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestEnsureTagCommandDoesNotShadowCustomCommand(t *testing.T) {
+	home := t.TempDir()
+	commandPath := filepath.Join(home, ".claude", "commands", "tag.md")
+	const custom = "My own tag command\n"
+	if err := os.MkdirAll(filepath.Dir(commandPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(commandPath, []byte(custom), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := EnsureTagCommand(home); err != nil || changed {
+		t.Fatalf("changed=%v err=%v, want untouched", changed, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "tag", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("tag skill must not shadow the custom command, stat err=%v", err)
+	}
+}
+
 func TestEnsureSpawnCommandCreatesFile(t *testing.T) {
 	home := t.TempDir()
 	changed, err := EnsureSpawnCommand(home)

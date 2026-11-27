@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/erickgnclvs/moomux/internal/tagguide"
 )
 
 // Codex replaced custom prompts with skills for reusable user workflows.
@@ -14,25 +16,16 @@ import (
 // Codex CLI versions that still expose /prompts:<name>.
 const (
 	killSkillDescription   = "Park the current moomux session while keeping its worktree and branch. Use when the user invokes $kill or asks to park the current moomux session."
-	tagSkillDescription    = "Tag the current moomux session with its pull request and any tracked ticket. Use when the user invokes $tag or asks to tag a moomux session."
+	tagSkillDescription    = tagguide.Description + " Also use when the user invokes $tag or asks to tag this session."
 	spawnSkillDescription  = "Spawn a new moomux worktree and agent session for a delegated task. Use when the user invokes $spawn or asks to delegate work through moomux."
 	reseedSkillDescription = "Re-run worktree-create userscripts for the current moomux session with force enabled. Use when the user invokes $reseed or asks to re-seed its worktree."
 
 	killSkillInstructions = `Run ` + "`moomux park`" + ` in a shell with ` + "`sandbox_permissions`" + ` set to ` + "`require_escalated`" + `. The tmux socket is outside Codex's sandbox, so a sandboxed run cannot park the session. Request approval through the shell tool without asking a separate confirmation question, and do not retry inside the sandbox if approval is denied. The command stops the tmux session and closes its terminal tab, but keeps the worktree and branch so the session can be reopened later (the same behavior as moomux's ` + "`x`" + ` key). Report success only if the command succeeds; otherwise say the session was not parked and include the error.
 `
 
-	tagSkillInstructions = `Run ` + "`moomux tag`" + ` with no flags first in a shell with ` + "`sandbox_permissions`" + ` set to ` + "`require_escalated`" + ` to see what is already tracked on this session. Use the same shell setting for the update command below.
+	tagSkillInstructions = `For every ` + "`moomux tag`" + ` call, use a shell with ` + "`sandbox_permissions`" + ` set to ` + "`require_escalated`" + ` so it can access moomux's shared state.
 
-Find the open pull request for the current branch and run:
-
-    moomux tag -pr <that PR URL>
-
-Leave out ` + "`-ticket`" + ` because moomux keeps the existing ticket when that flag is omitted. If no ticket is tracked yet, look for a ticket link in the pull request title or body, branch name, and recent commit messages. Recognize Asana, Jira, and Linear ticket references. If you find one, pass it too:
-
-    moomux tag -pr <PR URL> -ticket <ticket URL>
-
-If there is no open pull request, say so instead of guessing. Do not guess a ticket link either.
-`
+` + tagguide.Instructions
 
 	spawnSkillInstructions = `Use the task description supplied with this invocation as literal text. Do not resolve issue-like tokens such as ` + "`#123`" + ` unless the user explicitly asks you to.
 
