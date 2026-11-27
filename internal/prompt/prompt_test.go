@@ -218,13 +218,15 @@ func TestFirstOpenCodeRespectsQueryTimeout(t *testing.T) {
 
 	fakeDir := t.TempDir()
 	fake := filepath.Join(fakeDir, "sqlite3")
-	if err := os.WriteFile(fake, []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil {
+	calls := filepath.Join(fakeDir, "calls")
+	t.Setenv("SQLITE_CALL_LOG", calls)
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho query >> \"$SQLITE_CALL_LOG\"\nsleep 5 &\nwait\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	old := queryTimeout
-	queryTimeout = 50 * time.Millisecond
+	queryTimeout = 400 * time.Millisecond
 	t.Cleanup(func() { queryTimeout = old })
 
 	start := time.Now()
@@ -232,6 +234,10 @@ func TestFirstOpenCodeRespectsQueryTimeout(t *testing.T) {
 	elapsed := time.Since(start)
 	if got != "" {
 		t.Fatalf("got %q, want empty", got)
+	}
+	data, err := os.ReadFile(calls)
+	if err != nil || string(data) != "query\n" {
+		t.Fatalf("sqlite3 invocations = %q, err = %v; expected one query before deadline", data, err)
 	}
 	if elapsed > 4*time.Second {
 		t.Fatalf("FirstOpenCode took %v, want to return shortly after queryTimeout", elapsed)

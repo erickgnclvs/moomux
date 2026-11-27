@@ -30,11 +30,15 @@ var queryTimeout = 3 * time.Second
 func sqliteQuery(dbPath, query string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
+	return sqliteQueryContext(ctx, dbPath, query)
+}
+
+func sqliteQueryContext(ctx context.Context, dbPath, query string) string {
 	cmd := exec.CommandContext(ctx, "sqlite3", dbPath, query)
 	// Without WaitDelay, Output can still block past ctx's deadline: if
 	// sqlite3 forked a child that inherited the output pipe, killing
 	// sqlite3 alone doesn't close it.
-	cmd.WaitDelay = 2 * time.Second
+	cmd.WaitDelay = min(queryTimeout, 2*time.Second)
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -171,6 +175,8 @@ func FirstOpenCode(home, worktreePath string, since time.Time) string {
 		// agent hasn't run yet.
 		return ""
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
+	defer cancel()
 	// v2 stores the user's text on the message itself. Older sessions
 	// keep the text in a separate part row.
 	query := `SELECT json_extract(m.data, '$.text')
@@ -181,7 +187,7 @@ WHERE s.directory = ` + sqlQuote(worktreePath) + `
   AND json_extract(m.data, '$.text') != ''` + openCodeSince(since) + `
 ORDER BY m.time_created, m.seq, m.id
 LIMIT 1`
-	if prompt := sqliteQuery(dbPath, query); prompt != "" {
+	if prompt := sqliteQueryContext(ctx, dbPath, query); prompt != "" {
 		return prompt
 	}
 	query = `SELECT json_extract(p.data, '$.text')
@@ -193,7 +199,7 @@ WHERE s.directory = ` + sqlQuote(worktreePath) + `
   AND json_extract(p.data, '$.type') = 'text'` + openCodeSince(since) + `
 ORDER BY m.time_created ASC, p.time_created ASC
 LIMIT 1`
-	return sqliteQuery(dbPath, query)
+	return sqliteQueryContext(ctx, dbPath, query)
 }
 
 // FirstCodex returns the first user prompt from a Codex CLI session by

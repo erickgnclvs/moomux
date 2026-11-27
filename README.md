@@ -181,6 +181,8 @@ go build -o moomux . && ./moomux
 
 ### Local development
 
+A plain `./moomux` connects to the running background core, even when you just rebuilt the TUI. The core launches the agent. To test a local launcher while Homebrew is running, use `./moomux spawn -list`, then `./moomux spawn -project <project> -agent opencode`. To test the full form against your build on the shared socket, stop the Homebrew service, run `./moomux serve`, and open `./moomux ui` in a second terminal. When finished, stop the local core and start the Homebrew service again.
+
 If you installed moomux via Homebrew, `moomux` on your `$PATH` resolves to
 Homebrew's bin dir (`/opt/homebrew/bin` on Apple Silicon, `/usr/local/bin` on
 Intel Macs and Linuxbrew — run `brew --prefix` to check yours) — and that
