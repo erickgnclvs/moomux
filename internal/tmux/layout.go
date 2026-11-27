@@ -17,7 +17,7 @@ import (
 // window uses its own Name, falling back to tmux's numbering when unnamed.
 // agentCmd is sent into the agent leaf (layout.Load guarantees exactly one
 // exists across all windows).
-func (c *Client) NewSessionWithLayout(name, cwd, windowName string, windows []layout.WindowSpec, agentCmd string) error {
+func (c *Client) NewSessionWithLayout(name, cwd, windowName string, windows []layout.WindowSpec, agent, agentCmd string) error {
 	if len(windows) == 0 {
 		return fmt.Errorf("tmux: NewSessionWithLayout requires at least one window")
 	}
@@ -96,7 +96,7 @@ func (c *Client) NewSessionWithLayout(name, cwd, windowName string, windows []la
 	if err := c.markAgentPane(agentPane); err != nil {
 		return err
 	}
-	return c.launchAgent(agentPane, agentCmd)
+	return c.launchAgent(agentPane, agent, agentCmd)
 }
 
 // realizeLayout carves paneID's screen space according to spec and returns

@@ -56,8 +56,8 @@ func ExecRunner() Runner { return execRunner{} }
 
 type Client struct {
 	Runner Runner
-	// CodexObserver is the moomux executable to run as a pane output pipe.
-	CodexObserver string
+	// TerminalObserver is the moomux executable to run as a pane output pipe.
+	TerminalObserver string
 
 	mu        sync.Mutex
 	agentWins map[string]string // tmux session name -> target for the agent's window
@@ -352,7 +352,7 @@ func (c *Client) newSessionBase(name, cwd, windowName string) error {
 // side-by-side panes: a left pane (~2/3 width) running `cmd`, and a right
 // pane (~1/3 width) left as a plain interactive shell.
 // If cmd is empty, no command is sent to the left pane.
-func (c *Client) NewSession(name, cwd, cmd, windowName string) error {
+func (c *Client) NewSession(name, cwd, agent, cmd, windowName string) error {
 	if err := c.newSessionBase(name, cwd, windowName); err != nil {
 		return err
 	}
@@ -382,7 +382,7 @@ func (c *Client) NewSession(name, cwd, cmd, windowName string) error {
 	if err := c.markAgentPane(leftPane); err != nil {
 		return err
 	}
-	return c.launchAgent(leftPane, cmd)
+	return c.launchAgent(leftPane, agent, cmd)
 }
 
 // PressEnter sends a bare Enter keypress to session's active pane, with no
@@ -464,6 +464,16 @@ func (c *Client) BracketedPaste(session string) (bool, error) {
 		return false, err
 	}
 	return strings.TrimSpace(out) == "1", nil
+}
+
+// OpenCodeAcceptingPaste checks the foreground program and paste mode in
+// the same pane. An interactive shell also enables paste after a failed launch.
+func (c *Client) OpenCodeAcceptingPaste(session string) (bool, error) {
+	out, err := c.runAgentPane(session, "display-message", "-p", "-t", agentTarget, "#{pane_current_command}\t#{bracket_paste_flag}")
+	cmd, paste, _ := strings.Cut(strings.TrimSpace(out), "\t")
+	name := filepath.Base(cmd)
+	running := strings.HasPrefix(name, "opencode") || name == "bun" || name == "node"
+	return running && paste == "1", err
 }
 
 // SetWindowName renames session's window. ConfigureTitleTracking already

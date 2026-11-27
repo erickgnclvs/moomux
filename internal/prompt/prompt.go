@@ -30,11 +30,15 @@ var queryTimeout = 3 * time.Second
 func sqliteQuery(dbPath, query string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
+	return sqliteQueryContext(ctx, dbPath, query)
+}
+
+func sqliteQueryContext(ctx context.Context, dbPath, query string) string {
 	cmd := exec.CommandContext(ctx, "sqlite3", dbPath, query)
 	// Without WaitDelay, Output can still block past ctx's deadline: if
 	// sqlite3 forked a child that inherited the output pipe, killing
 	// sqlite3 alone doesn't close it.
-	cmd.WaitDelay = 2 * time.Second
+	cmd.WaitDelay = min(queryTimeout, 2*time.Second)
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -144,17 +148,49 @@ func codexSince(since time.Time) string {
 	return " AND created_at >= " + strconv.FormatInt(since.Unix(), 10)
 }
 
-// FirstOpenCode returns the first user text prompt for an OpenCode session
-// by querying ~/.local/share/opencode/opencode.db.
+// OpenCodeDB resolves the installed CLI's database location for both prompt and activity reads.
+func OpenCodeDB(home string) string {
+	data := os.Getenv("XDG_DATA_HOME")
+	if data == "" {
+		data = filepath.Join(home, ".local", "share")
+	}
+	name := os.Getenv("OPENCODE_DB")
+	switch {
+	case filepath.IsAbs(name):
+		return name
+	case name == ":memory:":
+		return ""
+	case name == "":
+		name = "opencode.db"
+	}
+	return filepath.Join(data, "opencode", name)
+}
+
+// FirstOpenCode returns the first user text prompt for an OpenCode session.
 func FirstOpenCode(home, worktreePath string, since time.Time) string {
-	dbPath := filepath.Join(home, ".local", "share", "opencode", "opencode.db")
+	dbPath := OpenCodeDB(home)
 	if _, err := os.Stat(dbPath); err != nil {
 		// sqlite3 creates an empty db file at dbPath if it doesn't exist,
 		// even for a read-only query — avoid leaving that behind when the
 		// agent hasn't run yet.
 		return ""
 	}
-	query := `SELECT json_extract(p.data, '$.text')
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
+	defer cancel()
+	// v2 stores the user's text on the message itself. Older sessions
+	// keep the text in a separate part row.
+	query := `SELECT json_extract(m.data, '$.text')
+FROM session_message m
+JOIN session_v2 s ON s.id = m.session_id
+WHERE s.directory = ` + sqlQuote(worktreePath) + `
+  AND m.type = 'user'
+  AND json_extract(m.data, '$.text') != ''` + openCodeSince(since) + `
+ORDER BY m.time_created, m.seq, m.id
+LIMIT 1`
+	if prompt := sqliteQueryContext(ctx, dbPath, query); prompt != "" {
+		return prompt
+	}
+	query = `SELECT json_extract(p.data, '$.text')
 FROM part p
 JOIN message m ON p.message_id = m.id
 JOIN session s ON s.id = m.session_id
@@ -163,7 +199,7 @@ WHERE s.directory = ` + sqlQuote(worktreePath) + `
   AND json_extract(p.data, '$.type') = 'text'` + openCodeSince(since) + `
 ORDER BY m.time_created ASC, p.time_created ASC
 LIMIT 1`
-	return sqliteQuery(dbPath, query)
+	return sqliteQueryContext(ctx, dbPath, query)
 }
 
 // FirstCodex returns the first user prompt from a Codex CLI session by

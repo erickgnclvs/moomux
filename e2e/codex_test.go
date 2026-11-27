@@ -69,9 +69,9 @@ func TestCodexPaneReportsOnlyDisplayedState(t *testing.T) {
 	run("set-option", "-p", "-t", pane, "@moomux_agent_pane", "1")
 	run("split-window", "sleep 120")
 	tty := run("display-message", "-t", pane, "-p", "#{pane_tty}")
-	c := &tmux.Client{Runner: server, CodexObserver: bin}
-	c.ObserveCodex("test")
-	c.ObserveCodex("test")
+	c := &tmux.Client{Runner: server, TerminalObserver: bin}
+	c.ObserveTerminal("test", "codex")
+	c.ObserveTerminal("test", "codex")
 	emit := func(seq string) {
 		t.Helper()
 		f, err := os.OpenFile(tty, os.O_WRONLY, 0)
@@ -106,7 +106,7 @@ func TestCodexPaneReportsOnlyDisplayedState(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "captured")
 	run("set-option", "-p", "-t", pane, "@test_capture", log)
 	run("pipe-pane", "-t", pane, "cat > #{q:@test_capture}")
-	c.ObserveCodex("test")
+	c.ObserveTerminal("test", "codex")
 	emit("pipe is still running\n")
 	wait("")
 	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {

@@ -12,13 +12,14 @@ import (
 	"github.com/erickgnclvs/moomux/internal/watcher"
 )
 
-const codexStateOption = "@moomux_codex_state"
+// Keep the original option name so existing Codex readers survive an upgrade.
+const terminalStateOption = "@moomux_codex_state"
 
-// SessionStates gets liveness and the last Codex terminal status together.
+// SessionStates gets liveness and the latest terminal status together.
 // Every pane contributes liveness. Only a pane with a running output pipe
 // can contribute a status, and a session's other panes must not overwrite it.
 func (c *Client) SessionStates() map[string]string {
-	out, err := c.Runner.Run("list-panes", "-a", "-F", "#{session_name}\t#{pane_pipe_pid}\t#{?pane_pipe,#{"+codexStateOption+"},}")
+	out, err := c.Runner.Run("list-panes", "-a", "-F", "#{session_name}\t#{pane_pipe_pid}\t#{?pane_pipe,#{"+terminalStateOption+"},}")
 	if err != nil {
 		if noServer(out) {
 			return map[string]string{}
@@ -43,16 +44,22 @@ func (c *Client) SessionStates() map[string]string {
 	return live
 }
 
-// ObserveCodex also covers a live session created before the core upgraded.
-func (c *Client) ObserveCodex(session string) {
+// ReportsTerminalState identifies agents that publish OSC 7501.
+func ReportsTerminalState(agent string) bool { return agent == "codex" || agent == "opencode" }
+
+// ObserveTerminal also covers live sessions created before the core upgraded.
+func (c *Client) ObserveTerminal(session, agent string) {
+	if !ReportsTerminalState(agent) || c.TerminalObserver == "" {
+		return
+	}
 	out, err := c.runAgentPane(session, "display-message", "-p", "-t", agentTarget, "#{pane_id}")
 	if err == nil {
-		c.observeCodexPane(strings.TrimSpace(out))
+		c.observeTerminalPane(strings.TrimSpace(out), agent)
 	}
 }
 
-func (c *Client) observeCodexPane(pane string) {
-	if c.CodexObserver == "" {
+func (c *Client) observeTerminalPane(pane, agent string) {
+	if c.TerminalObserver == "" {
 		return
 	}
 	if !validPaneID(pane) {
@@ -62,29 +69,29 @@ func (c *Client) observeCodexPane(pane string) {
 	// the server's command queue so reopening the session preserves it.
 	// Let tmux quote the path when it expands the shell command. This
 	// also works when the server PATH points at an older moomux.
-	if _, err := c.Runner.Run("set-option", "-p", "-t", pane, "@moomux_codex_observer", c.CodexObserver); err != nil {
-		slog.Warn("could not configure Codex status observer", "pane", pane, "err", err)
+	if _, err := c.Runner.Run("set-option", "-p", "-t", pane, "@moomux_terminal_observer", c.TerminalObserver); err != nil {
+		slog.Warn("could not configure terminal status observer", "pane", pane, "err", err)
 		return
 	}
-	cmd := "pipe-pane -O -t " + pane + " 'exec #{q:@moomux_codex_observer} hook codex terminal #{q:socket_path} #{pane_id}'"
+	cmd := "pipe-pane -O -t " + pane + " 'exec #{q:@moomux_terminal_observer} hook " + agent + " terminal #{q:socket_path} #{pane_id}'"
 	if _, err := c.Runner.Run("if-shell", "-F", "-t", pane, "#{pane_pipe}", "", cmd); err != nil {
-		slog.Warn("could not observe Codex terminal status", "pane", pane, "err", err)
+		slog.Warn("could not observe terminal status", "pane", pane, "err", err)
 	}
 }
 
-func (c *Client) launchAgent(pane, cmd string) error {
+func (c *Client) launchAgent(pane, agent, cmd string) error {
 	if cmd == "" {
 		return nil
 	}
-	if agent, _, _ := strings.Cut(cmd, " "); agent == "codex" {
-		c.observeCodexPane(pane)
+	if ReportsTerminalState(agent) {
+		c.observeTerminalPane(pane, agent)
 	}
 	_, err := c.Runner.Run("send-keys", "-t", pane, cmd, "Enter")
 	return err
 }
 
-// ReportCodexTerminal publishes OSC 7501 from this pipe to its originating pane.
-func ReportCodexTerminal(stream io.Reader, socket, pane string) error {
+// ReportTerminalState publishes OSC 7501 from this pipe to its originating pane.
+func ReportTerminalState(stream io.Reader, agent, socket, pane string) error {
 	if !validPaneID(pane) {
 		return fmt.Errorf("invalid tmux pane %q", pane)
 	}
@@ -92,10 +99,10 @@ func ReportCodexTerminal(stream io.Reader, socket, pane string) error {
 	// A replacement reader may have published its status before our EOF.
 	defer func() {
 		_, _ = ExecRunner().Run("-S", socket, "if-shell", "-F", "-t", pane,
-			"#{m:"+owner+"*,#{"+codexStateOption+"}}", "set-option -pu -t "+pane+" "+codexStateOption)
+			"#{m:"+owner+"*,#{"+terminalStateOption+"}}", "set-option -pu -t "+pane+" "+terminalStateOption)
 	}()
-	return readCodexTerminal(stream, func(state watcher.State) error {
-		_, err := ExecRunner().Run("-S", socket, "set-option", "-p", "-t", pane, codexStateOption, owner+state.String())
+	return readTerminalState(stream, agent, func(state watcher.State) error {
+		_, err := ExecRunner().Run("-S", socket, "set-option", "-p", "-t", pane, terminalStateOption, owner+state.String())
 		return err
 	})
 }
@@ -109,32 +116,20 @@ func validPaneID(pane string) bool {
 	return err == nil
 }
 
-// readCodexTerminal reads OSC 7501, Codex's displayed lifecycle state. The
+// readTerminalState reads OSC 7501, the displayed lifecycle state. The
 // terminal can split an escape sequence across arbitrary writes. Feed the
 // parser incrementally and discard all ordinary text and tool output.
-func readCodexTerminal(r io.Reader, publish func(watcher.State) error) error {
+func readTerminalState(r io.Reader, agent string, publish func(watcher.State) error) error {
 	parser := ansi.NewParser()
-	parser.SetDataSize(128)
+	parser.SetDataSize(4096)
 	var last watcher.State
 	var publishErr error
 	parser.SetHandler(ansi.Handler{HandleOsc: func(command int, data []byte) {
 		if command != 7501 || publishErr != nil {
 			return
 		}
-		var st watcher.State
-		switch string(data) {
-		case "7501;state=blocked:app=codex:kind=permission", "7501;state=blocked:app=codex:kind=question", "7501;state=blocked:app=codex:kind=auth":
-			st = watcher.NeedsInput
-		case "7501;state=working:app=codex":
-			st = watcher.Working
-		case "7501;state=done:app=codex", "7501;state=idle:app=codex", "7501;state=error:app=codex":
-			st = watcher.Done
-		case "7501;state=clear":
-			if last == watcher.Unknown {
-				return
-			}
-			st = watcher.Done
-		default:
+		st := rootTerminalState(string(data), agent)
+		if st == watcher.Unknown || (string(data) == "7501;state=clear" && last == watcher.Unknown) {
 			return
 		}
 		if st != last {
@@ -157,5 +152,48 @@ func readCodexTerminal(r io.Reader, publish func(watcher.State) error) error {
 		if err != nil {
 			return err
 		}
+	}
+}
+
+// OpenCode emits a root summary plus a record with an id for each tab.
+// Only the summary describes the pane. Optional titles and messages are
+// base64-encoded fields and need no decoding.
+func rootTerminalState(record, agent string) watcher.State {
+	if record == "7501;state=clear" {
+		return watcher.Done
+	}
+	fields, ok := strings.CutPrefix(record, "7501;")
+	if !ok {
+		return watcher.Unknown
+	}
+	var app, state, kind string
+	for field := range strings.SplitSeq(fields, ":") {
+		key, value, _ := strings.Cut(field, "=")
+		switch key {
+		case "id":
+			return watcher.Unknown
+		case "kind":
+			kind = value
+		case "app":
+			app = value
+		case "state":
+			state = value
+		}
+	}
+	if app != agent {
+		return watcher.Unknown
+	}
+	switch state {
+	case "blocked":
+		if agent == "codex" && kind != "permission" && kind != "question" && kind != "auth" {
+			return watcher.Unknown
+		}
+		return watcher.NeedsInput
+	case "working":
+		return watcher.Working
+	case "done", "error", "idle":
+		return watcher.Done
+	default:
+		return watcher.Unknown
 	}
 }

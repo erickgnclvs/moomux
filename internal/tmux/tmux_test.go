@@ -136,7 +136,7 @@ func TestExecRunnerPassesUTF8Flag(t *testing.T) {
 func TestNewSession(t *testing.T) {
 	fr := &fakeRunner{out: map[string]string{"list-panes -t =moomux-foo:^ -F #{pane_id}": "%3\n"}}
 	c := &Client{Runner: fr}
-	if err := c.NewSession("moomux-foo", "/tmp/wt", "claude", "foo"); err != nil {
+	if err := c.NewSession("moomux-foo", "/tmp/wt", "claude", "claude", "foo"); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{
@@ -159,7 +159,7 @@ func TestNewSession(t *testing.T) {
 func TestNewSessionNoWindowName(t *testing.T) {
 	fr := &fakeRunner{out: map[string]string{"list-panes -t =moomux-foo:^ -F #{pane_id}": "%3\n"}}
 	c := &Client{Runner: fr}
-	if err := c.NewSession("moomux-foo", "/tmp/wt", "claude", ""); err != nil {
+	if err := c.NewSession("moomux-foo", "/tmp/wt", "claude", "claude", ""); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{
@@ -179,7 +179,7 @@ func TestNewSessionNoWindowName(t *testing.T) {
 func TestNewSessionNoCmd(t *testing.T) {
 	fr := &fakeRunner{out: map[string]string{"list-panes -t =moomux-foo:^ -F #{pane_id}": "%3\n"}}
 	c := &Client{Runner: fr}
-	if err := c.NewSession("moomux-foo", "/tmp/wt", "", "foo"); err != nil {
+	if err := c.NewSession("moomux-foo", "/tmp/wt", "", "", "foo"); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{

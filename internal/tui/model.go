@@ -148,6 +148,7 @@ type Backend interface {
 	// SuggestedProject is the add-project form's name/repo prefill, from
 	// the core's own working directory — see app.SuggestedProject.
 	SuggestedProject() (name, repo string)
+	OpenCodeOptions(project string) (config.OpenCodeOptions, error)
 	// AddProject's warning, when non-empty, accompanies a
 	// gitwt.ErrNotGitRepo failure — see app.AddProject.
 	AddProject(name string, p config.Project) (warning string, err error)
@@ -237,31 +238,16 @@ func (m *Model) agentNames() []string {
 	return names
 }
 
-// agentUsesFreeTextModel reports whether agent's model form row should be a
-// free-text input rather than a selector, because the agent publishes no
-// fixed list of models to pick from (opencode, today).
-//
-// Read off the served AgentOptions table rather than by agent name: the core
-// is the one place that knows which agents exist and what they offer, and
-// the name used to be hardcoded at six call sites here — so a fourth agent
-// with no model list would have silently rendered an unusable selector.
-// An agent the table doesn't mention at all (including the empty "ask me
-// which agent" state) keeps the selector, on modelNamesFor's fallback list.
-func (m *Model) agentUsesFreeTextModel(agent string) bool {
-	for _, o := range m.agentOptions {
-		if o.Name == agent {
-			return len(o.Models) == 0
-		}
-	}
-	return false
-}
-
 // modelNamesFor returns agent's model choices, falling back to the first
 // agent the core serves — not to a name spelled out here — for an agent the
 // table doesn't mention, so the selector always has at least "default".
-// Not meaningful for an agent where agentUsesFreeTextModel reports true; its
-// form row is a free-text input (newFormModelInput) instead of a selector.
 func (m *Model) modelNamesFor(agent string) []string {
+	if agent == "opencode" {
+		if m.projectAt(m.newFormProjIdx) == m.openCodeCatalog.project {
+			return m.shownModels(agent, append([]string{"default"}, m.openCodeCatalog.Models...))
+		}
+		return []string{"default"}
+	}
 	for _, o := range m.agentOptions {
 		if o.Name == agent && len(o.Models) > 0 {
 			return m.shownModels(agent, o.Models)
@@ -325,13 +311,10 @@ func (m *Model) thinkingNamesFor(agent, model string) []string {
 }
 
 // newFormAgentModel returns the new-session form's current agent and model
-// ("" for an agent not yet chosen; the typed text for a free-text model).
+// ("" for an agent not yet chosen).
 func (m *Model) newFormAgentModel() (agent, model string) {
 	if m.newFormAgentIdx >= 0 {
 		agent = m.agentNames()[m.newFormAgentIdx]
-	}
-	if m.agentUsesFreeTextModel(agent) {
-		return agent, m.newFormModelInput.Value()
 	}
 	if names := m.newFormModelChoices(agent); m.newFormModelIdx >= 0 && m.newFormModelIdx < len(names) {
 		model = names[m.newFormModelIdx]
@@ -341,7 +324,30 @@ func (m *Model) newFormAgentModel() (agent, model string) {
 
 // newFormThinkingNames is thinkingNamesFor the form's current agent and model.
 func (m *Model) newFormThinkingNames() []string {
-	return m.thinkingNamesFor(m.newFormAgentModel())
+	agent, model := m.newFormAgentModel()
+	if agent == "opencode" {
+		return append([]string{"default"}, m.openCodeCatalog.Variants[m.openCodeEffortModel()]...)
+	}
+	return m.thinkingNamesFor(agent, model)
+}
+
+func (m *Model) openCodeAgent() config.OpenCodeAgent {
+	c := m.openCodeCatalog
+	if c.project == m.projectAt(m.newFormProjIdx) && c.agentIdx >= 0 && c.agentIdx < len(c.Agents) {
+		return c.Agents[c.agentIdx]
+	}
+	return config.OpenCodeAgent{}
+}
+
+func (m *Model) openCodeEffortModel() string {
+	_, model := m.newFormAgentModel()
+	if model != "default" {
+		return model
+	}
+	if id := m.openCodeAgent().Model; id != "" && slices.Contains(m.openCodeCatalog.Models, id) {
+		return id
+	}
+	return m.openCodeCatalog.DefaultModel
 }
 
 // newFormModelChoices is the new-session form's model selector: the agent's
@@ -378,12 +384,10 @@ func (m *Model) captureFormSelection() formSelection {
 // A model that dropped out of its list stays chosen as the extra entry rather
 // than becoming a neighbour.
 func (m *Model) restoreFormSelection(s formSelection) {
-	if !m.agentUsesFreeTextModel(s.agent) {
-		if s.model != "" && s.model != "default" && !slices.Contains(m.newFormModelChoices(s.agent), s.model) {
-			m.newFormExtraModel = s.model
-		}
-		m.newFormModelIdx = max(slices.Index(m.newFormModelChoices(s.agent), s.model), 0)
+	if s.model != "" && s.model != "default" && !slices.Contains(m.newFormModelChoices(s.agent), s.model) {
+		m.newFormExtraModel = s.model
 	}
+	m.newFormModelIdx = max(slices.Index(m.newFormModelChoices(s.agent), s.model), 0)
 	m.newFormKeepThinking(s.thinking)
 	m.modelFilterCursor = min(m.modelFilterCursor, max(len(m.modelFilterRows())-1, 0))
 }
@@ -611,8 +615,9 @@ type Model struct {
 	ticketInput             textinput.Model
 	prInput                 textinput.Model
 	promptInput             textarea.Model
-	newFormModelInput       textinput.Model // opencode's free-text model field; unused for claude/codex
-	newFormFocus            int             // 0=project selector, 1=nameInput, 2=branchInput, 3=baseBranchInput, 4=promptInput, 5=ticketInput, 6=prInput, 7=agent selector, 8=model selector, 9=thinking selector, 10=open-terminal toggle, 11=auto-submit toggle
+	openCodeCatalog         openCodeCatalog
+	openCodeRequest         uint64
+	newFormFocus            int // 0=project selector, 1=nameInput, 2=branchInput, 3=baseBranchInput, 4=promptInput, 5=ticketInput, 6=prInput, 7=agent selector, 8=model selector, 9=thinking selector, 10=open-terminal toggle, 11=auto-submit toggle
 	newFormErr              string
 	newFormAgentIdx         int    // index into agentNames; preset to the last agent used
 	newFormModelIdx         int    // index into newFormModelChoices(chosen agent); 0 ("default") initially, reset on agent change
@@ -959,14 +964,6 @@ func New(cfg *config.Config, backend Backend, agentOptions []config.AgentOption,
 	pri.CharLimit = 256
 	pri.Width = 40
 
-	// opencode has no fixed model list of its own worth hardcoding — it's a
-	// free-text field instead of a selector like modelNamesByAgent's other
-	// entries.
-	mi := textinput.New()
-	mi.Placeholder = "model (optional, e.g. anthropic/claude-sonnet-4-5)"
-	mi.CharLimit = 128
-	mi.Width = 40
-
 	si := textinput.New()
 	si.Placeholder = "session name"
 	si.CharLimit = 64
@@ -1004,29 +1001,28 @@ func New(cfg *config.Config, backend Backend, agentOptions []config.AgentOption,
 		slog.Warn("read client config", "path", clientPath, "err", err)
 	}
 	m := &Model{
-		cfg:               &own,
-		client:            client,
-		clientPath:        clientPath,
-		draftPath:         newSessionDraftPath(),
-		backend:           backend,
-		agentOptions:      agentOptions,
-		keys:              DefaultKeyMap(),
-		views:             map[string]sessionview.View{},
-		detailHeights:     map[detailHeightKey]int{},
-		statusCh:          statusCh,
-		cancelPoll:        cancel,
-		nameInput:         ti,
-		branchInput:       bi,
-		baseBranchInput:   bbi,
-		ticketInput:       tki,
-		prInput:           pri,
-		promptInput:       pi,
-		newFormModelInput: mi,
-		searchInput:       si,
-		overlayViewport:   viewport.New(1, 1),
-		overlayMode:       ModeList,
-		overlayFocus:      -1,
-		multiCursors:      map[string]int{},
+		cfg:             &own,
+		client:          client,
+		clientPath:      clientPath,
+		draftPath:       newSessionDraftPath(),
+		backend:         backend,
+		agentOptions:    agentOptions,
+		keys:            DefaultKeyMap(),
+		views:           map[string]sessionview.View{},
+		detailHeights:   map[detailHeightKey]int{},
+		statusCh:        statusCh,
+		cancelPoll:      cancel,
+		nameInput:       ti,
+		branchInput:     bi,
+		baseBranchInput: bbi,
+		ticketInput:     tki,
+		prInput:         pri,
+		promptInput:     pi,
+		searchInput:     si,
+		overlayViewport: viewport.New(1, 1),
+		overlayMode:     ModeList,
+		overlayFocus:    -1,
+		multiCursors:    map[string]int{},
 	}
 	m.projects = cfg.OrderedProjectNames()
 	// Land on the first project with active sessions rather than always

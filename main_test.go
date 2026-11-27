@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -493,5 +494,40 @@ func TestParseSpawnMapsFormFields(t *testing.T) {
 func TestParkNoticeIsNotPastTense(t *testing.T) {
 	if got := parkNotice("x"); strings.HasPrefix(got, "parked") {
 		t.Errorf("parkNotice = %q: the worker has not finished", got)
+	}
+}
+
+func TestOpenCodeActivityAcrossSchemas(t *testing.T) {
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 not installed")
+	}
+	home := t.TempDir()
+	xdg := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", xdg)
+	t.Setenv("OPENCODE_DB", "")
+	dir := filepath.Join(xdg, "opencode")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db := filepath.Join(dir, "opencode.db")
+	const schema = `CREATE TABLE session(directory TEXT, time_updated INTEGER);
+ CREATE TABLE session_v2(directory TEXT, time_updated INTEGER);
+ INSERT INTO session VALUES('/wt/old',1);
+ INSERT INTO session_v2 VALUES('/wt/new',2),('/wt/new',3);`
+	if out, err := exec.Command("sqlite3", db, schema).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	var rows []string
+	for _, w := range buildWatcher(home).(*watcher.MultiWatcher).Watchers {
+		if sq, ok := w.(*watcher.SQLiteWatcher); ok && sq.DB == db {
+			out, err := exec.Command("sqlite3", db, sq.Query).CombinedOutput()
+			if err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			rows = append(rows, strings.Fields(string(out))...)
+		}
+	}
+	if !slices.Contains(rows, "/wt/new|3") || !slices.Contains(rows, "/wt/old|1") {
+		t.Fatalf("activity rows = %v", rows)
 	}
 }

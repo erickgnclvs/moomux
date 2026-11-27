@@ -27,7 +27,7 @@ type Session struct {
 	CreatedAt    time.Time `json:"created_at"`
 	Agent        string    `json:"agent,omitempty"`       // "claude", "codex", "opencode", "antigravity"; empty = "claude"
 	Dangerous    bool      `json:"dangerous,omitempty"`   // run Agent with its permission-skipping flag (claude/antigravity: --dangerously-skip-permissions, codex: --yolo); no-op for opencode
-	AgentPort    int       `json:"agent_port,omitempty"`  // HTTP port for OpenCode API; 0 = not applicable
+	AgentPort    int       `json:"agent_port,omitempty"`  // legacy OpenCode port, retained for stored sessions
 	Ticket       string    `json:"ticket,omitempty"`      // ticket URL (e.g. Asana, Jira, Linear)
 	PR           string    `json:"pr,omitempty"`          // pull request URL (e.g. GitHub, GitLab)
 	Order        int64     `json:"order,omitempty"`       // manual sort position within a project; 0 = unset, falls back to CreatedAt
@@ -52,9 +52,10 @@ type Session struct {
 // replay it exactly. It had already drifted: `moomux spawn` composed the
 // prompt differently and skipped two of the steps.
 type CreateRequest struct {
-	Project string
-	Name    string
-	Agent   string
+	OpenCodeAgent string `json:",omitempty"` // Native primary agent selected within OpenCode.
+	Project       string
+	Name          string
+	Agent         string
 	// Branch is an existing branch to check out; empty means cut a new one.
 	Branch     string
 	BaseBranch string

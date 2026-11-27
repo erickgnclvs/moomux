@@ -28,6 +28,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/gitwt"
 	"github.com/erickgnclvs/moomux/internal/layout"
+	"github.com/erickgnclvs/moomux/internal/opencode"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/sessionview"
@@ -69,20 +70,11 @@ type App struct {
 	// connection, made the same race routine rather than narrow.
 	cfgMu sync.RWMutex
 
-	// portMu guards reservedPorts, nextOpenCodePort's in-memory record of
-	// ports already handed out this process but not yet persisted to the
-	// Store — without it, two concurrent CreateSession calls for opencode
-	// sessions (server.go dispatches each on its own goroutine) can both
-	// read the same "highest port so far" from the Store before either has
-	// written its new session, and collide.
-	portMu        sync.Mutex
-	reservedPorts map[int]bool
-
 	// trashWG tracks moveToTrash's background removals, so a test can wait
 	// for one to finish rather than racing its TempDir cleanup.
 	trashWG sync.WaitGroup
 
-	// nameMu guards reservedNames, the session-id analogue of reservedPorts:
+	// nameMu guards session IDs reserved by in-flight creates.
 	// CreateSession's existence check happens long before its Store.Put, so
 	// two concurrent calls for the same name/project can both pass the
 	// check before either has written its session.
@@ -164,17 +156,14 @@ func (a *App) forgetFetch(id string) {
 //
 // claude and codex take their models and thinking levels from agent-usage
 // at call time (see AgentOptions), so the table lists neither for them.
-// opencode has no Models entry: it has no small fixed model list worth
-// hardcoding, so a picker offers a free-text field instead of a selector.
-// opencode is also the one agent with no launch-time reasoning-effort flag,
-// so its thinking level is a phrase prepended to the first prompt instead
-// (see FirstPrompt).
+// OpenCodeOptions supplies primary agents, models and native reasoning variants by project.
 var agentOptionsTable = []config.AgentOption{
 	{Name: "claude"},
 	{Name: "codex"},
 	{
 		Name:     "opencode",
-		Thinking: []string{"default", "think", "think hard", "think harder", "ultrathink"},
+		Models:   []string{"default"},
+		Thinking: []string{"default"},
 	},
 	{
 		// No source lists agy's models, so the picker offers only its
@@ -218,6 +207,15 @@ func (a *App) AgentOptions() []config.AgentOption {
 	return opts
 }
 
+// OpenCodeOptions discovers the choices available to a new session in this project.
+func (a *App) OpenCodeOptions(project string) (config.OpenCodeOptions, error) {
+	p, ok := a.project(project)
+	if !ok || p.Repo == "" {
+		return config.OpenCodeOptions{}, fmt.Errorf("unknown project %q", project)
+	}
+	return opencode.Read(p.Repo)
+}
+
 // mergeLevels adds levels' entries missing from all, each placed right after
 // the entry before it in levels, so lists that are each lowest-first merge
 // into one that still is: [low high] and [low medium high] give
@@ -250,7 +248,7 @@ func agentCmd(agent string) string {
 }
 
 // dangerousFlag returns the CLI flag that skips permission prompts for the
-// given agent, or "" if it doesn't have one (opencode).
+// given agent, or "" when moomux leaves approvals to the agent (OpenCode).
 func dangerousFlag(agent string) string {
 	switch agent {
 	case "codex":
@@ -262,11 +260,9 @@ func dangerousFlag(agent string) string {
 	}
 }
 
-// modelFlag returns the --model flag for agent, or "" if model is empty or
+// modelFlag returns the --model flag, or "" if model is empty or
 // "default".
-// ponytail: assumes --model is the right flag name for all three agents;
-// revisit if codex/opencode turn out to use something else.
-func modelFlag(agent, model string) string {
+func modelFlag(model string) string {
 	if model == "" || model == "default" {
 		return ""
 	}
@@ -294,10 +290,8 @@ func shellQuote(s string) string {
 
 // reasoningEffortFlag returns codex's -c model_reasoning_effort="<value>"
 // or claude's/antigravity's --effort <value> flag, or "" if thinking is
-// empty/"default" or agent doesn't support reasoning-effort flags. Unlike
-// --model, this isn't assumed to generalize: opencode's reasoning-effort flag
-// (--variant) only exists on its one-shot `run` subcommand, not the
-// interactive session moomux launches here.
+// empty/"default" or the agent has no separate effort flag. OpenCode v2
+// selects its native variant as part of the model reference.
 func reasoningEffortFlag(agent, thinking string) string {
 	if thinking == "" || thinking == "default" {
 		return ""
@@ -318,14 +312,28 @@ func reasoningEffortFlag(agent, thinking string) string {
 // buildAgentCmd returns the shell command that launches agent in its tmux
 // pane, appending its dangerous flag, --model flag, and (codex/claude/antigravity)
 // reasoning-effort flag when requested and supported.
-func buildAgentCmd(agent string, dangerous bool, model, thinking string) string {
+func buildAgentCmd(agent string, dangerous bool, model, thinking, openCodeAgent string) string {
 	cmd := agentCmd(agent)
 	if dangerous {
 		if flag := dangerousFlag(agent); flag != "" {
 			cmd += " " + flag
 		}
 	}
-	if flag := modelFlag(agent, model); flag != "" {
+	if agent == "opencode" && ((model != "" && model != "default") || openCodeAgent != "") {
+		exe, err := os.Executable()
+		if err != nil {
+			exe = "moomux"
+		}
+		if model == "" {
+			model = "default"
+		}
+		cmd = shellQuote(exe) + " hook opencode launch-model " + shellQuote(model)
+		if openCodeAgent != "" {
+			cmd += " " + shellQuote(openCodeAgent)
+		}
+		return cmd
+	}
+	if flag := modelFlag(model); flag != "" {
 		cmd += " " + flag
 	}
 	// Every agy model bakes its own effort into the model id, and agy hard-errors
@@ -354,7 +362,7 @@ func buildAgentCmd(agent string, dangerous bool, model, thinking string) string 
 // falling back to the default two-pane split otherwise (or a lone agent
 // pane when Cfg.NoTerminalPane is set) — a malformed layout file only logs
 // a warning, it never blocks session creation.
-func (a *App) newTmuxSession(tmuxName, cwd, cmd, windowName string) error {
+func (a *App) newTmuxSession(tmuxName, cwd, agent, cmd, windowName string) error {
 	spec, err := layout.Load(cwd)
 	if err != nil {
 		slog.Warn("pane layout invalid, using default layout", "path", cwd, "err", err)
@@ -369,9 +377,9 @@ func (a *App) newTmuxSession(tmuxName, cwd, cmd, windowName string) error {
 		}
 	}
 	if spec == nil {
-		err = a.Tmux.NewSession(tmuxName, cwd, cmd, windowName)
+		err = a.Tmux.NewSession(tmuxName, cwd, agent, cmd, windowName)
 	} else {
-		err = a.Tmux.NewSessionWithLayout(tmuxName, cwd, windowName, spec, cmd)
+		err = a.Tmux.NewSessionWithLayout(tmuxName, cwd, windowName, spec, agent, cmd)
 	}
 	if err != nil {
 		return err
@@ -615,50 +623,9 @@ func WorktreeRootDefault() string {
 	return filepath.Join(home, ".local", "share", "moomux", "worktrees")
 }
 
-// nextOpenCodePort returns the next available port for an OpenCode session.
-// Starts at 4096 and increments past the highest AgentPort recorded across
-// all sessions; AgentPort is only ever non-zero on OpenCode sessions, so
-// this is effectively scoped to those without needing an explicit filter.
-//
-// The Store won't know about this port until CreateSession's much later
-// Store.Put — worktree creation and the tmux/terminal setup in between run
-// for seconds — so a port is also recorded in reservedPorts the moment it's
-// handed out, and never handed out twice for the life of this App, even to
-// two CreateSession calls racing on separate goroutines.
-func (a *App) nextOpenCodePort() int {
-	a.portMu.Lock()
-	defer a.portMu.Unlock()
-	port := 4096
-	for _, s := range a.Store.All() {
-		if s.AgentPort >= port {
-			port = s.AgentPort + 1
-		}
-	}
-	for a.reservedPorts[port] {
-		port++
-	}
-	if a.reservedPorts == nil {
-		a.reservedPorts = map[int]bool{}
-	}
-	a.reservedPorts[port] = true
-	return port
-}
-
-// releaseOpenCodePort frees a port reserved by nextOpenCodePort once
-// CreateSession either persisted it (so the Store scan above will find it
-// from then on) or gave up before persisting — either way the reservation
-// has served its purpose and holding onto it would leak the port forever on
-// a failed CreateSession.
-func (a *App) releaseOpenCodePort(port int) {
-	a.portMu.Lock()
-	defer a.portMu.Unlock()
-	delete(a.reservedPorts, port)
-}
-
 // reserveSessionID atomically checks that id isn't already taken — by the
 // Store, or by a concurrent CreateSession call that reserved it but hasn't
-// persisted yet — and reserves it if so. Mirrors reservedPorts/
-// nextOpenCodePort for session names instead of ports.
+// persisted yet — and reserves it if so.
 func (a *App) reserveSessionID(id string) bool {
 	a.nameMu.Lock()
 	defer a.nameMu.Unlock()
@@ -995,8 +962,7 @@ func (a *App) CreateSessionReport(req session.CreateRequest) (session.Session, C
 			return session.Session{}, report, err
 		}
 	}
-	s, hint, err := a.createSession(req.Project, name, req.Agent, req.Branch, req.Ticket,
-		req.OpenTerminal, req.Dangerous, req.BaseBranch, req.Model, req.Thinking)
+	s, hint, err := a.createNamedSession(req, name)
 	if err != nil {
 		return session.Session{}, report, err
 	}
@@ -1102,16 +1068,16 @@ func joinHint(a, b string) string {
 // instead of the project's configured base branch as the ref a fresh branch
 // is cut from; it has no effect when existingBranch is set (resuming a
 // branch has no base to cut from). model, when non-empty and not "default",
-// is passed to the agent as --model. thinking, when non-empty and not
-// "default", is passed to codex as -c model_reasoning_effort=<value> (see
-// reasoningEffortFlag); it has no effect for claude/opencode, which have no
-// launch-time reasoning-effort flag — for those, FirstPrompt applies the
-// magic-word prompt prefix instead.
+// selects the initial model. reasoningEffortFlag maps thinking to an agent
+// flag where supported. For OpenCode, FirstPrompt prepends the phrase to
+// the first prompt and an optional model variant sets native reasoning.
 // dangerous is a pointer so a caller can leave it unset: nil means "use the
 // project's own Dangerous setting", exactly like every other project-level
 // default here. A caller that wants to force it on or off regardless of the
 // project passes an explicit true/false.
-func (a *App) createSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
+func (a *App) createNamedSession(req session.CreateRequest, name string) (session.Session, string, error) {
+	project, agent, existingBranch, ticket := req.Project, req.Agent, req.Branch, req.Ticket
+	openTerminal, dangerous, baseBranch := req.OpenTerminal, req.Dangerous, req.BaseBranch
 	proj, ok := a.project(project)
 	if !ok {
 		return session.Session{}, "", fmt.Errorf("unknown project %q", project)
@@ -1268,21 +1234,12 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 	}
 	hooksHint := installAgentSupport(agent)
 	trustWorktree(agent, wt)
-	cmd := buildAgentCmd(agent, dangerousVal, model, thinking)
-	agentPort := 0
-	if agent == "opencode" {
-		agentPort = a.nextOpenCodePort()
-		defer a.releaseOpenCodePort(agentPort)
-		cmd = fmt.Sprintf("opencode --port %d", agentPort)
-		if flag := modelFlag(agent, model); flag != "" {
-			cmd += " " + flag
-		}
-	}
+	cmd := buildAgentCmd(agent, dangerousVal, req.Model, req.Thinking, req.OpenCodeAgent)
 
 	a.cfgMu.RLock()
 	windowName := a.Cfg.ProjectEmoji(project) + " " + name
 	a.cfgMu.RUnlock()
-	if err := a.newTmuxSession(tmuxName, wt, cmd, windowName); err != nil {
+	if err := a.newTmuxSession(tmuxName, wt, agent, cmd, windowName); err != nil {
 		slog.Error("tmux new-session failed", "name", tmuxName, "cwd", wt, "err", err)
 		if proj.UsesWorktree() {
 			// Undo the worktree (and the branch, if this create made it), so
@@ -1315,7 +1272,6 @@ func (a *App) createSession(project, name, agent, existingBranch, ticket string,
 		CreatedAt:    time.Now().UTC(),
 		Agent:        agent,
 		Dangerous:    dangerousVal,
-		AgentPort:    agentPort,
 		Ticket:       ticket,
 	}
 	// A terminal being opened for this session means the user is dropped
@@ -1477,18 +1433,26 @@ func (a *App) waitForPaneStable(tmuxSession, seed string, deadline time.Time) st
 // the process's own statement that it is now reading keystrokes — the shell
 // clears it for the duration of the command it launched, so it going back on
 // means the agent, not the shell, is waiting for input. Best-effort: agents
-// that never enable it just fall through to the old timing-based behavior.
-func (a *App) waitForPaneAcceptingPaste(tmuxSession string) {
+// that never enable it fall through to the old timing-based behavior, except
+// for OpenCode, where a failed launch would submit the task to the shell.
+func (a *App) waitForPaneAcceptingPaste(tmuxSession string, openCode bool) error {
+	check := a.Tmux.BracketedPaste
+	if openCode {
+		check = a.Tmux.OpenCodeAcceptingPaste
+	}
 	deadline := time.Now().Add(paneReadyTimeout)
 	for {
 		// A transient error (e.g. the window not fully up yet) is not "the
 		// flag is on" — it must keep polling like the flag-is-off case,
 		// not fall through early into pasting against an unready pane.
-		if on, err := a.Tmux.BracketedPaste(tmuxSession); err == nil && on {
-			return
+		if on, err := check(tmuxSession); err == nil && on {
+			return nil
 		}
 		if time.Now().After(deadline) {
-			return
+			if openCode {
+				return fmt.Errorf("timed out waiting for OpenCode input; first prompt was not sent")
+			}
+			return nil
 		}
 		time.Sleep(paneStablePoll)
 	}
@@ -1545,14 +1509,14 @@ func (a *App) StartFirstPrompt(tmuxSession, prompt string, autoSubmit bool) erro
 	if prompt == "" {
 		return nil
 	}
-	needsCodexComposer := false
+	agent := ""
 	for _, s := range a.Store.All() {
 		if s.TmuxSession == tmuxSession {
-			needsCodexComposer = s.AgentName() == "codex"
+			agent = s.AgentName()
 			break
 		}
 	}
-	if needsCodexComposer {
+	if agent == "codex" {
 		if err := a.waitForCodexComposer(tmuxSession); err != nil {
 			return err
 		}
@@ -1560,7 +1524,9 @@ func (a *App) StartFirstPrompt(tmuxSession, prompt string, autoSubmit bool) erro
 		if err := a.waitForPaneReady(tmuxSession); err != nil {
 			return err
 		}
-		a.waitForPaneAcceptingPaste(tmuxSession)
+		if err := a.waitForPaneAcceptingPaste(tmuxSession, agent == "opencode"); err != nil {
+			return err
+		}
 	}
 	if err := a.Tmux.PasteText(tmuxSession, prompt); err != nil {
 		return err
@@ -1575,6 +1541,11 @@ func (a *App) StartFirstPrompt(tmuxSession, prompt string, autoSubmit bool) erro
 		// failed auth attempt. Pressing Enter here would only submit another
 		// one; report the failure instead of compounding it.
 		return fmt.Errorf("pane shows an interactive prompt (%q) after typing the prompt — the agent likely never received it", marker)
+	}
+	// OpenCode keeps the submitted prompt visible in its transcript. A
+	// retry based on that text would submit an empty follow-up.
+	if agent == "opencode" {
+		return a.Tmux.PressEnter(tmuxSession)
 	}
 	return a.pressEnterUntilSubmitted(tmuxSession, prompt)
 }
@@ -2277,24 +2248,14 @@ func (a *App) EnsureTmux(id string) (string, error) {
 		// ponytail: session.Session has no stored model/thinking fields, so a
 		// recreated pane always relaunches with the agent's defaults — same
 		// as it always has for everything but the dangerous flag.
-		cmd := buildAgentCmd(s.AgentName(), s.Dangerous, "", "")
-		if s.AgentName() == "opencode" {
-			if s.AgentPort == 0 {
-				s.AgentPort = a.nextOpenCodePort()
-				port := s.AgentPort
-				if _, err := a.Store.Update(id, func(r *session.Session) { r.AgentPort = port }); err != nil {
-					return "", fmt.Errorf("store opencode port: %w", err)
-				}
-			}
-			cmd = fmt.Sprintf("opencode --port %d", s.AgentPort)
-		}
-		if err := a.newTmuxSession(s.TmuxSession, s.WorktreePath, cmd, a.titleName(s)); err != nil {
+		cmd := buildAgentCmd(s.AgentName(), s.Dangerous, "", "", "")
+		if err := a.newTmuxSession(s.TmuxSession, s.WorktreePath, s.AgentName(), cmd, a.titleName(s)); err != nil {
 			slog.Error("NewSession failed", "id", id, "tmux_session", s.TmuxSession, "cwd", s.WorktreePath, "err", err)
 			return "", err
 		}
 	}
-	if has && s.AgentName() == "codex" {
-		a.Tmux.ObserveCodex(s.TmuxSession)
+	if has {
+		a.Tmux.ObserveTerminal(s.TmuxSession, s.AgentName())
 	}
 	a.Tmux.ConfigureTitleTracking(s.TmuxSession, titleName)
 	now := time.Now()
@@ -2346,7 +2307,7 @@ func (a *App) TmuxStates() map[string]watcher.State {
 			continue
 		}
 		state := watcher.Unknown
-		if s.AgentName() == "codex" {
+		if tmux.ReportsTerminalState(s.AgentName()) {
 			switch status {
 			case "working":
 				state = watcher.Working

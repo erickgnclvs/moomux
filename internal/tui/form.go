@@ -74,7 +74,7 @@ func (m *Model) resizeFormInputs() {
 	setInputWidth(&m.baseBranchInput, textInputWidth(&m.baseBranchInput, 40, avail))
 	setInputWidth(&m.ticketInput, textInputWidth(&m.ticketInput, 40, avail))
 	setInputWidth(&m.prInput, textInputWidth(&m.prInput, 40, avail))
-	setInputWidth(&m.newFormModelInput, textInputWidth(&m.newFormModelInput, 40, avail))
+
 	// Unlike the single-line fields above, the textarea soft-wraps its
 	// content at its width instead of just scrolling — capping it to the
 	// same fixed 40 they use would wrap lines well before the box's actual
@@ -140,30 +140,37 @@ func (m *Model) renderFormHint(text string) string {
 // newFormFieldCount is the focus cycle length. A newFormFocus value names a
 // field, not a position — where each sits on screen is newFormFields'.
 const (
-	newFormFieldCount        = 12
-	newFormNameFocus         = 1
-	newFormBranchFocus       = 2
-	newFormBaseBranchFocus   = 3
-	newFormPromptFocus       = 4
-	newFormTicketFocus       = 5
-	newFormPRFocus           = 6
-	newFormAgentFocus        = 7
-	newFormModelFocus        = 8
-	newFormThinkingFocus     = 9
-	newFormOpenTerminalFocus = 10
-	newFormAutoSubmitFocus   = 11
+	newFormOpenCodeAgentFocus = 12
+	newFormFieldCount         = 13
+	newFormNameFocus          = 1
+	newFormBranchFocus        = 2
+	newFormBaseBranchFocus    = 3
+	newFormPromptFocus        = 4
+	newFormTicketFocus        = 5
+	newFormPRFocus            = 6
+	newFormAgentFocus         = 7
+	newFormModelFocus         = 8
+	newFormThinkingFocus      = 9
+	newFormOpenTerminalFocus  = 10
+	newFormAutoSubmitFocus    = 11
 )
 
 // newFormFields is the rendered and tab order of the new-session form, the
 // same as the macOS app's New Session sheet: what changes per session first
 // (project, then the prompt the name is derived from), what rarely does last.
 func (m *Model) newFormFields() []int {
-	return []int{
-		newFormProjFocus, newFormPromptFocus, newFormThinkingFocus,
-		newFormNameFocus, newFormBranchFocus, newFormBaseBranchFocus,
-		newFormTicketFocus, newFormPRFocus,
-		newFormAgentFocus, newFormModelFocus, newFormOpenTerminalFocus, newFormAutoSubmitFocus,
+	fields := []int{newFormProjFocus, newFormPromptFocus}
+	oc := m.newFormAgentIdx >= 0 && m.agentNames()[m.newFormAgentIdx] == "opencode"
+	if !oc {
+		fields = append(fields, newFormThinkingFocus)
 	}
+	fields = append(fields, newFormNameFocus, newFormBranchFocus, newFormBaseBranchFocus, newFormTicketFocus, newFormPRFocus, newFormAgentFocus)
+	if oc {
+		fields = append(fields, newFormOpenCodeAgentFocus, newFormModelFocus, newFormThinkingFocus)
+	} else {
+		fields = append(fields, newFormModelFocus)
+	}
+	return append(fields, newFormOpenTerminalFocus, newFormAutoSubmitFocus)
 }
 
 var newFormFieldHints = []string{
@@ -212,7 +219,24 @@ func (m *Model) renderNewFormRow(field int) string {
 		return muteStyle.Render("agent:  ") + m.renderNewFormAgentSelector()
 	case newFormModelFocus:
 		return muteStyle.Render("model:  ") + m.renderNewFormModelSelector()
+	case newFormOpenCodeAgentFocus:
+		labels := []string{"default"}
+		if len(m.openCodeCatalog.Agents) > 0 {
+			labels = nil
+			for _, a := range m.openCodeCatalog.Agents {
+				name := a.Name
+				if name == "" {
+					name = a.ID
+				}
+				labels = append(labels, name)
+			}
+		}
+		const label = "OpenCode agent:  "
+		return muteStyle.Render(label) + renderSelector(labels, m.openCodeCatalog.agentIdx, m.newFormFocus == field, m.overlayWidth(formHintWidth)-lipgloss.Width(label))
 	case newFormThinkingFocus:
+		if m.agentNames()[m.newFormAgentIdx] == "opencode" {
+			return muteStyle.Render("effort:  ") + m.renderNewFormThinkingSelector()
+		}
 		return muteStyle.Render("thinking:  ") + m.renderNewFormThinkingSelector()
 	case newFormOpenTerminalFocus:
 		return muteStyle.Render("open in background:  ") + m.renderNewFormOpenTerminalToggle()
@@ -296,24 +320,38 @@ func (m *Model) renderNewFormAgentSelector() string {
 
 func (m *Model) renderNewFormModelSelector() string {
 	agent := m.agentNames()[m.newFormAgentIdx]
-	if m.agentUsesFreeTextModel(agent) {
-		return m.newFormModelInput.View()
-	}
 	return renderSelector(
 		m.modelLabels(agent, m.newFormModelChoices(agent)), m.newFormModelIdx, m.newFormFocus == newFormModelFocus,
 		m.overlayWidth(formHintWidth)-lipgloss.Width("model:  "),
 	)
 }
 
-// newFormFieldHint returns the footer hint for the currently focused
-// new-form field. It's newFormFieldHints[m.newFormFocus] for every row
-// except the thinking selector, which reads differently for codex and claude
-// (a real launch flag) than for opencode (a phrase prepended to the first
-// prompt).
+// newFormFieldHint describes the active control for the selected CLI.
 func (m *Model) newFormFieldHint() string {
 	agent := m.agentNames()[m.newFormAgentIdx]
 	switch m.newFormFocus {
-	case newFormThinkingFocus:
+	case newFormModelFocus, newFormOpenCodeAgentFocus, newFormThinkingFocus:
+		if agent == "opencode" {
+			switch {
+			case m.openCodeCatalog.loading:
+				return "Loading OpenCode choices…"
+			case m.openCodeCatalog.err != nil:
+				return "OpenCode choices unavailable. ←→ to retry or use default."
+			case m.newFormFocus == newFormModelFocus:
+				return "Choose a project model with ←→. Default uses the configured model."
+			case m.newFormFocus == newFormOpenCodeAgentFocus && len(m.openCodeCatalog.Agents) == 0:
+				return "Select the agent inside OpenCode."
+			case m.newFormFocus == newFormOpenCodeAgentFocus:
+				return "Choose the primary agent for this session."
+			case len(m.newFormThinkingNames()) <= 1:
+				return "This model has no selectable effort."
+			default:
+				return "Choose a reasoning variant for " + m.openCodeEffortModel() + "."
+			}
+		}
+		if m.newFormFocus != newFormThinkingFocus {
+			break
+		}
 		switch agent {
 		case "codex":
 			return "optional — passed to codex as -c model_reasoning_effort; \"default\" omits it"

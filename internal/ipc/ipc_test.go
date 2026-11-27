@@ -60,6 +60,9 @@ type projectCollapsedCall struct {
 	on      bool
 }
 
+func (f *fakeBackend) OpenCodeOptions(project string) (config.OpenCodeOptions, error) {
+	return config.OpenCodeOptions{Models: []string{project + "/test"}, DefaultModel: project + "/test", Variants: map[string][]string{project + "/test": {"low", "high"}}, Agents: []config.OpenCodeAgent{{ID: "build", Name: "Build"}, {ID: "review", Name: "Review", Model: project + "/test"}}}, nil
+}
 func (f *fakeBackend) SuggestedProject() (string, string) { return "", "" }
 
 func (f *fakeBackend) Sessions() []session.Session { return f.sessions }
@@ -345,6 +348,13 @@ func TestRoundTrip(t *testing.T) {
 		}
 		if !reflect.DeepEqual(got, b.agentOptions) {
 			t.Fatalf("AgentOptions() = %+v, want %+v", got, b.agentOptions)
+		}
+	})
+
+	t.Run("project OpenCode models survive the wire", func(t *testing.T) {
+		got, err := c.OpenCodeOptions("demo")
+		if err != nil || !reflect.DeepEqual(got.Models, []string{"demo/test"}) || got.Agents[1].ID != "review" || len(got.Variants["demo/test"]) != 2 {
+			t.Fatalf("models = %v, %v", got, err)
 		}
 	})
 

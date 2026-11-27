@@ -379,22 +379,6 @@ func TestUniqueNameFromBranch(t *testing.T) {
 	}
 }
 
-func TestNextOpenCodePort(t *testing.T) {
-	a, _, _ := newTestApp(t, gitProject("/repo"))
-	if got := a.nextOpenCodePort(); got != 4096 {
-		t.Fatalf("empty store: got %d, want 4096", got)
-	}
-	_ = a.Store.Put(session.Session{ID: "demo:x", Project: "demo", Name: "x", Agent: "opencode", AgentPort: 4100})
-	_ = a.Store.Put(session.Session{ID: "demo:y", Project: "demo", Name: "y", Agent: "claude"})
-	if got := a.nextOpenCodePort(); got != 4101 {
-		t.Fatalf("got %d, want 4101", got)
-	}
-	_ = a.Store.Put(session.Session{ID: "demo:z", Project: "demo", Name: "z", Agent: "codex", AgentPort: 4102})
-	if got := a.nextOpenCodePort(); got != 4103 {
-		t.Fatalf("retained port: got %d, want 4103", got)
-	}
-}
-
 func TestTmuxSessionNameUniqueAcrossProjects(t *testing.T) {
 	a := TmuxSessionName("proja:feat", "feat")
 	b := TmuxSessionName("projb:feat", "feat")
@@ -732,7 +716,7 @@ func TestCreateSessionDangerousAppendsAgentFlag(t *testing.T) {
 	}{
 		{"claude", "claude --dangerously-skip-permissions"},
 		{"codex", "codex --yolo"},
-		{"opencode", "opencode --port 4096"}, // no flag: opencode has none to append
+		{"opencode", "opencode"},
 		{"antigravity", "agy --dangerously-skip-permissions"},
 	}
 	for _, tc := range cases {
@@ -906,7 +890,6 @@ func TestCreateSessionModelAppendsFlag(t *testing.T) {
 	}{
 		{"claude", "sonnet", "claude --model sonnet"},
 		{"codex", "opus", "codex --model opus"},
-		{"opencode", "haiku", "opencode --port 4096 --model haiku"},
 		{"antigravity", "Gemini 3.8 Flash (High)", `agy --model 'Gemini 3.8 Flash (High)'`},
 		{"claude", "default", "claude"},
 		{"claude", "", "claude"},
@@ -953,7 +936,7 @@ func TestCreateSessionThinkingAppendsCodexFlag(t *testing.T) {
 		{"antigravity", "", "agy"},
 		{"claude", "max", "claude --effort max"},
 		{"claude", "default", "claude"},
-		{"opencode", "high", "opencode --port 4096"},
+		{"opencode", "high", "opencode"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.agent+"/"+tc.thinking, func(t *testing.T) {
@@ -1244,46 +1227,24 @@ func TestCreateSessionExistingBranchDirtyStaleWorktreeBlocks(t *testing.T) {
 	}
 }
 
-func TestCreateSessionOpenCodePorts(t *testing.T) {
+func TestCreateSessionOpenCodeModel(t *testing.T) {
+	const model = "provider/model's name#high"
 	a, git, tm := newTestApp(t, gitProject("/repo"))
-	tm.out["list-panes -t ="+TmuxSessionName("demo:one", "one")+":^ -F #{pane_id}"] = "%0\n"
-	tm.out["list-panes -t ="+TmuxSessionName("demo:two", "two")+":^ -F #{pane_id}"] = "%0\n"
-	noBranch(git, "one")
-	noBranch(git, "two")
-
-	s1, _, err := a.createSession("demo", "one", "opencode", "", "", true, boolPtr(false), "", "", "")
+	tm.out["list-panes -t ="+TmuxSessionName("demo:oc", "oc")+":^ -F #{pane_id}"] = "%0\n"
+	noBranch(git, "oc")
+	s, _, err := a.createSession("demo", "oc", "opencode", "", "", true, boolPtr(false), "", model, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s1.AgentPort != 4096 {
-		t.Fatalf("port = %d", s1.AgentPort)
+	if s.AgentPort != 0 {
+		t.Errorf("allocated obsolete port %d", s.AgentPort)
 	}
-	s2, _, err := a.createSession("demo", "two", "opencode", "", "", true, boolPtr(false), "", "", "")
+	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s2.AgentPort != 4097 {
-		t.Fatalf("port = %d", s2.AgentPort)
-	}
-	want := "send-keys -t %0 opencode --port 4097 Enter"
-	if !tm.called(want) {
-		t.Fatalf("no %q; calls = %v", want, tm.calls)
-	}
-}
-
-// TestNextOpenCodePortAvoidsCollisionBeforePersisting guards a TOCTOU race:
-// CreateSession doesn't persist a session's AgentPort until well after
-// nextOpenCodePort is called (worktree creation and tmux/terminal setup run
-// in between), so two concurrent CreateSession calls for opencode sessions
-// would otherwise both read the same "highest port so far" from the Store
-// and collide. nextOpenCodePort must remember a port the moment it hands it
-// out, not just infer availability from what's already persisted.
-func TestNextOpenCodePortAvoidsCollisionBeforePersisting(t *testing.T) {
-	a, _, _ := newTestApp(t, gitProject("/repo"))
-	p1 := a.nextOpenCodePort()
-	p2 := a.nextOpenCodePort()
-	if p1 == p2 {
-		t.Fatalf("nextOpenCodePort returned %d twice before either session was persisted", p1)
+	if !tm.called("send-keys -t %0 " + shellQuote(exe) + ` hook opencode launch-model 'provider/model'\''s name#high' Enter`) {
+		t.Fatalf("missing quoted model launch: %v", tm.calls)
 	}
 }
 
@@ -1656,28 +1617,6 @@ func TestOpenSessionStampsLastOpened(t *testing.T) {
 	}
 }
 
-func TestOpenSessionDeadAllocatesOpenCodePort(t *testing.T) {
-	a, _, tm := newTestApp(t, gitProject("/repo"))
-	_ = a.Store.Put(session.Session{
-		ID: "demo:oc", Project: "demo", Name: "oc", TmuxSession: "moomux-oc",
-		WorktreePath: "/wt/oc", Agent: "opencode",
-	})
-	tm.failOn["has-session -t =moomux-oc"] = true
-	// The dead session gets lazily migrated to the hashed name before recreation.
-	tm.out["list-panes -t ="+TmuxSessionName("demo:oc", "oc")+":^ -F #{pane_id}"] = "%0\n"
-
-	if _, err := a.OpenSession("demo:oc"); err != nil {
-		t.Fatal(err)
-	}
-	if !tm.called("send-keys -t %0 opencode --port 4096 Enter") {
-		t.Fatalf("expected allocated opencode port; calls = %v", tm.calls)
-	}
-	got, ok := a.Store.Get("demo:oc")
-	if !ok || got.AgentPort != 4096 {
-		t.Fatalf("stored session = %+v, ok=%v", got, ok)
-	}
-}
-
 func TestOpenSessionCwdMismatchRecreates(t *testing.T) {
 	a, _, tm := newTestApp(t, gitProject("/repo"))
 	// This session's agent defaults to claude, so OpenSession's agent
@@ -1739,8 +1678,8 @@ func TestOpenSessionDeadRecreatesWithAgent(t *testing.T) {
 	if _, err := a.OpenSession("demo:oc"); err != nil {
 		t.Fatal(err)
 	}
-	if !tm.called("send-keys -t %0 opencode --port 4099 Enter") {
-		t.Fatalf("expected opencode relaunch with port; calls = %v", tm.calls)
+	if !tm.called("send-keys -t %0 opencode Enter") {
+		t.Fatalf("expected opencode relaunch without legacy port; calls = %v", tm.calls)
 	}
 }
 
@@ -2742,7 +2681,7 @@ func TestSetTerminalPaneDropsTheShellSplit(t *testing.T) {
 		return n
 	}
 
-	if err := a.newTmuxSession("moomux-a", t.TempDir(), "", "a"); err != nil {
+	if err := a.newTmuxSession("moomux-a", t.TempDir(), "", "", "a"); err != nil {
 		t.Fatal(err)
 	}
 	if splits() != 1 {
@@ -2755,7 +2694,7 @@ func TestSetTerminalPaneDropsTheShellSplit(t *testing.T) {
 	if loaded, err := config.Load(a.CfgPath); err != nil || !loaded.NoTerminalPane {
 		t.Fatalf("NoTerminalPane not persisted (err %v)", err)
 	}
-	if err := a.newTmuxSession("moomux-b", t.TempDir(), "", "b"); err != nil {
+	if err := a.newTmuxSession("moomux-b", t.TempDir(), "", "", "b"); err != nil {
 		t.Fatal(err)
 	}
 	if splits() != 1 {
@@ -3730,6 +3669,41 @@ func TestStartFirstPromptRetriesEnterWhenPromptStillShowing(t *testing.T) {
 	}
 }
 
+func TestOpenCodeLaunchErrorLeavesFirstPromptOutOfShell(t *testing.T) {
+	a, _, tm := newTestApp(t, map[string]config.Project{})
+	if err := a.Store.Put(session.Session{ID: "demo:oc", TmuxSession: "oc", Agent: "opencode"}); err != nil {
+		t.Fatal(err)
+	}
+	tm.seq = map[string][]string{"capture-pane -p -t =oc:^": {"$ opencode", "OpenCode usage\n$ ", "OpenCode usage\n$ "}}
+	tm.out["display-message -p -t =oc:^ #{pane_current_command}\t#{bracket_paste_flag}"] = "zsh\t1"
+	if err := a.StartFirstPrompt("oc", "review the branch", true); err == nil || tm.called("load-buffer") {
+		t.Fatalf("launch failure delivered prompt, error %v", err)
+	}
+}
+
+func TestOpenCodeSubmitsFirstPromptOnce(t *testing.T) {
+	a, _, tm := newTestApp(t, map[string]config.Project{})
+	if err := a.Store.Put(session.Session{ID: "demo:oc", TmuxSession: "oc", Agent: "opencode"}); err != nil {
+		t.Fatal(err)
+	}
+	tm.seq = map[string][]string{
+		"capture-pane -p -t =oc:^": {"$ opencode", "ready", "ready", "ready", "do the thing", "do the thing", "do the thing", "do the thing\nLocal reply"},
+	}
+	tm.out["display-message -p -t =oc:^ #{pane_current_command}\t#{bracket_paste_flag}"] = "opencode\t1"
+	if err := a.StartFirstPrompt("oc", "do the thing", true); err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, call := range tm.calls {
+		if slices.Equal(call, []string{"send-keys", "-t", "=oc:^", "Enter"}) {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("sent Enter %d times, want 1", count)
+	}
+}
+
 // TestStartFirstPromptRefusesStuckSSHPassphrasePrompt reproduces the
 // incident this guards against: a worktree-create userscript (or the
 // agent's launch command itself) needs to auth over SSH, a stale
@@ -4489,13 +4463,13 @@ func TestAntigravityAgentSupport(t *testing.T) {
 	})
 
 	t.Run("BuildAgentCmd omits effort when model is specified", func(t *testing.T) {
-		cmd := buildAgentCmd("antigravity", false, "Gemini 3.8 Flash (High)", "high")
+		cmd := buildAgentCmd("antigravity", false, "Gemini 3.8 Flash (High)", "high", "")
 		want := `agy --model 'Gemini 3.8 Flash (High)'`
 		if cmd != want {
 			t.Fatalf("buildAgentCmd = %q, want %q", cmd, want)
 		}
 
-		cmd = buildAgentCmd("antigravity", true, "default", "high")
+		cmd = buildAgentCmd("antigravity", true, "default", "high", "")
 		want = "agy --dangerously-skip-permissions --effort high"
 		if cmd != want {
 			t.Fatalf("buildAgentCmd = %q, want %q", cmd, want)
@@ -4524,7 +4498,7 @@ func TestModelFlagQuotesForTheShell(t *testing.T) {
 		{"a `id` b", "--model 'a `id` b'"},
 		{"a'b", `--model 'a'\''b'`},
 	} {
-		if got := modelFlag("claude", tc.model); got != tc.want {
+		if got := modelFlag(tc.model); got != tc.want {
 			t.Errorf("modelFlag(%q) = %q, want %q", tc.model, got, tc.want)
 		}
 	}
@@ -4610,18 +4584,22 @@ func TestSetModelExcludedPersists(t *testing.T) {
 	}
 }
 
-func TestCodexDisplayedStateOverridesNeedsInputMarker(t *testing.T) {
-	a, _, tm := newTestApp(t, gitProject("/repo"))
-	s := session.Session{ID: "demo:a", Project: "demo", Name: "a", Agent: "codex", WorktreePath: "/wt/a", TmuxSession: "moomux-a"}
-	if err := a.Store.Put(s); err != nil {
-		t.Fatal(err)
-	}
-	for _, state := range []watcher.State{watcher.Working, watcher.NeedsInput, watcher.Done} {
-		tm.out["list-panes -a -F #{session_name}\t#{pane_pipe_pid}\t#{?pane_pipe,#{@moomux_codex_state},}"] = "moomux-a\t99\t99:" + state.String() + "\nmoomux-a\t\n"
-		snap := sessionview.Once(a, "", map[string]watcher.State{s.WorktreePath: watcher.NeedsInput})
-		if got := snap.Views[s.ID].State; got != state {
-			t.Fatalf("Codex screen reports %v with a pending approval hook: got %v", state, got)
-		}
+func TestDisplayedStateOverridesStoredActivity(t *testing.T) {
+	for _, agent := range []string{"codex", "opencode"} {
+		t.Run(agent, func(t *testing.T) {
+			a, _, tm := newTestApp(t, gitProject("/repo"))
+			s := session.Session{ID: "demo:a", Project: "demo", Name: "a", Agent: agent, WorktreePath: "/wt/a", TmuxSession: "moomux-a"}
+			if err := a.Store.Put(s); err != nil {
+				t.Fatal(err)
+			}
+			for _, state := range []watcher.State{watcher.Working, watcher.NeedsInput, watcher.Done} {
+				tm.out["list-panes -a -F #{session_name}\t#{pane_pipe_pid}\t#{?pane_pipe,#{@moomux_codex_state},}"] = "moomux-a\t99\t99:" + state.String() + "\nmoomux-a\t\n"
+				snap := sessionview.Once(a, "", map[string]watcher.State{s.WorktreePath: watcher.NeedsInput})
+				if got := snap.Views[s.ID].State; got != state {
+					t.Fatalf("screen reports %v with a pending approval hook: got %v", state, got)
+				}
+			}
+		})
 	}
 }
 
@@ -4709,4 +4687,28 @@ func TestSessionFieldWritesDoNotRevertOtherProcessesChanges(t *testing.T) {
 	if !got.Protected || got.Prompt != "hello" || got.Ticket != "T-1" {
 		t.Fatalf("session = %+v, want Protected kept, prompt and ticket set", got)
 	}
+}
+
+func TestOpenCodeModelsRunsInSelectedRepo(t *testing.T) {
+	repo := t.TempDir()
+	bin := t.TempDir()
+	a, _, _ := newTestApp(t, map[string]config.Project{"plain": {Repo: repo}})
+	if err := os.WriteFile(filepath.Join(repo, "catalog"), []byte("provider/z\nprovider/a/nested model\nprovider/z\n\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "opencode"), []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 1.8; exit; fi\n[ \"$#\" = 1 ] && [ \"$1\" = models ] && cat catalog\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	got, err := a.OpenCodeOptions("plain")
+	if err != nil || !slices.Equal(got.Models, []string{"provider/a/nested model", "provider/z"}) {
+		t.Fatalf("models = %v, %v", got, err)
+	}
+	if _, err := a.OpenCodeOptions("missing"); err == nil {
+		t.Fatal("expected missing project error")
+	}
+}
+
+func (a *App) createSession(project, name, agent, existingBranch, ticket string, openTerminal bool, dangerous *bool, baseBranch, model, thinking string) (session.Session, string, error) {
+	return a.createNamedSession(session.CreateRequest{Project: project, Agent: agent, Branch: existingBranch, Ticket: ticket, OpenTerminal: openTerminal, Dangerous: dangerous, BaseBranch: baseBranch, Model: model, Thinking: thinking}, name)
 }

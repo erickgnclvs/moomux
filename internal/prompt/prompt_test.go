@@ -150,6 +150,8 @@ func TestFirstIgnoresPromptsBeforeSince(t *testing.T) {
 }
 
 func TestForAgentDispatch(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("OPENCODE_DB", "")
 	home := t.TempDir()
 	wt := "/wt/demo/feat"
 	writeJSONL(t, home, wt, "a.jsonl", userLine("2026-01-01T00:00:00Z", "claude prompt"))
@@ -177,6 +179,8 @@ func TestForAgentDispatch(t *testing.T) {
 }
 
 func TestFirstOpenCodeMissingDBLeavesNoStrayFile(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("OPENCODE_DB", "")
 	home := t.TempDir()
 	dbPath := filepath.Join(home, ".local", "share", "opencode", "opencode.db")
 	// The parent dir existing (opencode installed, db not created yet) is
@@ -198,6 +202,8 @@ func TestFirstOpenCodeMissingDBLeavesNoStrayFile(t *testing.T) {
 // exec.CommandContext bounding the subprocess, FirstOpenCode would block
 // for the full sleep instead of giving up once the timeout elapses.
 func TestFirstOpenCodeRespectsQueryTimeout(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("OPENCODE_DB", "")
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh not available")
 	}
@@ -212,13 +218,15 @@ func TestFirstOpenCodeRespectsQueryTimeout(t *testing.T) {
 
 	fakeDir := t.TempDir()
 	fake := filepath.Join(fakeDir, "sqlite3")
-	if err := os.WriteFile(fake, []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil {
+	calls := filepath.Join(fakeDir, "calls")
+	t.Setenv("SQLITE_CALL_LOG", calls)
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho query >> \"$SQLITE_CALL_LOG\"\nsleep 5 &\nwait\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	old := queryTimeout
-	queryTimeout = 50 * time.Millisecond
+	queryTimeout = 400 * time.Millisecond
 	t.Cleanup(func() { queryTimeout = old })
 
 	start := time.Now()
@@ -226,6 +234,10 @@ func TestFirstOpenCodeRespectsQueryTimeout(t *testing.T) {
 	elapsed := time.Since(start)
 	if got != "" {
 		t.Fatalf("got %q, want empty", got)
+	}
+	data, err := os.ReadFile(calls)
+	if err != nil || string(data) != "query\n" {
+		t.Fatalf("sqlite3 invocations = %q, err = %v; expected one query before deadline", data, err)
 	}
 	if elapsed > 4*time.Second {
 		t.Fatalf("FirstOpenCode took %v, want to return shortly after queryTimeout", elapsed)
@@ -339,6 +351,8 @@ func TestFirstAntigravity(t *testing.T) {
 // TestNonClaudeAgentsIgnorePriorSessionRows: a worktree path reused by a
 // recreated session must not surface the old session's prompt.
 func TestNonClaudeAgentsIgnorePriorSessionRows(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("OPENCODE_DB", "")
 	if _, err := exec.LookPath("sqlite3"); err != nil {
 		t.Skip("sqlite3 not installed")
 	}
@@ -385,5 +399,33 @@ INSERT INTO conversation_summaries VALUES ('c2', '', 'new agy', '`+after.Format(
 		if got := ForAgent(home, agent, wt, time.Time{}); got != want {
 			t.Errorf("%s zero since: got %q, want %q", agent, got, want)
 		}
+	}
+}
+
+func TestFirstOpenCodeV2(t *testing.T) {
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 not installed")
+	}
+	home := t.TempDir()
+	dir := t.TempDir()
+	t.Setenv("OPENCODE_DB", filepath.Join(dir, "opencode.db"))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const schema = `CREATE TABLE session_v2 (id TEXT, directory TEXT);
+ CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, time_created INTEGER, seq INTEGER, data TEXT);
+ INSERT INTO session_v2 VALUES ('a','/wt/other'),('b','/wt/one');
+ INSERT INTO session_message VALUES
+ ('m0','a','user',20,1,'{"text":"wrong directory"}'),
+ ('m1','b','user',10,1,'{"text":"old"}'),
+ ('m2','b','assistant',21,2,'{"text":"assistant"}'),
+ ('m3','b','user',22,3,'{"text":""}'),
+ ('m4','b','user',23,4,'{"text":"first prompt"}'),
+ ('m5','b','user',24,5,'{"text":"second prompt"}');`
+	if out, err := exec.Command("sqlite3", filepath.Join(dir, "opencode.db"), schema).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if got := FirstOpenCode(home, "/wt/one", time.UnixMilli(20)); got != "first prompt" {
+		t.Fatalf("got %q, want first prompt", got)
 	}
 }

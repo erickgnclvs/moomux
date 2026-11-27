@@ -14,20 +14,40 @@ func TestTerminalReportsDisplayedPrompts(t *testing.T) {
 	stream := strings.Join([]string{
 		osc("state=clear"), osc("state=working:app=codex"),
 		"Should I continue?", "\x1b]0;approval requested\x07",
-		osc("state=blocked:app=other:kind=permission"), osc("state=working:app=codex"),
+		osc("state=blocked:app=codex:kind=other"), osc("state=blocked:app=other:kind=permission"), osc("state=working:app=codex"),
 		osc("state=blocked:app=codex:kind=permission"), osc("state=working:app=codex"),
 		osc("state=blocked:app=codex:kind=question"), osc("state=idle:app=codex"),
 		osc("state=blocked:app=codex:kind=auth"), osc("state=clear"),
 		osc("state=done:app=codex"),
 	}, "")
 	var states []watcher.State
-	err := readCodexTerminal(iotest.OneByteReader(strings.NewReader(stream)), func(st watcher.State) error {
+	err := readTerminalState(iotest.OneByteReader(strings.NewReader(stream)), "codex", func(st watcher.State) error {
 		states = append(states, st)
 		return nil
 	})
 	want := []watcher.State{watcher.Working, watcher.NeedsInput, watcher.Working, watcher.NeedsInput, watcher.Done, watcher.NeedsInput, watcher.Done}
 	if err != nil || !slices.Equal(states, want) {
 		t.Fatalf("read terminal: %v, %v; want %v", states, err, want)
+	}
+}
+
+func TestOpenCodeRootStatus(t *testing.T) {
+	// The full TUI writes root and tab records to the same stream.
+	records := []string{"?", "state=clear", "state=idle:app=opencode",
+		"state=working:app=opencode:title=" + strings.Repeat("A", 200),
+		"state=blocked:id=ses_tab:app=opencode:kind=permission",
+		"state=blocked:app=opencode:kind=permission:message=UGVybWlzc2lvbg==",
+		"state=clear:id=ses_tab", "state=working:app=opencode", "state=blocked:app=opencode:kind=question",
+		"state=working:app=codex", "state=idle:app=opencode"}
+	var stream strings.Builder
+	for _, r := range records {
+		stream.WriteString("\x1b]7501;" + r + "\x1b\\")
+	}
+	var got []watcher.State
+	err := readTerminalState(iotest.OneByteReader(strings.NewReader(stream.String())), "opencode", func(s watcher.State) error { got = append(got, s); return nil })
+	want := []watcher.State{watcher.Done, watcher.Working, watcher.NeedsInput, watcher.Working, watcher.NeedsInput, watcher.Done}
+	if err != nil || !slices.Equal(got, want) {
+		t.Fatalf("got %v (%v), want %v", got, err, want)
 	}
 }
 

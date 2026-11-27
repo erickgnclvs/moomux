@@ -51,7 +51,7 @@ func realPanes(t *testing.T, windows []layout.WindowSpec) (panes []paneGeom, age
 		_ = os.RemoveAll(dir)
 	})
 	c := &Client{Runner: r}
-	if err := c.NewSessionWithLayout("moomux-x", dir, "x", windows, "true"); err != nil {
+	if err := c.NewSessionWithLayout("moomux-x", dir, "x", windows, "", "true"); err != nil {
 		t.Fatal(err)
 	}
 	out, err := r.Run("list-panes", "-t", "=moomux-x:^", "-F",

@@ -25,6 +25,7 @@ import (
 	"github.com/erickgnclvs/moomux/internal/config"
 	"github.com/erickgnclvs/moomux/internal/gitwt"
 	"github.com/erickgnclvs/moomux/internal/ipc"
+	"github.com/erickgnclvs/moomux/internal/prompt"
 	"github.com/erickgnclvs/moomux/internal/prstatus"
 	"github.com/erickgnclvs/moomux/internal/session"
 	"github.com/erickgnclvs/moomux/internal/sessionview"
@@ -358,9 +359,9 @@ func newApp() (*app.App, error) {
 	setupLogging()
 
 	tmuxClient := tmux.New()
-	tmuxClient.CodexObserver, err = os.Executable()
+	tmuxClient.TerminalObserver, err = os.Executable()
 	if err != nil {
-		slog.Warn("could not locate Codex status observer", "err", err)
+		slog.Warn("could not locate terminal status observer", "err", err)
 	}
 	// moomux itself commonly runs inside a long-lived "moomux" tmux session
 	// (see relaunchInTmux); without this, that session's copy of
@@ -490,7 +491,8 @@ func parseSpawn(args []string) (spawnArgs, error) {
 	project := fs.String("project", "", "project name (required; run -list to see configured projects)")
 	name := fs.String("name", "", "session name (derived from -branch, else -prompt, else random, if omitted)")
 	agent := fs.String("agent", "", "agent override (claude, codex, opencode, antigravity; \"agy\" is accepted as an alias)")
-	model := fs.String("model", "", "model override, passed to the agent as --model (e.g. sonnet, opus, haiku)")
+	openCodeAgent := fs.String("opencode-agent", "", "OpenCode primary agent ID for the new session")
+	model := fs.String("model", "", "model override (e.g. sonnet; for OpenCode use provider/model or, on v2, provider/model#variant)")
 	thinking := fs.String("thinking", "", "thinking/reasoning level: for codex, a real -c model_reasoning_effort value (minimal, low, medium, high, xhigh); for claude, --effort (low, medium, high, xhigh, max); for antigravity, --effort (low, medium, high), which agy accepts only when no -model is given; for opencode, a phrase prepended to -prompt (e.g. think, think hard, ultrathink) — no effect there without -prompt")
 	dangerous := fs.Bool("dangerous", false, "run the agent with its permission-skipping flag (claude/antigravity: --dangerously-skip-permissions, codex: --yolo)")
 	branch := fs.String("branch", "", "existing branch to check out, instead of creating a new one")
@@ -515,7 +517,7 @@ func parseSpawn(args []string) (spawnArgs, error) {
 		list: *list, peers: *peers, contract: *contract,
 		req: session.CreateRequest{
 			Project: *project, Name: *name, Agent: *agent, Branch: *branch, BaseBranch: *base, Ticket: *ticket, PR: *pr,
-			Model: *model, Thinking: *thinking, Prompt: *prompt, AutoSubmit: *prompt != "",
+			Model: *model, OpenCodeAgent: *openCodeAgent, Thinking: *thinking, Prompt: *prompt, AutoSubmit: *prompt != "",
 			Dangerous: explicitFlagOverride(fs, "dangerous", *dangerous), Spawned: true, Folder: *folder,
 		},
 	}, nil
@@ -1033,9 +1035,15 @@ func buildWatcher(home string) watcher.Watcher {
 			Query:     "SELECT cwd, MAX(updated_at_ms) FROM threads GROUP BY cwd",
 			MarkerDir: codexhook.MarkerDir(home),
 		},
-		// OpenCode: activity tracked in SQLite DB (~/.local/share/opencode/opencode.db)
+		// OpenCode v1 and v2 can have sessions in the same database.
+		// MultiWatcher merges activity from both. SQLiteWatcher treats a
+		// missing table as empty on installations with just one schema.
 		&watcher.SQLiteWatcher{
-			DB:    filepath.Join(home, ".local", "share", "opencode", "opencode.db"),
+			DB:    prompt.OpenCodeDB(home),
+			Query: "SELECT directory, MAX(time_updated) FROM session_v2 GROUP BY directory",
+		},
+		&watcher.SQLiteWatcher{
+			DB:    prompt.OpenCodeDB(home),
 			Query: "SELECT directory, MAX(time_updated) FROM session GROUP BY directory",
 		},
 		// Antigravity: activity tracked in SQLite DB (~/.gemini/antigravity-cli/conversation_summaries.db).

@@ -203,8 +203,8 @@ func (m *Model) focusedOverlayLine(content string) int {
 			return lineContaining(content, m.renderNewFormAgentSelector())
 		case newFormModelFocus:
 			return lineContaining(content, muteStyle.Render("model:  ")+m.renderNewFormModelSelector())
-		case newFormThinkingFocus:
-			return lineContaining(content, muteStyle.Render("thinking:  ")+m.renderNewFormThinkingSelector())
+		case newFormThinkingFocus, newFormOpenCodeAgentFocus:
+			return lineContaining(content, m.renderNewFormRow(m.newFormFocus))
 		case newFormOpenTerminalFocus:
 			// Both toggle rows render an identical "[on]"/"[off]" value, so
 			// searching for the value alone can match the wrong row (their

@@ -20,7 +20,7 @@ func TestNewSessionWithLayoutAgentOnRight(t *testing.T) {
 			{Size: "30%", Agent: true},
 		},
 	}}}
-	if err := c.NewSessionWithLayout("moomux-x", "/tmp/wt", "x", windows, "claude"); err != nil {
+	if err := c.NewSessionWithLayout("moomux-x", "/tmp/wt", "x", windows, "claude", "claude"); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{
@@ -64,7 +64,7 @@ func TestNewSessionWithLayoutNestedGrid(t *testing.T) {
 			{Size: "50%", Cmd: "right-pane"},
 		},
 	}}}
-	if err := c.NewSessionWithLayout("moomux-x", "/tmp/wt", "x", windows, "claude"); err != nil {
+	if err := c.NewSessionWithLayout("moomux-x", "/tmp/wt", "x", windows, "claude", "claude"); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{
@@ -106,7 +106,7 @@ func TestNewSessionWithLayoutMultipleWindows(t *testing.T) {
 			},
 		}},
 	}
-	if err := c.NewSessionWithLayout("moomux-x", "/tmp/wt", "x", windows, "claude"); err != nil {
+	if err := c.NewSessionWithLayout("moomux-x", "/tmp/wt", "x", windows, "claude", "claude"); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{
@@ -155,7 +155,7 @@ func TestNewSessionWithLayoutNameFollowsAgentWindow(t *testing.T) {
 		}},
 		{PaneSpec: layout.PaneSpec{Agent: true}},
 	}
-	if err := c.NewSessionWithLayout("moomux-x", "/tmp/wt", "x", windows, "claude"); err != nil {
+	if err := c.NewSessionWithLayout("moomux-x", "/tmp/wt", "x", windows, "claude", "claude"); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{
@@ -192,7 +192,7 @@ func TestNewSessionWithLayoutAgentWindowNameIgnoresFileName(t *testing.T) {
 	windows := []layout.WindowSpec{
 		{Name: "ignored", PaneSpec: layout.PaneSpec{Agent: true}},
 	}
-	if err := c.NewSessionWithLayout("moomux-x", "/tmp/wt", "x", windows, "claude"); err != nil {
+	if err := c.NewSessionWithLayout("moomux-x", "/tmp/wt", "x", windows, "claude", "claude"); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{
